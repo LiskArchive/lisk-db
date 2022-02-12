@@ -1,0 +1,40 @@
+{
+  "name": "@liskhq/lisk-db",
+  "version": "0.3.0-alpha.0",
+  "description": "A database access implementation for use with Lisk-related software",
+  "author": "Lisk Foundation <admin@lisk.com>, lightcurve GmbH <admin@lightcurve.io>",
+  "license": "Apache-2.0",
+  "keywords": [
+    "lisk",
+    "blockchain"
+  ],
+  "homepage": "https://github.com/LiskHQ/lisk-db/tree/main#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LiskHQ/lisk-db.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LiskHQ/lisk-db/issues"
+  },
+  "engines": {
+    "node": ">=12.13.0",
+    "npm": ">=6.12.0"
+  },
+  "main": "index.node",
+  "types": "types.d.ts",
+  "scripts": {
+    "prebuild": "rimraf index.node",
+    "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics",
+    "build-debug": "npm run build --",
+    "build-release": "npm run build -- --release",
+    "install": "npm run build-release",
+    "test": "npm run test:node; npm run test:rust",
+    "test:node": "jest",
+    "test:rust": "cargo test"
+  },
+  "devDependencies": {
+    "cargo-cp-artifact": "^0.1",
+    "jest": "^27.5.1",
+    "rimraf": "^3.0.2"
+  }
+}
