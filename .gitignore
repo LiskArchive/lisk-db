@@ -4,3 +4,7 @@ index.node
 **/.DS_Store
 npm-debug.log*
 .tmp
+.tmp-state
+.vscode
+*.log
+tmp-state

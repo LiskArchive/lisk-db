@@ -32,9 +32,14 @@
     "test:node": "jest",
     "test:rust": "cargo test"
   },
+  "dependencies": {
+    "@types/node": "^16"
+  },
   "devDependencies": {
+    "bunyan": "^1.8.15",
     "cargo-cp-artifact": "^0.1",
     "jest": "^27.5.1",
-    "rimraf": "^3.0.2"
+    "rimraf": "^3.0.2",
+    "sodium-native": "^3.3.0"
   }
 }

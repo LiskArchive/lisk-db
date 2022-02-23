@@ -12,6 +12,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 
+[dependencies.sha2]
+version = "0.10.2"
+
+[dependencies.thiserror]
+version = "1.0.0"
+
 [dependencies.neon]
 version = "0.9.1"
 default-features = false
@@ -19,3 +25,6 @@ features = ["napi-6", "event-queue-api", "try-catch-api"]
 
 [dependencies.rocksdb]
 version = "0.18"
+
+[dev-dependencies.hex]
+version = "0.4.3"
