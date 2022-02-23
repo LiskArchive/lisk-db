@@ -1,10 +1,11 @@
+use std::cmp;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::cmp;
 
 use neon::prelude::*;
 
 use crate::batch;
+use crate::options;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
@@ -12,50 +13,22 @@ pub struct Error {
 }
 
 pub struct Database {
-    tx: mpsc::Sender<DbMessage>,
+    tx: mpsc::Sender<options::DbMessage>,
 }
 
 impl Finalize for Database {}
 
-#[derive(Debug)]
-struct DatabaseOptions {
-    readonly: bool,
-}
-
-impl DatabaseOptions {
-    fn new() -> DatabaseOptions {
-        Self { readonly: false }
-    }
-}
-
-type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
-
-// Messages sent on the database channel
-enum DbMessage {
-    // Callback to be executed
-    Callback(DbCallback),
-    // Indicates that the thread should be stopped and connection closed
-    Close,
-}
-
-fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
-    for (ai, bi) in a.iter().zip(b.iter()) {
-        match ai.cmp(&bi) {
-            cmp::Ordering::Equal => continue,
-            ord => return ord
-        }
-    }
-    /* if every single element was equal, compare length */
-    a.len().cmp(&b.len())
-}
-
 impl Database {
-    fn new<'a, C>(ctx: &mut C, path: String, opts: DatabaseOptions) -> Result<Self, rocksdb::Error>
+    fn new<'a, C>(
+        ctx: &mut C,
+        path: String,
+        opts: options::DatabaseOptions,
+    ) -> Result<Self, rocksdb::Error>
     where
         C: Context<'a>,
     {
         // Channel for sending callbacks to execute on the sqlite connection thread
-        let (tx, rx) = mpsc::channel::<DbMessage>();
+        let (tx, rx) = mpsc::channel::<options::DbMessage>();
 
         let channel = ctx.channel();
 
@@ -72,10 +45,10 @@ impl Database {
         thread::spawn(move || {
             while let Ok(message) = rx.recv() {
                 match message {
-                    DbMessage::Callback(f) => {
+                    options::DbMessage::Callback(f) => {
                         f(&mut opened, &channel);
                     }
-                    DbMessage::Close => break,
+                    options::DbMessage::Close => break,
                 }
             }
         });
@@ -85,15 +58,43 @@ impl Database {
 
     // Idiomatic rust would take an owned `self` to prevent use after close
     // However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    fn close(&self) -> Result<(), mpsc::SendError<DbMessage>> {
-        self.tx.send(DbMessage::Close)
+    fn close(&self) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        self.tx.send(options::DbMessage::Close)
     }
 
     fn send(
         &self,
         callback: impl FnOnce(&mut rocksdb::DB, &Channel) + Send + 'static,
-    ) -> Result<(), mpsc::SendError<DbMessage>> {
-        self.tx.send(DbMessage::Callback(Box::new(callback)))
+    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        self.tx
+            .send(options::DbMessage::Callback(Box::new(callback)))
+    }
+
+    fn get_by_key(
+        &self,
+        key: Vec<u8>,
+        cb: Root<JsFunction>,
+    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        self.send(move |conn, channel| {
+            let result = conn.get(key);
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(Some(val)) => {
+                        let buffer = JsBuffer::external(&mut ctx, val);
+                        vec![ctx.null().upcast(), buffer.upcast()]
+                    }
+                    Ok(None) => vec![ctx.error("No data")?.upcast()],
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        })
     }
 }
 
@@ -101,7 +102,7 @@ impl Database {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<Database>> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
-        let mut db_opts = DatabaseOptions::new();
+        let mut db_opts = options::DatabaseOptions::new();
         if let Some(options) = options {
             let obj = options.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let readonly = obj
@@ -111,7 +112,6 @@ impl Database {
                 Ok(readonly) => readonly.value(&mut ctx),
                 Err(_) => false,
             };
-            println!("{:?}", db_opts);
         }
         let db = Database::new(&mut ctx, path, db_opts)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
@@ -138,27 +138,8 @@ impl Database {
             .this()
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
-        db.send(move |conn, channel| {
-            let result = conn.get(key);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(Some(val)) => {
-                        let buffer = JsBuffer::external(&mut ctx, val);
-                        vec![ctx.null().upcast(), buffer.upcast()]
-                    }
-                    Ok(None) => vec![ctx.error("No data")?.upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
+        db.get_by_key(key, cb)
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
     }
@@ -261,7 +242,7 @@ impl Database {
 
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
-        let options = IterationOption::new(&mut ctx, option_inputs);
+        let options = options::IterationOption::new(&mut ctx, option_inputs);
         let cb_on_data = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let cb_done = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
@@ -289,12 +270,18 @@ impl Database {
                         } else {
                             vec![0; options.end.clone().unwrap().len()]
                         }
-                    },
+                    }
                 };
                 if options.reverse {
-                    iter = conn.iterator(rocksdb::IteratorMode::From(&start, rocksdb::Direction::Reverse));
+                    iter = conn.iterator(rocksdb::IteratorMode::From(
+                        &start,
+                        rocksdb::Direction::Reverse,
+                    ));
                 } else {
-                    iter = conn.iterator(rocksdb::IteratorMode::From(&start, rocksdb::Direction::Forward));
+                    iter = conn.iterator(rocksdb::IteratorMode::From(
+                        &start,
+                        rocksdb::Direction::Forward,
+                    ));
                 }
             }
             let mut counter = 0;
@@ -303,10 +290,10 @@ impl Database {
                     break;
                 }
                 if let Some(end) = options.end.clone() {
-                    if options.reverse && compare(&key, &end) == cmp::Ordering::Less {
+                    if options.reverse && options::compare(&key, &end) == cmp::Ordering::Less {
                         break;
                     }
-                    if !options.reverse && compare(&key, &end) == cmp::Ordering::Greater {
+                    if !options.reverse && options::compare(&key, &end) == cmp::Ordering::Greater {
                         break;
                     }
                 }
@@ -340,62 +327,3 @@ impl Database {
     }
 }
 
-struct IterationOption {
-    limit: i64,
-    reverse: bool,
-    start: Option<Vec<u8>>,
-    end: Option<Vec<u8>>,
-}
-
-impl IterationOption {
-    fn new<'a, C>(ctx: &mut C, input: Handle<JsObject>) -> Self
-    where
-        C: Context<'a>,
-    {
-        let reverse = input
-            .get(ctx, "reverse")
-            .map(|val| {
-                val.downcast::<JsBoolean, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx)))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
-        let limit = input
-            .get(ctx, "limit")
-            .map(|val| {
-                val.downcast::<JsNumber, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx)))
-                    .unwrap_or(-1.0)
-            })
-            .unwrap_or(-1.0);
-
-        let start = input
-            .get(ctx, "start")
-            .map(|val| {
-                val.downcast::<JsBuffer, _>(ctx)
-                    .map(|mut val| {
-                        ctx.borrow(&mut val, |data| Some(data.as_slice::<u8>().to_vec()))
-                    })
-                    .unwrap_or(None)
-            })
-            .unwrap_or(None);
-
-        let end = input
-            .get(ctx, "end")
-            .map(|val| {
-                val.downcast::<JsBuffer, _>(ctx)
-                    .map(|mut val| {
-                        ctx.borrow(&mut val, |data| Some(data.as_slice::<u8>().to_vec()))
-                    })
-                    .unwrap_or(None)
-            })
-            .unwrap_or(None);
-
-        Self {
-            limit: limit as i64,
-            reverse: reverse,
-            start: start,
-            end: end,
-        }
-    }
-}
