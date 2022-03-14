@@ -1,0 +1,8 @@
+benchmark
+node_modules
+test
+target
+.tmp
+.tmp-state
+.vscode
+jest.config.js

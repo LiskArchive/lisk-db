@@ -1,4 +1,4 @@
-const { Database, Batch, StateDB } = require("./index");
+const { Database, Batch, StateDB } = require("../index");
 const crypto = require('crypto');
 
 const getRandomBytes = () => crypto.randomBytes(32);
