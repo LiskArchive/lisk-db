@@ -24,6 +24,17 @@ const {
     batch_new,
     batch_set,
     batch_del,
+    state_db_new,
+    state_db_close,
+    state_db_get,
+    state_db_set,
+    state_db_del,
+    state_db_clear,
+    state_db_snapshot,
+    state_db_snapshot_restore,
+    state_db_iterate,
+    state_db_revert,
+    state_db_commit,
 } = require("./index.node");
 const { Readable } = require('stream');
 
@@ -144,8 +155,90 @@ class Batch {
     }
 }
 
+class StateDB {
+    constructor(path, opts = {}) {
+        this._db = state_db_new(path, opts);
+    }
+
+    async get(key) {
+        return new Promise((resolve, reject) => {
+            state_db_get.call(this._db, key, (err, result) => {
+                if (err) {
+                    if (err.message === 'No data') {
+                        return reject(new NotFoundError('Data not found'));
+                    }
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    async iterate(options = {}) {
+        const optionsWithDefault = {
+            limit: -1,
+            reverse: false,
+            start: undefined,
+            end: undefined,
+            ...options,
+        };
+        return new Promise((resolve, reject) => {
+            state_db_iterate.call(this._db, optionsWithDefault, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    async set(key, value) {
+        state_db_set.call(this._db, key, value);
+    }
+
+    async del(key) {
+        state_db_del.call(this._db, key);
+    }
+
+    clear() {
+        state_db_clear.call(this._db);
+    }
+
+    snapshot() {
+        state_db_snapshot.call(this._db);
+    }
+
+    restoreSnapshot() {
+        state_db_snapshot_restore.call(this._db);
+    }
+
+    async revert(prev_root) {
+        return new Promise((_, reject) => {
+            reject(new Error('Not implemented'));
+        });
+    }
+
+    async commit(prev_root) {
+        return new Promise((resolve, reject) => {
+            state_db_commit.call(this._db, prev_root, (err, result) => {
+                state_db_clear.call(this._db);
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    close() {
+        state_db_close.call(this._db);
+    }
+
+}
+
 module.exports = {
     Database,
     Batch,
     Iterator,
+    StateDB,
 };
