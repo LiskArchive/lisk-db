@@ -102,21 +102,40 @@ impl Database {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<Database>> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
-        let mut db_opts = options::DatabaseOptions::new();
-        if let Some(options) = options {
-            let obj = options.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let readonly = obj
-                .get(&mut ctx, "readonly")?
-                .downcast::<JsBoolean, _>(&mut ctx);
-            db_opts.readonly = match readonly {
-                Ok(readonly) => readonly.value(&mut ctx),
-                Err(_) => false,
-            };
-        }
+        let db_opts = options::DatabaseOptions::new(&mut ctx, options)?;
         let db = Database::new(&mut ctx, path, db_opts)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         return Ok(ctx.boxed(db));
+    }
+
+    pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        // Get the `this` value as a `JsBox<Database>`
+        let db = ctx
+            .this()
+            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+
+        db.send(move |conn, channel| {
+            let cf = conn.cf_handle(rocksdb::DEFAULT_COLUMN_FAMILY_NAME).unwrap();
+            let result = conn.delete_range_cf(cf, vec![0], vec![255;255]);
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(_) => vec![ctx.null().upcast()],
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            });
+        })
+        .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
     }
 
     pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
@@ -253,7 +272,7 @@ impl Database {
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
         db.send(move |conn, channel| {
-            let no_range = options.start.is_none() && options.end.is_none();
+            let no_range = options.gte.is_none() && options.lte.is_none();
             let iter;
             if no_range {
                 if options.reverse {
@@ -263,21 +282,21 @@ impl Database {
                 }
             } else {
                 if options.reverse {
-                    let end = options
-                        .end
+                    let lte = options
+                        .lte
                         .clone()
-                        .unwrap_or(vec![255; options.start.clone().unwrap().len()]);
+                        .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
                     iter = conn.iterator(rocksdb::IteratorMode::From(
-                        &end,
+                        &lte,
                         rocksdb::Direction::Reverse,
                     ));
                 } else {
-                    let start = options
-                        .start
+                    let gte = options
+                        .gte
                         .clone()
-                        .unwrap_or(vec![0; options.end.clone().unwrap().len()]);
+                        .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
                     iter = conn.iterator(rocksdb::IteratorMode::From(
-                        &start,
+                        &gte,
                         rocksdb::Direction::Forward,
                     ));
                 }
@@ -288,14 +307,14 @@ impl Database {
                     break;
                 }
                 if options.reverse {
-                    if let Some(start) = &options.start {
-                        if options.reverse && options::compare(&key, &start) == cmp::Ordering::Less {
+                    if let Some(gte) = &options.gte {
+                        if options::compare(&key, &gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
                 } else {
-                    if let Some(end) = &options.end {
-                        if options.reverse && options::compare(&key, &end) == cmp::Ordering::Less {
+                    if let Some(lte) = &options.lte {
+                        if options::compare(&key, &lte) == cmp::Ordering::Greater {
                             break;
                         }
                     }

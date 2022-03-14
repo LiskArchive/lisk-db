@@ -39,6 +39,8 @@ pub struct StateDB {
     backup: Option<Box<batch::WriteBatch>>,
     batch: Box<batch::WriteBatch>,
     cache: HashMap<Vec<u8>, Vec<u8>>,
+    readonly: bool,
+    immutable: bool,
 }
 
 impl StateDB {
@@ -66,7 +68,7 @@ impl StateDB {
         let mut cf_smt_options = rocksdb::Options::default();
         cf_smt_options.create_missing_column_families(true);
         let cf_smt = rocksdb::ColumnFamilyDescriptor::new(smt_db::CF_SMT, cf_smt_options);
-        if opts.readonly {
+        if opts.readonly || opts.immutable {
             opened = rocksdb::DB::open_cf_descriptors_read_only(
                 &options,
                 path,
@@ -93,6 +95,8 @@ impl StateDB {
             backup: None,
             batch: Box::new(batch::WriteBatch::new()),
             cache: HashMap::new(),
+            readonly: opts.readonly,
+            immutable: opts.immutable,
         });
     }
 
@@ -174,23 +178,35 @@ impl StateDB {
     }
 
     fn set_kv(&mut self, key: &[u8], value: &[u8]) {
+        if self.immutable {
+            return;
+        }
         self.cache.insert(key.to_vec(), value.to_vec());
         let batch = self.batch.as_mut();
         batch.put(key, value);
     }
 
     fn del(&mut self, key: &[u8]) {
+        if self.immutable {
+            return;
+        }
         self.cache.remove(key);
         let batch = self.batch.as_mut();
         batch.delete(key);
     }
 
     fn snapshot(&mut self) {
+        if self.immutable {
+            return;
+        }
         let cloned = self.batch.clone();
         self.backup = Some(cloned);
     }
 
     fn restore_snapshot(&mut self) {
+        if self.immutable {
+            return;
+        }
         if let Some(batch) = &mut self.backup {
             self.batch.clone_from(batch);
         }
@@ -215,31 +231,65 @@ impl StateDB {
         })
     }
 
+    fn handle_commit_result(
+        conn: &rocksdb::DB,
+        smtdb: &smt_db::SMTDB,
+        statedb_batch: &mut Box<batch::WriteBatch>,
+        readonly: bool,
+        next_root: Result<Vec<u8>, smt::SMTError>,
+        check_expected: bool,
+        expected: &Vec<u8>,
+    ) -> Result<Vec<u8>, smt::SMTError> {
+        if next_root.is_err() {
+            return next_root;
+        }
+        let root = next_root.unwrap();
+        if check_expected && options::compare(&expected, &root) != cmp::Ordering::Equal {
+            return Err(smt::SMTError::InvalidRoot(String::from(
+                "Not matching with expected",
+            )));
+        }
+        if readonly {
+            return Ok(root);
+        }
+        let cf_state = conn.cf_handle(CF_STATE).unwrap();
+        let cf_smt = conn.cf_handle(smt_db::CF_SMT).unwrap();
+        let mut write_batch = batch::CfWriteBatch::new();
+        write_batch.set_cf(cf_state);
+        statedb_batch.iterate(&mut write_batch);
+        write_batch.set_cf(cf_smt);
+        smtdb.batch.iterate(&mut write_batch);
+        let result = conn.write(write_batch.batch);
+        match result {
+            Ok(_) => Ok(root),
+            Err(err) => Err(smt::SMTError::Unknown(err.to_string())),
+        }
+    }
+
     fn commit(
         &mut self,
         prev_root: Vec<u8>,
+        expected: Vec<u8>,
+        check_expected: bool,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         let mut data = smt::UpdateData::new();
         self.batch.iterate(&mut data);
         let mut statedb_batch = self.batch.clone();
+        let readonly = self.readonly;
         self.send(move |conn, channel| {
             let mut smtdb = smt_db::SMTDB::new(conn);
             let mut tree = smt::SMT::new(prev_root, KEY_LENGTH);
             let root = tree.commit(&mut smtdb, &mut data);
-
-            let cf_state = conn.cf_handle(CF_STATE).unwrap();
-            let cf_smt = conn.cf_handle(smt_db::CF_SMT).unwrap();
-            let mut write_batch = batch::CfWriteBatch::new();
-            write_batch.set_cf(cf_state);
-            statedb_batch.iterate(&mut write_batch);
-            write_batch.set_cf(cf_smt);
-            smtdb.batch.iterate(&mut write_batch);
-
-            let result = match conn.write(write_batch.batch) {
-                Ok(_) => root,
-                Err(err) => Err(smt::SMTError::Unknown(err.to_string())),
-            };
+            let result = StateDB::handle_commit_result(
+                conn,
+                &smtdb,
+                &mut statedb_batch,
+                readonly,
+                root,
+                check_expected,
+                &expected,
+            );
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
@@ -266,17 +316,7 @@ impl StateDB {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
-        let mut db_opts = options::DatabaseOptions::new();
-        if let Some(options) = options {
-            let obj = options.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let readonly = obj
-                .get(&mut ctx, "readonly")?
-                .downcast::<JsBoolean, _>(&mut ctx);
-            db_opts.readonly = match readonly {
-                Ok(readonly) => readonly.value(&mut ctx),
-                Err(_) => false,
-            };
-        }
+        let db_opts = options::DatabaseOptions::new(&mut ctx, options)?;
         let db = StateDB::new(&mut ctx, path, db_opts)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
         let ref_db = RefCell::new(db);
@@ -387,30 +427,21 @@ impl StateDB {
         let db = db.borrow_mut();
 
         let cached;
-        let no_range = options.start.is_none() && options.end.is_none();
+        let no_range = options.gte.is_none() && options.lte.is_none();
         if no_range {
             cached = db.cache_all();
         } else {
-            if options.reverse {
-                let start = options
-                    .start
-                    .clone()
-                    .unwrap_or(vec![255; options.end.clone().unwrap().len()]);
-                let end = options.end.clone().unwrap_or(vec![0; start.len()]);
-                cached = db.cache_range(&end, &start);
-            } else {
-                let start = options
-                    .start
-                    .clone()
-                    .unwrap_or(vec![0; options.end.clone().unwrap().len()]);
-                let end = options.end.clone().unwrap_or(vec![0; start.len()]);
-                cached = db.cache_range(&start, &end);
-            }
+            let gte = options
+                .gte
+                .clone()
+                .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+            let lte = options.lte.clone().unwrap_or_else(|| vec![255; gte.len()]);
+            cached = db.cache_range(&gte, &lte);
         }
 
         db.send(move |conn, channel| {
             let cf = conn.cf_handle(CF_STATE).unwrap();
-            let no_range = options.start.is_none() && options.end.is_none();
+            let no_range = options.gte.is_none() && options.lte.is_none();
             let iter;
             if no_range {
                 if options.reverse {
@@ -420,22 +451,22 @@ impl StateDB {
                 }
             } else {
                 if options.reverse {
-                    let end = options
-                        .end
+                    let lte = options
+                        .lte
                         .clone()
-                        .unwrap_or(vec![255; options.start.clone().unwrap().len()]);
+                        .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
                     iter = conn.iterator_cf(
                         cf,
-                        rocksdb::IteratorMode::From(&end, rocksdb::Direction::Reverse),
+                        rocksdb::IteratorMode::From(&lte, rocksdb::Direction::Reverse),
                     );
                 } else {
-                    let start = options
-                        .start
+                    let gte = options
+                        .gte
                         .clone()
-                        .unwrap_or(vec![0; options.end.clone().unwrap().len()]);
+                        .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
                     iter = conn.iterator_cf(
                         cf,
-                        rocksdb::IteratorMode::From(&start, rocksdb::Direction::Forward),
+                        rocksdb::IteratorMode::From(&gte, rocksdb::Direction::Forward),
                     );
                 }
             }
@@ -446,14 +477,14 @@ impl StateDB {
                     break;
                 }
                 if options.reverse {
-                    if let Some(start) = &options.start {
-                        if options.reverse && options::compare(&key, &start) == cmp::Ordering::Less {
+                    if let Some(gte) = &options.gte {
+                        if options::compare(&key, &gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
                 } else {
-                    if let Some(end) = &options.end {
-                        if options.reverse && options::compare(&key, &end) == cmp::Ordering::Less {
+                    if let Some(lte) = &options.lte {
+                        if options::compare(&key, &lte) == cmp::Ordering::Greater {
                             break;
                         }
                     }
@@ -475,7 +506,7 @@ impl StateDB {
             }
 
             sort_kv_pair(&mut results, options.reverse);
-            if options.limit != -1 {
+            if options.limit != -1 && results.len() > options.limit as usize {
                 results = results[..options.limit as usize].to_vec();
             }
 
@@ -505,12 +536,18 @@ impl StateDB {
     pub fn js_commit(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let mut buf = ctx.argument::<JsBuffer>(0)?;
         let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let mut expected_buf = ctx.argument::<JsBuffer>(1)?;
+        let expected = ctx.borrow(&mut expected_buf, |data| data.as_slice().to_vec());
+        let check_root = ctx.argument::<JsBoolean>(2)?.value(&mut ctx);
+        let cb = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let mut db = db.borrow_mut();
-        db.commit(key, cb)
+        if db.immutable {
+            return ctx.throw_error(String::from("Immutable DB cannot be committed."));
+        }
+        db.commit(key, expected, check_root, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())

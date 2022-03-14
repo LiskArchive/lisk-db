@@ -4,11 +4,39 @@ use std::cmp;
 #[derive(Debug)]
 pub struct DatabaseOptions {
     pub readonly: bool,
+    pub immutable: bool,
 }
 
 impl DatabaseOptions {
-    pub fn new() -> DatabaseOptions {
-        Self { readonly: false }
+    pub fn new<'a, C>(ctx: &mut C, input: Option<Handle<JsValue>>) -> Result<Self, neon::result::Throw>
+    where
+        C: Context<'a>,
+    {
+        if input.is_none() {
+            return Ok(Self{ readonly: false, immutable: false });
+        }
+        let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
+        let readonly = obj
+            .get(ctx, "readonly")
+            .map(|val| {
+                val.downcast::<JsBoolean, _>(ctx)
+                    .and_then(|val| Ok(val.value(ctx)))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let immutable = obj
+            .get(ctx, "immutable")
+            .map(|val| {
+                val.downcast::<JsBoolean, _>(ctx)
+                    .and_then(|val| Ok(val.value(ctx)))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        Ok(Self {
+            readonly: readonly,
+            immutable: immutable,
+        })
     }
 }
 
@@ -26,8 +54,8 @@ pub enum DbMessage {
 pub struct IterationOption {
     pub limit: i64,
     pub reverse: bool,
-    pub start: Option<Vec<u8>>,
-    pub end: Option<Vec<u8>>,
+    pub gte: Option<Vec<u8>>,
+    pub lte: Option<Vec<u8>>,
 }
 
 impl IterationOption {
@@ -52,8 +80,8 @@ impl IterationOption {
             })
             .unwrap_or(-1.0);
 
-        let start = input
-            .get(ctx, "start")
+        let gte = input
+            .get(ctx, "gte")
             .map(|val| {
                 val.downcast::<JsBuffer, _>(ctx)
                     .map(|mut val| {
@@ -63,8 +91,8 @@ impl IterationOption {
             })
             .unwrap_or(None);
 
-        let end = input
-            .get(ctx, "end")
+        let lte = input
+            .get(ctx, "lte")
             .map(|val| {
                 val.downcast::<JsBuffer, _>(ctx)
                     .map(|mut val| {
@@ -77,8 +105,8 @@ impl IterationOption {
         Self {
             limit: limit as i64,
             reverse: reverse,
-            start: start,
-            end: end,
+            gte: gte,
+            lte: lte,
         }
     }
 }
