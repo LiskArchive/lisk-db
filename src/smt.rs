@@ -1,13 +1,13 @@
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use std::cmp;
+use std::collections::HashMap;
+use thiserror::Error;
 
 use crate::options;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UpdateData {
-    update_keys: Vec<Vec<u8>>,
-    update_values: Vec<Vec<u8>>,
+    data: HashMap<Vec<u8>, Vec<u8>>,
     delete_keys: Vec<Vec<u8>>,
 }
 
@@ -17,6 +17,8 @@ pub enum SMTError {
     InvalidInput(String),
     #[error("unknown data not found error `{0}`")]
     NotFound(String),
+    #[error("Invalid state root `{0}`")]
+    InvalidRoot(String),
     #[error("unknown data store error `{0}`")]
     Unknown(String),
 }
@@ -35,47 +37,56 @@ static PREFIX_EMPTY: &[u8] = &[2];
 impl rocksdb::WriteBatchIterator for UpdateData {
     /// Called with a key and value that were `put` into the batch.
     fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
-        // TODO: call hash here for key and values
-        self.update_keys.push(key_hash(&key));
-        self.update_values.push(value_hash(&value));
+        self.data.insert(key_hash(&key), value_hash(&value));
     }
     /// Called with a key that was `delete`d from the batch.
     fn delete(&mut self, key: Box<[u8]>) {
-        // TODO: call hash here for key
-        self.delete_keys.push(key_hash(&key));
+        self.data.remove(&key_hash(&key));
     }
 }
 
 struct KVPair(Vec<u8>, Vec<u8>);
 
+fn is_neighbor(a: &Vec<u8>, b: &Vec<u8>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for idx in 0..a.len() - 1 {
+        if a[idx] != b[idx] {
+            return false;
+        }
+    }
+    if a[a.len() - 1] & b[b.len() - 1] != 1 {
+        return false;
+    }
+    true
+}
+
 impl UpdateData {
     pub fn new() -> Self {
         Self {
-            update_keys: vec![],
-            update_values: vec![],
+            data: HashMap::new(),
             delete_keys: vec![],
         }
     }
 
-    // TODO: Find better sort
-    fn sort(&mut self) {
-        let mut v = vec![];
-        for idx in 0..self.update_keys.len() {
-            v.push(KVPair(
-                self.update_keys[idx].clone(),
-                self.update_values[idx].clone(),
-            ));
+    pub fn entries(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        let mut kvpairs = vec![];
+        for (k, v) in self.data.iter() {
+            kvpairs.push(KVPair(k.clone(), v.clone()));
         }
-        v.sort_by(|a, b| a.0.cmp(&b.0));
+        kvpairs.sort_by(|a, b| a.0.cmp(&b.0));
         let mut keys = vec![];
         let mut values = vec![];
-        for kv in v {
+        for kv in kvpairs {
             keys.push(kv.0);
             values.push(kv.1);
         }
-        self.update_keys = keys;
-        self.update_values = values;
-        self.delete_keys.sort();
+        (keys, values)
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
 }
 
@@ -307,27 +318,19 @@ pub trait DB {
 
 impl SMT {
     pub fn new(root: Vec<u8>, key_length: usize) -> Self {
-        Self { root: root, key_length: key_length }
+        Self {
+            root: root,
+            key_length: key_length,
+        }
     }
 
     pub fn commit(&mut self, db: &mut impl DB, data: &mut UpdateData) -> Result<Vec<u8>, SMTError> {
-        if data.update_keys.len() != data.update_values.len() {
-            return Err(SMTError::InvalidInput(String::from(
-                "Update keys and values must have the same length",
-            )));
-        }
-        if data.update_keys.len() == 0 {
+        if data.len() == 0 {
             return Ok(self.root.clone());
         }
-        data.sort();
+        let (update_keys, update_values) = data.entries();
         let root = self.get_subtree(db, &self.root)?;
-        let new_root = self.update_subtree(
-            db,
-            data.update_keys.clone(),
-            data.update_values.clone(),
-            &root,
-            0,
-        )?;
+        let new_root = self.update_subtree(db, update_keys, update_values, &root, 0)?;
         self.root = new_root.root;
         Ok(self.root.clone())
     }
@@ -456,7 +459,10 @@ impl SMT {
                 return Ok((vec![new_leaf], vec![h]));
             }
 
-            if current_node.kind == NodeKind::Leaf && current_node.key == key_bins[idx][0] {
+            if current_node.kind == NodeKind::Leaf
+                && (current_node.key == key_bins[idx][0]
+                    || is_neighbor(&current_node.key, &key_bins[idx][0]))
+            {
                 let new_leaf =
                     Node::new_leaf(key_bins[idx][0].as_slice(), value_bins[idx][0].as_slice());
                 return Ok((vec![new_leaf], vec![h]));
@@ -565,20 +571,31 @@ mod tests {
 
     #[test]
     fn test_small_tree() {
-        let test_data = vec![
-            (vec!["4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a", "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"], vec!["9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70", "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a"], "6d13bfad2a210dc084b9a896f79243d58c7fbd2721181b86cdaed00af349f429"),
-        ];
+        let test_data = vec![(
+            vec![
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            ],
+            vec![
+                "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+            ],
+            "6d13bfad2a210dc084b9a896f79243d58c7fbd2721181b86cdaed00af349f429",
+        )];
 
         for (keys, values, root) in test_data {
             let mut tree = SMT::new(vec![], 32);
             let mut data = UpdateData::new();
-            data.update_keys = keys.iter().map(|k| hex::decode(k).unwrap()).collect();
-            data.update_values = values.iter().map(|k| hex::decode(k).unwrap()).collect();
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
             let mut db = smt_db::InMemorySMTDB::new();
             let result = tree.commit(&mut db, &mut data);
 
             assert_eq!(result.unwrap(), hex::decode(root).unwrap());
         }
     }
-
 }

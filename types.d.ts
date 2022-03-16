@@ -16,11 +16,16 @@ export interface Options {
     readonly?: boolean;
 }
 
+export interface StateDBOptions {
+    readonly?: boolean;
+    immutable?: boolean;
+}
+
 export interface IterateOptions {
     limit?: number;
     reverse?: boolean;
-    start?: Buffer;
-    end?: Buffer;
+    gte?: Buffer;
+    lte?: Buffer;
 }
 
 export class NotFoundError extends Error {}
@@ -28,10 +33,26 @@ export class NotFoundError extends Error {}
 export class Database {
     constructor(path: string, option?: Options);
     get(key: Buffer): Promise<Buffer>;
+    exists(key: Buffer): Promise<boolean>;
     set(key: Buffer, value: Buffer): Promise<void>;
     del(key: Buffer): Promise<void>;
     write(batch: Batch): Promise<void>;
-    iterate(options?: IterateOptions): ReadableStream;
+    iterate(options?: IterateOptions): NodeJS.ReadableStream;
+    createReadStream(options?: IterateOptions): NodeJS.ReadableStream;
+    clear(options?: IterateOptions): Promise<void>;
+    close(): void;
+}
+
+export class InMemoryDatabase {
+    constructor();
+    get(key: Buffer): Promise<Buffer>;
+    exists(key: Buffer): Promise<boolean>;
+    set(key: Buffer, value: Buffer): Promise<void>;
+    del(key: Buffer): Promise<void>;
+    write(batch: Batch): Promise<void>;
+    iterate(options?: IterateOptions): NodeJS.ReadableStream;
+    createReadStream(options?: IterateOptions): NodeJS.ReadableStream;
+    clear(options?: IterateOptions): Promise<void>;
     close(): void;
 }
 
@@ -41,14 +62,17 @@ export class Batch {
 }
 
 export class StateDB {
-    constructor(path: string, option?: Options);
+    constructor(path: string, option?: StateDBOptions);
     get(key: Buffer): Promise<Buffer>;
+    exists(key: Buffer): Promise<boolean>;
     set(key: Buffer, value: Buffer): void;
     del(key: Buffer): void;
-    iterate(options?: IterateOptions): ReadableStream;
-    clear(): void;
+    iterate(options?: IterateOptions): Promise<{key: Buffer, value: Buffer}[]>;
     snapshot(): void;
     restoreSnapshot(): void;
-    commit(prevRoot: Buffer): Promise<Buffer>;
+    revert(prevRoot: Buffer): Promise<Buffer>;
+    commit(prevRoot: Buffer, expected?: Buffer): Promise<Buffer>;
+    finalize(height: number): Promise<void>;
+    clear(): void;
     close(): void;
 }

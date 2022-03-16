@@ -1,6 +1,6 @@
 {
   "name": "@liskhq/lisk-db",
-  "version": "0.3.0-debug.2",
+  "version": "0.3.0-debug.20",
   "description": "A database access implementation for use with Lisk-related software",
   "author": "Lisk Foundation <admin@lisk.com>, lightcurve GmbH <admin@lightcurve.io>",
   "license": "Apache-2.0",
@@ -27,7 +27,6 @@
     "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics",
     "build-debug": "npm run build --",
     "build-release": "npm run build -- --release",
-    "install": "npm run build-release",
     "test": "npm run test:node; npm run test:rust",
     "test:node": "jest",
     "test:rust": "cargo test"

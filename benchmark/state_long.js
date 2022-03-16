@@ -52,7 +52,7 @@ const count = 10000;
         logger.info(`Executing ${i + 1} with root ${root.toString('hex')}`);
         performance.mark('s-start');
         for (let j = 0; j < count; j++) {
-            db.set(getRandomBytes(36), getRandomBytes(100));
+            db.set(Buffer.concat([Buffer.from([0,0,0,0,0,0]), getRandomBytes(20)]), getRandomBytes(100));
         }
         performance.mark('s-end');
         performance.mark('c-start');

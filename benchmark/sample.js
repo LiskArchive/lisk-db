@@ -1,11 +1,11 @@
-const { Database, Batch, StateDB } = require("../index");
+const { Database, InMemoryDatabase, Batch, StateDB } = require("../index");
 const crypto = require('crypto');
 
 const getRandomBytes = () => crypto.randomBytes(32);
 
 (async () => {
     const db = new Database('.tmp', { readonly: false });
-    console.log(db);
+    console.log('db', db);
     // const res = await db.get(Buffer.alloc(0));
     await db.set(Buffer.from('image', 'utf-8'), Buffer.from([1, 2, 3]));
     const existingVal = await db.get(Buffer.from('image', 'utf-8'));
@@ -25,11 +25,11 @@ const getRandomBytes = () => crypto.randomBytes(32);
     await db.write(batch);
 
     for (const { key } of inserting) {
-        console.log(await db.get(key));
+        console.log('get', await db.get(key));
     }
 
     console.log(Buffer.alloc(32, 5));
-    const readable = db.iterate({ reverse: true, limit: 3, start: Buffer.alloc(32, 5) });
+    const readable = db.iterate({ reverse: true, limit: 3, gte: Buffer.alloc(32, 5) });
     const list = await new Promise((resolve, reject) => {
         const result = [];
         readable
@@ -45,6 +45,17 @@ const getRandomBytes = () => crypto.randomBytes(32);
 
 
     const stateDB = new StateDB('.tmp-state', { readonly: false });
+    stateDB.set(Buffer.from('0000000d00000000000000000000000000000000000000000001', 'hex'), Buffer.from('1', 'utf-8'));
+    stateDB.set(Buffer.from('0000000d400000dfc343245e3382d92f4cfc328802ad184ac07a', 'hex'), Buffer.from('a', 'utf-8'));
+    stateDB.set(Buffer.from('0000000d4000013b181a4ac911616e7115f5aa8133b0b38dc2eb', 'hex'), Buffer.from('b', 'utf-8'));
+
+    const res = await stateDB.iterate({
+        gte: Buffer.from('0000000d00000000000000000000000000000000000000000000', 'hex'),
+        lte: Buffer.from('0000000d0000ffffffffffffffffffffffffffffffffffffffff', 'hex'),
+        limit: -1,
+        reverse: false,
+    });
+    console.log({ res });
     for (let i = 0; i < 2; i++) {
         const key = getRandomBytes();
         const value = getRandomBytes();
