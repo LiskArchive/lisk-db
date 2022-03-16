@@ -5,6 +5,7 @@ use std::cmp;
 pub struct DatabaseOptions {
     pub readonly: bool,
     pub immutable: bool,
+    pub count: u32,
 }
 
 impl DatabaseOptions {
@@ -13,7 +14,7 @@ impl DatabaseOptions {
         C: Context<'a>,
     {
         if input.is_none() {
-            return Ok(Self{ readonly: false, immutable: false });
+            return Ok(Self{ readonly: false, immutable: false, count: 0 });
         }
         let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
         let readonly = obj
@@ -33,9 +34,19 @@ impl DatabaseOptions {
             })
             .unwrap_or(false);
 
+        let count = obj
+            .get(ctx, "count")
+            .map(|val| {
+                val.downcast::<JsNumber, _>(ctx)
+                    .and_then(|val| Ok(val.value(ctx)))
+                    .unwrap_or(0.0)
+            })
+            .unwrap_or(0.0);
+
         Ok(Self {
             readonly: readonly,
             immutable: immutable,
+            count: count as u32,
         })
     }
 }

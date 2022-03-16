@@ -22,6 +22,7 @@ const {
     db_del,
     db_write,
     db_iterate,
+    db_catchup_primary,
     batch_new,
     batch_set,
     batch_del,
@@ -104,6 +105,17 @@ class Database {
     async del(key) {
         return new Promise((resolve, reject) => {
             db_del.call(this._db, key, err => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve();
+            });
+        });
+    }
+
+    async catchup() {
+        return new Promise((resolve, reject) => {
+            db_catchup_primary.call(this._db, err => {
                 if (err) {
                     return reject(err);
                 }

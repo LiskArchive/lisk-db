@@ -36,8 +36,9 @@ impl Database {
         option.create_if_missing(true);
 
         let mut opened: rocksdb::DB;
+        let p = path.clone();
         if opts.readonly {
-            opened = rocksdb::DB::open_for_read_only(&option, path, false)?;
+            opened = rocksdb::DB::open_as_secondary(&option, path, format!("{}{}{}", p, "_secondary_", opts.count.to_string()))?;
         } else {
             opened = rocksdb::DB::open(&option, path)?;
         }
@@ -206,6 +207,33 @@ impl Database {
 
         db.send(move |conn, channel| {
             let result = conn.delete(key);
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(_) => vec![ctx.null().upcast()],
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            });
+        })
+        .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
+
+    pub fn js_catchup_primary(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx
+            .this()
+            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+        let cb = ctx.argument::<JsFunction>(0)?.root(&mut ctx);
+
+        db.send(move |conn, channel| {
+            let result = conn.try_catch_up_with_primary();
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);

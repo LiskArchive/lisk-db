@@ -18,6 +18,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("db_del", db::Database::js_del)?;
     cx.export_function("db_write", db::Database::js_write)?;
     cx.export_function("db_iterate", db::Database::js_iterate)?;
+    cx.export_function("db_catchup_primary", db::Database::js_catchup_primary)?;
 
     cx.export_function("batch_new", batch::WriteBatch::js_new)?;
     cx.export_function("batch_set", batch::WriteBatch::js_set)?;
