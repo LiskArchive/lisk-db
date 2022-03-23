@@ -65,21 +65,21 @@ process.on('message', msg => {
     }
 });
 
-(async () => {
-    for (let i = 0; i < 10000000; i += 1) {
-        const pair = {
-            key: getRandomBytes(100),
-            value: getRandomBytes(5000),
-        };
-        await db.set(pair.key, pair.value);
-        process.send({
-            type: 'written',
-            pair: {
-                key: pair.key.toString('hex'),
-                value: pair.value.toString('hex'),
-            },
-        });
-        logger.debug(pair.key.toString('hex'), 'written');
-        // await new Promise(resolve => setTimeout(resolve, 500));
-    }
-})()
+// (async () => {
+//     for (let i = 0; i < 10000000; i += 1) {
+//         const pair = {
+//             key: getRandomBytes(100),
+//             value: getRandomBytes(5000),
+//         };
+//         await db.set(pair.key, pair.value);
+//         process.send({
+//             type: 'written',
+//             pair: {
+//                 key: pair.key.toString('hex'),
+//                 value: pair.value.toString('hex'),
+//             },
+//         });
+//         logger.debug(pair.key.toString('hex'), 'written');
+//         // await new Promise(resolve => setTimeout(resolve, 500));
+//     }
+// })()

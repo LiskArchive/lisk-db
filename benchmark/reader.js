@@ -97,6 +97,8 @@ setInterval(async () => {
     const now = currentMicros();
     await requestSetData(data);
     logger.warn({ diff: currentMicros() - now, total }, `set ${writeNum}`);
+    availableData.push(...data);
+    total += writeNum;
 }, 5000);
 
 process.on('message', msg => {
