@@ -1,4 +1,4 @@
-const { Database } = require('../index');
+const { Database, Batch } = require('../index');
 const bunyan = require('bunyan');
 
 const crypto = require('crypto');
@@ -19,8 +19,53 @@ const logger = bunyan.createLogger({
     ]
 });
 
+
+const db = new Database('./.tmp');
+
+process.on('message', msg => {
+    if (msg.type === 'get') {
+        db.get(Buffer.from(msg.key, 'hex'))
+            .then(val => {
+                process.send({
+                    id: msg.id,
+                    type: 'get_resp',
+                    value: val.toString('hex'),
+                });
+            })
+            .catch(err => {
+                process.send({
+                    id: msg.id,
+                    type: 'get_resp',
+                    err,
+                });
+            });
+        return;
+    }
+
+    if (msg.type === 'set') {
+        const batch = new Batch();
+        for (const kv of msg.data) {
+            batch.set(Buffer.from(kv.key, 'hex'), Buffer.from(kv.value, 'hex'));
+        }
+        db.write(batch)
+            .then(val => {
+                process.send({
+                    id: msg.id,
+                    type: 'set_resp',
+                    err: undefined,
+                });
+            })
+            .catch(err => {
+                process.send({
+                    id: msg.id,
+                    type: 'set_resp',
+                    err,
+                });
+            });
+    }
+});
+
 (async () => {
-    const db = new Database('./.tmp');
     for (let i = 0; i < 10000000; i += 1) {
         const pair = {
             key: getRandomBytes(100),
@@ -34,7 +79,7 @@ const logger = bunyan.createLogger({
                 value: pair.value.toString('hex'),
             },
         });
-        logger.info(pair.key.toString('hex'), 'written');
+        logger.debug(pair.key.toString('hex'), 'written');
         // await new Promise(resolve => setTimeout(resolve, 500));
     }
 })()

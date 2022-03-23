@@ -1,7 +1,9 @@
 const { Database } = require('../index');
 const bunyan = require('bunyan');
 const { hrtime } = require('process');
+const crypto = require('crypto');
 
+const getRandomBytes = () => crypto.randomBytes(32);
 
 let counter = 0;
 let db;
@@ -25,40 +27,119 @@ const logger = bunyan.createLogger({
     ]
 });
 
+let availableData = [];
+let requestQueue = {};
+let total = 0;
+
+const requestData = key => {
+    let resolve, reject;
+    const resp = new Promise((iResolve, iReject) => {
+        resolve = iResolve;
+        reject = iReject;
+    });
+
+    counter += 1;
+    process.send({
+        type: 'get',
+        id: counter,
+        key: key.toString('hex'),
+    });
+
+    requestQueue[counter] = { resolve, reject };
+    return resp;
+};
+
+const requestSetData = data => {
+    let resolve, reject;
+    const resp = new Promise((iResolve, iReject) => {
+        resolve = iResolve;
+        reject = iReject;
+    });
+
+    counter += 1;
+    process.send({
+        type: 'set',
+        id: counter,
+        data: data.map(kv => ({ key: kv.key.toString('hex'), value: kv.value.toString('hex')})),
+    });
+
+    requestQueue[counter] = { resolve, reject };
+    return resp;
+};
+
+const getRandomInt = (max) =>
+    Math.floor(Math.random() * max);
+
+
+const fetchNum = 10000;
+
+setInterval(async () => {
+    if (availableData.length > fetchNum) {
+        const now = currentMicros();
+        for (let i = 0; i < fetchNum; i++) {
+            await requestData(availableData[getRandomInt(availableData.length)].key);
+        }
+        logger.warn({ diff: currentMicros() - now, total }, `fetch ${fetchNum}`);
+        availableData = availableData.slice(-1 * 10000);
+    }
+}, 3000);
+
+const writeNum = 10000;
+
+setInterval(async () => {
+    const data = [];
+    for (let i = 0; i < writeNum; i++) {
+        data.push({
+            key: getRandomBytes(100),
+            value: getRandomBytes(1000),
+        });
+    }
+    const now = currentMicros();
+    await requestSetData(data);
+    logger.warn({ diff: currentMicros() - now, total }, `set ${writeNum}`);
+}, 5000);
+
 process.on('message', msg => {
-    if (msg.type === 'init') {
-        db = new Database('./.tmp', { readonly: true, count: msg.count });
-        process.send({type: 'ready'});
+    if (msg.type === 'written') {
+        total += 1;
+        availableData.push({
+            key: Buffer.from(msg.pair.key, 'hex'),
+            value: Buffer.from(msg.pair.value, 'hex'),
+        });
         return;
     }
-    counter += 1;
-    if (counter === 100000) {
-        const now = currentMicros();
-        db.catchup()
-            .catch(logger.error)
-            .finally(() => {
-                counter = 0;
-                const diff = currentMicros() - now;
-                logger.warn({ diff }, 'catchup');
-            });
+    if (msg.type === 'get_resp') {
+        const req = requestQueue[msg.id];
+        if (req) {
+            if (msg.value) {
+                req.resolve(Buffer.from(msg.value, 'hex'));
+            } else {
+                req.reject(msg.err);
+            }
+            delete requestData[msg.id];
+        }
     }
-    const key = Buffer.from(msg.pair.key, 'hex');
-    db.exists(key)
-        .then(exist => {
-            logger.info({ exist, key: msg.pair.key }, 'exist');
-        })
-        .catch(logger.error);
-
-    // const reader = db.iterate();
-    // const res = new Promise(resolve => {
-    //     const data = [];
-    //     reader
-    //         .on('data', d => {
-    //             data.push(d);
-    //         })
-    //         .on('end', () => {
-    //             resolve(data);
-    //         });
-    // });
-    // res.then(v => console.log('total', v.length));
+    if (msg.type === 'set_resp') {
+        const req = requestQueue[msg.id];
+        if (req) {
+            if (!msg.err) {
+                req.resolve();
+            } else {
+                req.reject(msg.err);
+            }
+            delete requestData[msg.id];
+        }
+    }
 });
+
+// (async () => {
+//     while (true) {
+//         if (availableData.length > 100) {
+//             const now = currentMicros();
+//             for (let i = 0; i < 100; i++) {
+//                 await requestData(availableData[getRandomInt(availableData.length)]);
+//             }
+//             logger.info({ diff: currentMicros() - now }, 'fetch 100');
+//         }
+//     }
+// })()
