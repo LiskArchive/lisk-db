@@ -21,6 +21,7 @@ pub enum DataStoreError {
 
 const CF_STATE: &str = "state";
 const KEY_LENGTH: usize = 38;
+const SUBTREE_SIZE: usize = 8;
 
 #[derive(Clone, Debug)]
 struct KVPair(Vec<u8>, Vec<u8>);
@@ -279,7 +280,7 @@ impl StateDB {
         let readonly = self.readonly;
         self.send(move |conn, channel| {
             let mut smtdb = smt_db::SMTDB::new(conn);
-            let mut tree = smt::SMT::new(prev_root, KEY_LENGTH);
+            let mut tree = smt::SMT::new(prev_root, KEY_LENGTH, SUBTREE_SIZE);
             let root = tree.commit(&mut smtdb, &mut data);
             let result = StateDB::handle_commit_result(
                 conn,

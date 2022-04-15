@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::cmp;
-use std::collections::HashMap;
+use std::collections::{ HashMap, VecDeque };
 use thiserror::Error;
 
 use crate::options;
@@ -27,9 +27,7 @@ const PREFIX_INT_LEAF_HASH: u8 = 0;
 const PREFIX_INT_BRANCH_HASH: u8 = 1;
 const PREFIX_INT_EMPTY: u8 = 2;
 const HASH_SIZE: usize = 32;
-const BATCH_SIZE: u8 = 4;
 const PREFIX_SIZE: usize = 6;
-const NUMBER_OF_NODES: u8 = 1 << 4;
 static PREFIX_LEAF_HASH: &[u8] = &[0];
 static PREFIX_BRANCH_HASH: &[u8] = &[1];
 static PREFIX_EMPTY: &[u8] = &[2];
@@ -47,19 +45,8 @@ impl rocksdb::WriteBatchIterator for UpdateData {
 
 struct KVPair(Vec<u8>, Vec<u8>);
 
-fn is_neighbor(a: &Vec<u8>, b: &Vec<u8>) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    for idx in 0..a.len() - 1 {
-        if a[idx] != b[idx] {
-            return false;
-        }
-    }
-    if a[a.len() - 1] & b[b.len() - 1] != 1 {
-        return false;
-    }
-    true
+fn is_bytes_equal(a: &Vec<u8>, b: &Vec<u8>) -> bool {
+    options::compare(a, b) == cmp::Ordering::Equal
 }
 
 impl UpdateData {
@@ -138,6 +125,8 @@ enum NodeKind {
     Empty,
     Leaf,
     Branch,
+    Stub,
+    Temp,
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +142,25 @@ impl Node {
         let data = [PREFIX_BRANCH_HASH, node_hash].concat();
         Self {
             kind: NodeKind::Branch,
+            data: data,
+            hash: node_hash.to_vec(),
+            key: vec![],
+        }
+    }
+
+    fn new_temp() -> Self {
+        Self {
+            kind: NodeKind::Temp,
+            data: vec![],
+            hash: vec![],
+            key: vec![],
+        }
+    }
+
+    fn new_stub(node_hash: &[u8]) -> Self {
+        let data = [PREFIX_BRANCH_HASH, node_hash].concat();
+        Self {
+            kind: NodeKind::Stub,
             data: data,
             hash: node_hash.to_vec(),
             key: vec![],
@@ -190,7 +198,7 @@ struct SubTree {
 }
 
 impl SubTree {
-    pub fn new(data: Vec<u8>, key_length: usize) -> Result<Self, SMTError> {
+    pub fn new(data: Vec<u8>, key_length: usize, hasher: Hasher) -> Result<Self, SMTError> {
         if data.len() == 0 {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
         }
@@ -235,19 +243,23 @@ impl SubTree {
             }
         }
 
-        SubTree::from_data(structure, nodes)
+        SubTree::from_data(structure, nodes, hasher)
     }
 
-    pub fn from_data(structure: Vec<u8>, nodes: Vec<Node>) -> Result<Self, SMTError> {
-        let height = structure.len();
+    pub fn from_data(
+        structure: Vec<u8>,
+        nodes: Vec<Node>,
+        hasher: Hasher,
+    ) -> Result<Self, SMTError> {
+        let height = structure.iter().max().ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
 
         let node_hashes = nodes.iter().map(|n| n.hash.clone()).collect();
-        let (calculated, _) = SubTree::calculate_root(&node_hashes, &structure, height);
+        let calculated = hasher(&node_hashes, &structure, *height as usize);
 
         Ok(Self {
             structure: structure,
             nodes: nodes,
-            root: calculated[0].clone(),
+            root: calculated,
         })
     }
 
@@ -263,36 +275,6 @@ impl SubTree {
         }
     }
 
-    fn calculate_root(
-        node_hashes: &Vec<Vec<u8>>,
-        structure: &Vec<u8>,
-        height: usize,
-    ) -> (Vec<Vec<u8>>, Vec<u8>) {
-        let mut next_hashes = vec![];
-        let mut next_structure = vec![];
-        let mut i = 0;
-
-        while i < node_hashes.len() {
-            if structure[i] == height as u8 {
-                let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
-                let hash = branch_hash(branch.as_slice());
-                next_hashes.push(hash);
-                next_structure.push(structure[i] - 1);
-                i += 1;
-            } else {
-                next_hashes.push(node_hashes[i].clone());
-                next_structure.push(structure[i]);
-            }
-            i += 1;
-        }
-
-        if height == 1 {
-            return (next_hashes, next_structure);
-        }
-
-        SubTree::calculate_root(&next_hashes, &next_structure, height - 1)
-    }
-
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
         let node_hashes: Vec<Vec<u8>> = self.nodes.iter().map(|n| n.data.clone()).collect();
@@ -305,9 +287,14 @@ impl SubTree {
     }
 }
 
+type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -> Vec<u8>;
+
 pub struct SMT {
     root: Vec<u8>,
     key_length: usize,
+    subtree_height: usize,
+    max_number_of_nodes: usize,
+    hasher: Hasher,
 }
 
 pub trait DB {
@@ -316,11 +303,97 @@ pub trait DB {
     fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error>;
 }
 
+fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -> Vec<u8> {
+    let mut next_hashes = vec![];
+    let mut next_structure = vec![];
+    let mut i = 0;
+
+    while i < node_hashes.len() {
+        if structure[i] == height as u8 {
+            let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
+            let hash = branch_hash(branch.as_slice());
+            next_hashes.push(hash);
+            next_structure.push(structure[i] - 1);
+            i += 1;
+        } else {
+            next_hashes.push(node_hashes[i].clone());
+            next_structure.push(structure[i]);
+        }
+        i += 1;
+    }
+
+    if height == 1 {
+        return next_hashes[0].clone();
+    }
+
+    tree_hasher(&next_hashes, &next_structure, height - 1)
+}
+
+fn is_empty_bytes(a: &Vec<u8>) -> bool {
+    options::compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
+}
+
+fn calculate_subtree(layer_nodes: &Vec<Node>, layer_structure: &Vec<u8>, height: u8, tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>, hasher: Hasher) -> Result<SubTree, SMTError> {
+    let mut next_layer_nodes: Vec<Node> = vec![];
+    let mut next_layer_structure: Vec<u8> = vec![];
+    let mut i = 0;
+    while i < layer_nodes.len() {
+        if layer_structure[i] != height {
+            next_layer_nodes.push(layer_nodes[i].clone());
+            next_layer_structure.push(layer_structure[i]);
+            i += 1;
+            continue;
+        }
+        let parent_node = if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Empty {
+            layer_nodes[i].clone()
+        } else if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Leaf {
+            layer_nodes[i + 1].clone()
+        } else if layer_nodes[i].kind == NodeKind::Leaf && layer_nodes[i + 1].kind == NodeKind::Empty {
+            layer_nodes[i].clone()
+        } else {
+            let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
+                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+                (nodes.clone(), structure.clone())
+            } else {
+                (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
+            };
+            let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
+                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+                (nodes.clone(), structure.clone())
+            } else {
+                (vec![layer_nodes[i + 1].clone()], vec![layer_structure[i + 1]])
+            };
+            left_structure.extend(right_structure);
+            left_nodes.extend(right_nodes);
+            let stub = Node::new_temp();
+            tree_map.push_front((left_nodes, left_structure));
+
+            stub
+        };
+        next_layer_nodes.push(parent_node.clone());
+        next_layer_structure.push(layer_structure[i] - 1);
+        // using 2 layer nodes
+        i += 2;
+    }
+    if height == 1 {
+        if next_layer_nodes[0].kind == NodeKind::Temp {
+            let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(String::from("Subtree must exist for stub"))).and_then(|node| Ok(node.clone()))?;
+            return SubTree::from_data(structure, nodes, hasher);
+        }
+        return SubTree::from_data(vec![0], next_layer_nodes, hasher);
+    }
+    calculate_subtree(&next_layer_nodes, &next_layer_structure, height - 1, tree_map, hasher)
+}
+
 impl SMT {
-    pub fn new(root: Vec<u8>, key_length: usize) -> Self {
+    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
+        let max_number_of_nodes = 1 << subtree_height;
         Self {
             root: root,
             key_length: key_length,
+            hasher: tree_hasher,
+            subtree_height: subtree_height,
+            max_number_of_nodes: max_number_of_nodes,
         }
     }
 
@@ -340,7 +413,7 @@ impl SMT {
             return Ok(SubTree::new_empty());
         }
 
-        if options::compare(node_hash, empty_hash().as_slice()) == cmp::Ordering::Equal {
+        if is_empty_bytes(node_hash) {
             return Ok(SubTree::new_empty());
         }
 
@@ -349,7 +422,7 @@ impl SMT {
             .or_else(|err| Err(SMTError::Unknown(err.to_string())))?
             .ok_or(SMTError::NotFound(String::from("node_hash does not exist")))?;
 
-        SubTree::new(key, self.key_length)
+        SubTree::new(key, self.key_length, self.hasher)
     }
 
     fn update_subtree(
@@ -366,7 +439,7 @@ impl SMT {
         let mut bin_keys = vec![];
         let mut bin_values = vec![];
 
-        for _ in 0..NUMBER_OF_NODES {
+        for _ in 0..self.max_number_of_nodes {
             bin_keys.push(vec![]);
             bin_values.push(vec![]);
         }
@@ -375,11 +448,16 @@ impl SMT {
         for i in 0..key_bin.len() {
             let k = key_bin[i].clone();
             let v = value_bin[i].clone();
-            let bin_idx = match height % 8 {
-                0 => Ok(k[b] >> 4),
-                4 => Ok(k[b] & 15),
-                _ => Err(SMTError::Unknown(String::from("Invalid bin index"))),
-            }?;
+            let bin_idx = if self.subtree_height == 4 {
+                match height % 8 {
+                    0 => Ok(k[b] >> 4),
+                    4 => Ok(k[b] & 15),
+                    _ => Err(SMTError::Unknown(String::from("Invalid bin index"))),
+                }?
+            // when subtree_height is 8
+            } else {
+                k[b]
+            };
             bin_keys[bin_idx as usize].push(k);
             bin_values[bin_idx as usize].push(v);
         }
@@ -387,16 +465,16 @@ impl SMT {
         let mut new_nodes: Vec<Node> = vec![];
         let mut new_structures: Vec<u8> = vec![];
 
-        let mut value = 0;
+        let mut bin_offset = 0;
         for i in 0..current_subtree.nodes.len() {
             let h = current_subtree.structure[i];
             let current_node = current_subtree.nodes[i].clone();
-            let new_value = value + (1 << (BATCH_SIZE - h));
+            let new_offset = 1 << (self.subtree_height - h as usize);
 
-            let slice_keys = bin_keys[value..new_value].to_vec();
-            let slice_values = bin_values[value..new_value].to_vec();
+            let slice_keys = bin_keys[bin_offset..bin_offset + new_offset].to_vec();
+            let slice_values = bin_values[bin_offset..bin_offset + new_offset].to_vec();
             let mut sum = 0;
-            let length_base: Vec<u32> = slice_keys
+            let base_length: Vec<u32> = slice_keys
                 .iter()
                 .map(|kb| {
                     sum += kb.len() as u32;
@@ -408,7 +486,7 @@ impl SMT {
                 db,
                 slice_keys,
                 slice_values,
-                length_base,
+                base_length,
                 0,
                 current_node,
                 height,
@@ -417,14 +495,17 @@ impl SMT {
 
             new_nodes.extend(nodes);
             new_structures.extend(heights);
-            value = new_value;
+            bin_offset = new_offset;
         }
 
-        if value as u8 != NUMBER_OF_NODES {
+        if bin_offset != self.max_number_of_nodes {
             return Err(SMTError::Unknown(String::from("Invalid value")));
         }
+        // Go through nodes again and push up empty nodes
+        let max_structure = new_structures.iter().max().ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
+        let mut tree_map = VecDeque::new();
 
-        let new_subtree = SubTree::from_data(new_structures, new_nodes)?;
+        let new_subtree = calculate_subtree(&new_nodes, &new_structures, *max_structure, &mut tree_map, self.hasher)?;
         let value = new_subtree.encode();
         db.set(new_subtree.root.clone(), value)
             .or_else(|err| Err(SMTError::Unknown(err.to_string())))?;
@@ -454,31 +535,39 @@ impl SMT {
                 .ok_or(SMTError::Unknown(String::from("Invalid index")))?;
 
             if current_node.kind == NodeKind::Empty {
-                let new_leaf =
-                    Node::new_leaf(key_bins[idx][0].as_slice(), value_bins[idx][0].as_slice());
-                return Ok((vec![new_leaf], vec![h]));
+                if value_bins[idx][0].len() != 0 {
+                    let new_leaf =
+                        Node::new_leaf(key_bins[idx][0].as_slice(), value_bins[idx][0].as_slice());
+                    return Ok((vec![new_leaf], vec![h]));
+                }
+                return Ok((vec![current_node], vec![h]));
             }
 
             if current_node.kind == NodeKind::Leaf
-                && (current_node.key == key_bins[idx][0]
-                    || is_neighbor(&current_node.key, &key_bins[idx][0]))
+                && is_bytes_equal(&current_node.key, &key_bins[idx][0])
             {
-                let new_leaf =
-                    Node::new_leaf(key_bins[idx][0].as_slice(), value_bins[idx][0].as_slice());
-                return Ok((vec![new_leaf], vec![h]));
+                if value_bins[idx][0].len() != 0 {
+                    let new_leaf =
+                        Node::new_leaf(key_bins[idx][0].as_slice(), value_bins[idx][0].as_slice());
+                    return Ok((vec![new_leaf], vec![h]));
+                }
+                return Ok((vec![Node::new_empty()], vec![h]));
             }
         }
 
-        if h == BATCH_SIZE {
+        if h == self.subtree_height as u8 {
             let btm_subtree = match current_node.kind {
-                NodeKind::Branch => {
+                NodeKind::Stub => {
                     let subtree = self.get_subtree(db, &current_node.hash)?;
                     db.del(current_node.hash)
                         .or_else(|err| Err(SMTError::Unknown(err.to_string())))?;
                     subtree
                 }
                 NodeKind::Empty => self.get_subtree(db, &current_node.hash)?,
-                NodeKind::Leaf => SubTree::from_data(vec![0], vec![current_node])?,
+                NodeKind::Leaf => SubTree::from_data(vec![0], vec![current_node], self.hasher)?,
+                _ => {
+                    return Err(SMTError::Unknown(String::from("invalid node type")));
+                }
             };
             let new_subtree = self.update_subtree(
                 db,
@@ -487,10 +576,14 @@ impl SMT {
                 &btm_subtree,
                 height + h as u32,
             )?;
-            let new_branch = Node::new_branch(new_subtree.root.as_slice());
+            if new_subtree.nodes.len() == 1 {
+                return Ok((vec![new_subtree.nodes[0].clone()], vec![h]));
+            }
+            let new_branch = Node::new_stub(new_subtree.root.as_slice());
 
             return Ok((vec![new_branch], vec![h]));
         }
+
         let (left_node, right_node) = match current_node.kind {
             NodeKind::Empty => (Node::new_empty(), Node::new_empty()),
             NodeKind::Leaf => {
@@ -548,7 +641,7 @@ mod tests {
 
         for (data, hash, structure) in test_data {
             let decoded_data = hex::decode(data).unwrap();
-            let tree = SubTree::new(decoded_data, 32).unwrap();
+            let tree = SubTree::new(decoded_data, 32, tree_hasher).unwrap();
             let decoded_hash = hex::decode(hash).unwrap();
             assert_eq!(tree.structure, structure);
             assert_eq!(tree.root, decoded_hash);
@@ -564,7 +657,7 @@ mod tests {
 
         for (data, _, _) in test_data {
             let decoded_data = hex::decode(data).unwrap();
-            let tree = SubTree::new(decoded_data.clone(), 32).unwrap();
+            let tree = SubTree::new(decoded_data.clone(), 32, tree_hasher).unwrap();
             assert_eq!(tree.encode(), decoded_data.clone());
         }
     }
@@ -584,7 +677,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = SMT::new(vec![], 32);
+            let mut tree = SMT::new(vec![], 32, 8);
             let mut data = UpdateData::new();
             for idx in 0..keys.len() {
                 data.data.insert(
