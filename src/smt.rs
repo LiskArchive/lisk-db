@@ -39,7 +39,7 @@ impl rocksdb::WriteBatchIterator for UpdateData {
     }
     /// Called with a key that was `delete`d from the batch.
     fn delete(&mut self, key: Box<[u8]>) {
-        self.data.remove(&key_hash(&key));
+        self.data.insert(key_hash(&key), vec![]);
     }
 }
 
