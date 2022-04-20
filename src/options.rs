@@ -1,5 +1,4 @@
 use neon::prelude::*;
-use std::cmp;
 
 #[derive(Debug)]
 pub struct DatabaseOptions {
@@ -109,15 +108,4 @@ impl IterationOption {
             lte: lte,
         }
     }
-}
-
-pub fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
-    for (ai, bi) in a.iter().zip(b.iter()) {
-        match ai.cmp(&bi) {
-            cmp::Ordering::Equal => continue,
-            ord => return ord,
-        }
-    }
-    /* if every single element was equal, compare length */
-    a.len().cmp(&b.len())
 }

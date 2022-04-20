@@ -6,6 +6,7 @@ use neon::prelude::*;
 
 use crate::batch;
 use crate::options;
+use crate::utils;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
@@ -308,13 +309,13 @@ impl Database {
                 }
                 if options.reverse {
                     if let Some(gte) = &options.gte {
-                        if options::compare(&key, &gte) == cmp::Ordering::Less {
+                        if utils::compare(&key, &gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
                 } else {
                     if let Some(lte) = &options.lte {
-                        if options::compare(&key, &lte) == cmp::Ordering::Greater {
+                        if utils::compare(&key, &lte) == cmp::Ordering::Greater {
                             break;
                         }
                     }

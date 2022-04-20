@@ -1,14 +1,19 @@
+
+use neon::prelude::*;
+use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
 use sha2::{Digest, Sha256};
-use std::cmp;
 use std::collections::{ HashMap, VecDeque };
 use thiserror::Error;
+use std::thread;
 
-use crate::options;
+use crate::utils;
+use crate::smt_db;
+use crate::consts;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UpdateData {
     data: HashMap<Vec<u8>, Vec<u8>>,
-    delete_keys: Vec<Vec<u8>>,
 }
 
 #[derive(Error, Debug)]
@@ -45,15 +50,10 @@ impl rocksdb::WriteBatchIterator for UpdateData {
 
 struct KVPair(Vec<u8>, Vec<u8>);
 
-fn is_bytes_equal(a: &Vec<u8>, b: &Vec<u8>) -> bool {
-    options::compare(a, b) == cmp::Ordering::Equal
-}
-
 impl UpdateData {
-    pub fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-            delete_keys: vec![],
+    pub fn new_from(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
+        Self{
+            data: data,
         }
     }
 
@@ -116,8 +116,17 @@ fn empty_hash() -> Vec<u8> {
     return result.as_slice().to_vec();
 }
 
-fn is_bit_set(bits: &[u8], i: usize) -> bool {
-    ((bits[i / 8] << i % 8) & 0x80) == 0x80
+#[derive(Clone, Debug)]
+pub struct Proof {
+    pub sibling_hashes: Vec<Vec<u8>>,
+    pub queries: Vec<QueryProof>,
+}
+
+#[derive(Clone, Debug)]
+pub struct QueryProof {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub bitmap: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -329,10 +338,6 @@ fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -
     tree_hasher(&next_hashes, &next_structure, height - 1)
 }
 
-fn is_empty_bytes(a: &Vec<u8>) -> bool {
-    options::compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
-}
-
 fn calculate_subtree(layer_nodes: &Vec<Node>, layer_structure: &Vec<u8>, height: u8, tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>, hasher: Hasher) -> Result<SubTree, SMTError> {
     let mut next_layer_nodes: Vec<Node> = vec![];
     let mut next_layer_structure: Vec<u8> = vec![];
@@ -408,12 +413,19 @@ impl SMT {
         Ok(self.root.clone())
     }
 
+    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+        Ok(Proof{
+            queries: vec![],
+            sibling_hashes: vec![],
+        })
+    }
+
     fn get_subtree(&self, db: &impl DB, node_hash: &Vec<u8>) -> Result<SubTree, SMTError> {
         if node_hash.len() == 0 {
             return Ok(SubTree::new_empty());
         }
 
-        if is_empty_bytes(node_hash) {
+        if utils::is_empty_bytes(node_hash) {
             return Ok(SubTree::new_empty());
         }
 
@@ -544,7 +556,7 @@ impl SMT {
             }
 
             if current_node.kind == NodeKind::Leaf
-                && is_bytes_equal(&current_node.key, &key_bins[idx][0])
+                && utils::is_bytes_equal(&current_node.key, &key_bins[idx][0])
             {
                 if value_bins[idx][0].len() != 0 {
                     let new_leaf =
@@ -587,7 +599,7 @@ impl SMT {
         let (left_node, right_node) = match current_node.kind {
             NodeKind::Empty => (Node::new_empty(), Node::new_empty()),
             NodeKind::Leaf => {
-                if is_bit_set(current_node.key.as_slice(), (height + h as u32) as usize) {
+                if utils::is_bit_set(current_node.key.as_slice(), (height + h as u32) as usize) {
                     (Node::new_empty(), current_node)
                 } else {
                     (current_node, Node::new_empty())
@@ -623,6 +635,133 @@ impl SMT {
         left_heights.extend(right_heights);
 
         Ok((left_nodes, left_heights))
+    }
+}
+
+pub struct InMemorySMT {
+    db: smt_db::InMemorySMTDB,
+}
+
+impl Finalize for InMemorySMT {}
+
+type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
+
+impl InMemorySMT {
+    pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
+        let tree = InMemorySMT{
+            db: smt_db::InMemorySMTDB::new(),
+        };
+
+        let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
+        return Ok(ctx.boxed(ref_tree));
+    }
+
+    pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let in_memory_smt = ctx.this().downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
+        let in_memory_smt = in_memory_smt.borrow().clone();
+
+        let input = ctx.argument::<JsArray>(0)?.to_vec(&mut ctx)?;
+        let mut data: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        for key in input.iter() {
+            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
+            let mut key_buf = obj.get(&mut ctx, "key")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+            let mut value_buf = obj.get(&mut ctx, "value")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let value = ctx.borrow(&mut value_buf, |data| data.as_slice().to_vec());
+            data.insert(key, value);
+        }
+
+        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+
+        let channel = ctx.channel();
+
+        thread::spawn(move || {
+            let mut update_data = UpdateData::new_from(data);
+            let mut tree = SMT::new(vec![], consts::KEY_LENGTH, consts::SUBTREE_SIZE);
+
+            let mut inner_smt = in_memory_smt.lock().unwrap();
+            let result = tree.commit(&mut inner_smt.db, &mut update_data);
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        let buffer = JsBuffer::external(&mut ctx, val.to_vec());
+                        vec![ctx.null().upcast(), buffer.upcast()]
+                    }
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        });
+
+        Ok(ctx.undefined())
+    }
+
+    pub fn js_proof(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let in_memory_smt = ctx.this().downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
+        let in_memory_smt = in_memory_smt.borrow().clone();
+
+        let mut buf = ctx.argument::<JsBuffer>(0)?;
+        let state_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+
+        let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
+        let mut data: Vec<Vec<u8>> = vec![];
+        for key in input.iter() {
+            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
+            let mut key_buf = obj.get(&mut ctx, "key")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+            data.push(key);
+        }
+
+        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+
+        let channel = ctx.channel();
+
+        thread::spawn(move || {
+            let mut tree = SMT::new(state_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
+
+            let mut inner_smt = in_memory_smt.lock().unwrap();
+            let result = tree.prove(&mut inner_smt.db, data);
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        let obj: Handle<JsObject> = ctx.empty_object();
+                        let sibling_hashes = ctx.empty_array();
+                        for (i, h) in val.sibling_hashes.iter().enumerate() {
+                            let val_res = JsBuffer::external(&mut ctx, h.to_vec());
+                            sibling_hashes.set(&mut ctx, i as u32, val_res)?;
+                        }
+                        obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
+                        let queries = ctx.empty_array();
+                        for (i, v) in val.queries.iter().enumerate() {
+                            let obj = ctx.empty_object();
+                            let key = JsBuffer::external(&mut ctx, v.key.to_vec());
+                            obj.set(&mut ctx, "key", key)?;
+                            let value = JsBuffer::external(&mut ctx, v.value.to_vec());
+                            obj.set(&mut ctx, "value", value)?;
+                            let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
+                            obj.set(&mut ctx, "bitmap", bitmap)?;
+
+                            queries.set(&mut ctx, i as u32, obj)?;
+                        }
+                        vec![ctx.null().upcast(), obj.upcast()]
+                    }
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        });
+
+        Ok(ctx.undefined())
     }
 }
 
@@ -678,7 +817,9 @@ mod tests {
 
         for (keys, values, root) in test_data {
             let mut tree = SMT::new(vec![], 32, 8);
-            let mut data = UpdateData::new();
+            let mut data = UpdateData{
+                data: HashMap::new(),
+            };
             for idx in 0..keys.len() {
                 data.data.insert(
                     hex::decode(keys[idx]).unwrap(),

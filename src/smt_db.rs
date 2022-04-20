@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
 use crate::smt;
+use crate::consts;
 
 pub struct SMTDB<'a> {
     db: Box<&'a rocksdb::DB>,
     pub batch: rocksdb::WriteBatch,
 }
-
-pub const CF_SMT: &str = "smt";
 
 impl <'a> SMTDB<'a> {
 pub fn new(db: &'a rocksdb::DB) -> Self {
@@ -21,8 +20,7 @@ pub fn new(db: &'a rocksdb::DB) -> Self {
 
 impl smt::DB for SMTDB<'_> {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error> {
-        let cf = self.db.cf_handle(CF_SMT).unwrap();
-        let result = self.db.get_cf(&cf, key)?;
+        let result = self.db.get([consts::PREFIX_SMT, key.as_slice()].concat())?;
         Ok(result)
     }
 
