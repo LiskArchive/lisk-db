@@ -87,6 +87,18 @@ impl StateWriter {
         self.cache.insert(key.to_vec(), cache);
     }
 
+    pub fn get(&mut self, key: &[u8]) -> (Vec<u8>, bool) {
+        let val = self.cache.get(key);
+        if val.is_none() {
+            return (vec![], false);
+        }
+        let val = val.unwrap();
+        if val.deleted {
+            return (vec![], true);
+        }
+        (val.value.clone(), false)
+    }
+
     pub fn is_cached(&mut self, key: &[u8]) -> bool {
         self.cache.get(key).is_some()
     }
@@ -184,6 +196,28 @@ impl StateWriter {
         let batch = RefCell::new(Arc::new(Mutex::new(StateWriter::new())));
 
         Ok(ctx.boxed(batch))
+    }
+
+    pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsObject> {
+        let key = ctx
+            .argument::<JsBuffer>(0)
+            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        // Get the `this` value as a `JsBox<Database>`
+        let batch = ctx
+            .this()
+            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+
+        let writer = batch.borrow().clone();
+        let mut inner_writer = writer.lock().unwrap();
+
+        let (value, deleted) = inner_writer.get(&key);
+        let obj = ctx.empty_object();
+        let val_buf = JsBuffer::external(&mut ctx, value);
+        obj.set(&mut ctx, "value", val_buf)?;
+        let deleted_js = ctx.boolean(deleted);
+        obj.set(&mut ctx, "deleted", deleted_js)?;
+
+        Ok(obj)
     }
 
     pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
@@ -307,7 +341,7 @@ impl StateWriter {
         Ok(ctx.undefined())
     }
 
-    pub fn js_get_cached(mut ctx: FunctionContext) -> JsResult<JsArray> {
+    pub fn js_get_range(mut ctx: FunctionContext) -> JsResult<JsArray> {
         let start = ctx
             .argument::<JsBuffer>(0)
             .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;

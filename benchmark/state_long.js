@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const os = require('os');
 const { PerformanceObserver, performance } = require('perf_hooks');
 
-const { StateDB } = require('../index.js');
+const { StateDB } = require('../main.js');
 
 const logger = bunyan.createLogger({
     name: 'benchmark',

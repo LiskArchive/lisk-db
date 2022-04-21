@@ -1,18 +1,18 @@
 use neon::prelude::*;
 use std::cell::RefCell;
 use std::cmp;
-use std::thread;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::thread;
 use thiserror::Error;
 
 use crate::batch;
+use crate::consts;
+use crate::diff;
 use crate::options;
-use crate::utils;
 use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
-use crate::diff;
-use crate::consts;
+use crate::utils;
 
 #[derive(Error, Debug)]
 pub enum DataStoreError {
@@ -51,11 +51,7 @@ impl StateDB {
 
         let mut opened: rocksdb::DB;
         if opts.readonly || opts.immutable {
-            opened = rocksdb::DB::open_for_read_only(
-                &options,
-                path,
-                false,
-            )?;
+            opened = rocksdb::DB::open_for_read_only(&options, path, false)?;
         } else {
             opened = rocksdb::DB::open(&options, path)?;
         }
@@ -91,11 +87,7 @@ impl StateDB {
             .send(options::DbMessage::Callback(Box::new(callback)))
     }
 
-    fn get_by_key(
-        &self,
-        key: Vec<u8>,
-        cb: Root<JsFunction>,
-    ) -> Result<(), DataStoreError> {
+    fn get_by_key(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
             let result = conn.get([consts::PREFIX_STATE, key.as_slice()].concat());
 
@@ -119,11 +111,7 @@ impl StateDB {
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
 
-    fn exists(
-        &self,
-        key: Vec<u8>,
-        cb: Root<JsFunction>,
-    ) -> Result<(), DataStoreError> {
+    fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
             let key_with_prefix = [consts::PREFIX_STATE, key.as_slice()].concat();
             let exist = conn.key_may_exist(&key_with_prefix);
@@ -157,16 +145,19 @@ impl StateDB {
         height: u32,
         state_root: Vec<u8>,
     ) -> Result<Vec<u8>, DataStoreError> {
-        let diff_bytes = conn.get(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat())
+        let diff_bytes = conn
+            .get(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat())
             .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?
             .ok_or(DataStoreError::DiffNotFound(height))?;
-        
-        let d = diff::Diff::decode(diff_bytes).or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
 
+        let d = diff::Diff::decode(diff_bytes)
+            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
         let mut data = smt::UpdateData::new_from(d.revert_update());
         let mut smtdb = smt_db::SMTDB::new(conn);
         let mut tree = smt::SMT::new(state_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
-        let prev_root = tree.commit(&mut smtdb, &mut data).or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
+        let prev_root = tree
+            .commit(&mut smtdb, &mut data)
+            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
 
         let mut write_batch = batch::PrefixWriteBatch::new();
         // Insert state batch with diff
@@ -178,7 +169,8 @@ impl StateDB {
         write_batch.set_prefix(&consts::PREFIX_SMT);
         smtdb.batch.iterate(&mut write_batch);
         // insert diff
-        conn.write(write_batch.batch).or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
+        conn.write(write_batch.batch)
+            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
 
         Ok(prev_root)
     }
@@ -236,7 +228,10 @@ impl StateDB {
         // Insert state batch with diff
         write_batch.set_prefix(&consts::PREFIX_STATE);
         let diff = writer.commit(&mut write_batch);
-        write_batch.put(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat(), diff.encode().as_ref());
+        write_batch.put(
+            &[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat(),
+            diff.encode().as_ref(),
+        );
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -340,6 +335,40 @@ impl StateDB {
         })
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
+
+    fn clean_diff_until(&self, height: u32, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
+        if height == 0 {
+            return Ok(());
+        }
+        self.send(move |conn, channel| {
+            let zero: u32 = 0;
+            let start = [consts::PREFIX_DIFF, zero.to_be_bytes().as_slice()].concat();
+            let end = [consts::PREFIX_DIFF, (height - 1).to_be_bytes().as_slice()].concat();
+            let result = if let Some(handle) = conn.cf_handle(rocksdb::DEFAULT_COLUMN_FAMILY_NAME) {
+                conn.delete_range_cf(handle, start, end)
+                    .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
+            } else {
+                Err(DataStoreError::Unknown(String::from(
+                    "Failed to get default cf handle",
+                )))
+            };
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(_) => {
+                        vec![ctx.null().upcast()]
+                    }
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        })
+        .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
+    }
 }
 
 type SharedStateDB = JsBox<RefCell<StateDB>>;
@@ -399,7 +428,7 @@ impl StateDB {
         let mut buf = ctx.argument::<JsBuffer>(0)?;
         let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx) as u32;
         let prev_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
@@ -503,7 +532,7 @@ impl StateDB {
     // @params 0 writer (required)
     // @params 1 height (required)
     // @params 2 prev_root (required)
-    // @params 3 readonly 
+    // @params 3 readonly
     // @params 4 expected_root
     // @params 5 check_root
     // @params 6 callback
@@ -530,12 +559,13 @@ impl StateDB {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
         let writer = writer.borrow().clone();
-        db.commit(writer, height, prev_root, readonly, expected, check_root, cb)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
+        db.commit(
+            writer, height, prev_root, readonly, expected, check_root, cb,
+        )
+        .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
     }
-
 
     pub fn js_prove(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
@@ -548,7 +578,9 @@ impl StateDB {
         let mut queries: Vec<Vec<u8>> = vec![];
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let mut key_buf = obj.get(&mut ctx, "key")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let mut key_buf = obj
+                .get(&mut ctx, "key")?
+                .downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
             let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
             queries.push(key);
         }
@@ -556,6 +588,20 @@ impl StateDB {
         let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
 
         db.prove(state_root, queries, cb)
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
+
+    pub fn js_clean_diff_until(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
+        let db = db.borrow();
+
+        let height = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as u32;
+
+        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+
+        db.clean_diff_until(height, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())

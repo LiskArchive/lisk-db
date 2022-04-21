@@ -18,6 +18,7 @@ const {
     db_clear,
     db_close,
     db_get,
+    db_exists,
     db_set,
     db_del,
     db_write,
@@ -25,17 +26,6 @@ const {
     batch_new,
     batch_set,
     batch_del,
-    state_db_new,
-    state_db_close,
-    state_db_get,
-    state_db_set,
-    state_db_del,
-    state_db_clear,
-    state_db_snapshot,
-    state_db_snapshot_restore,
-    state_db_iterate,
-    state_db_revert,
-    state_db_commit,
     in_memory_db_new,
     in_memory_db_get,
     in_memory_db_set,
@@ -45,16 +35,48 @@ const {
     in_memory_db_iterate,
 } = require("./index.node");
 const { Readable } = require('stream');
+const { NotFoundError } = require('./error');
+const { Iterator } = require('./iterator');
+const { getOptionsWithDefault } = require('./options');
 
-class NotFoundError extends Error {
+class Reader {
+    constructor(db) {
+        this._db = db;
+    }
+
+    async get(key) {
+        return new Promise((resolve, reject) => {
+            db_get.call(this._db, key, (err, result) => {
+                if (err) {
+                    if (err.message === 'No data') {
+                        return reject(new NotFoundError('Data not found'));
+                    }
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    async has(key) {
+        return new Promise((resolve, reject) => {
+            db_exists.call(this._db, key, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    iterate(options = {}) {
+        return new Iterator(this._db, db_iterate, getOptionsWithDefault(options));
+    }
+
+    createReadStream(options = {}) {
+        return new Iterator(this._db, db_iterate, getOptionsWithDefault(options));
+    }
 }
-
-const getOptionsWithDefault = options => ({
-    limit: options.limit !== undefined ? options.limit : -1,
-    reverse: options.reverse !== undefined ? options.reverse : false,
-    gte: options.gte !== undefined ? options.gte : undefined,
-    lte: options.lte !== undefined ? options.lte : undefined,
-});
 
 class Database {
     constructor(path, opts = {}) {
@@ -75,17 +97,13 @@ class Database {
         });
     }
 
-    // TODO: use bloomfilter
-    async exists(key) {
+    async has(key) {
         return new Promise((resolve, reject) => {
-            db_get.call(this._db, key, (err, result) => {
+            db_exists.call(this._db, key, (err, result) => {
                 if (err) {
-                    if (err.message === 'No data') {
-                        return resolve(false);
-                    }
                     return reject(err);
                 }
-                resolve(true);
+                resolve(result);
             });
         });
     }
@@ -124,11 +142,11 @@ class Database {
     }
 
     iterate(options = {}) {
-        return new Iterator(this._db, getOptionsWithDefault(options));
+        return new Iterator(this._db, db_iterate, getOptionsWithDefault(options));
     }
 
     createReadStream(options = {}) {
-        return new Iterator(this._db, getOptionsWithDefault(options));
+        return new Iterator(this._db, db_iterate, getOptionsWithDefault(options));
     }
 
     async clear(options = {}) {
@@ -142,35 +160,12 @@ class Database {
         });
     }
 
+    newReader() {
+        return new Reader(this._db);
+    }
+
     close() {
         db_close.call(this._db);
-    }
-}
-
-class Iterator extends Readable {
-    constructor(db, options) {
-        super();
-        this._db = db;
-        this._options = options;
-        this.queue = []
-        Readable.call(this, { objectMode: true });
-    }
-
-    _read() {
-        db_iterate.call(
-            this._db,
-            this._options,
-            (err, val) => {
-                if (err) {
-                    this.emit('error', err);
-                    return;
-                }
-                this.push(val);
-            },
-            () => {
-                this.push(null);
-            },
-        );
     }
 }
 
@@ -217,99 +212,7 @@ class Batch {
     }
 }
 
-class StateDB {
-    constructor(path, opts = {}) {
-        this._db = state_db_new(path, opts);
-    }
 
-    async get(key) {
-        return new Promise((resolve, reject) => {
-            state_db_get.call(this._db, key, (err, result) => {
-                if (err) {
-                    if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
-                    }
-                    return reject(err);
-                }
-                resolve(result);
-            });
-        });
-    }
-
-    // TODO: use bloomfilter
-    async exists(key) {
-        return new Promise((resolve, reject) => {
-            state_db_get.call(this._db, key, (err, result) => {
-                if (err) {
-                    if (err.message === 'No data') {
-                        return resolve(false);
-                    }
-                    return reject(err);
-                }
-                resolve(true);
-            });
-        });
-    }
-
-    async iterate(options = {}) {
-        return new Promise((resolve, reject) => {
-            state_db_iterate.call(this._db, getOptionsWithDefault(options), (err, result) => {
-                if (err) {
-                    return reject(err);
-                }
-                resolve(result);
-            });
-        });
-    }
-
-    async set(key, value) {
-        state_db_set.call(this._db, key, value);
-    }
-
-    async del(key) {
-        state_db_del.call(this._db, key);
-    }
-
-    clear() {
-        state_db_clear.call(this._db);
-    }
-
-    snapshot() {
-        state_db_snapshot.call(this._db);
-    }
-
-    restoreSnapshot() {
-        state_db_snapshot_restore.call(this._db);
-    }
-
-    async revert(prev_root) {
-        return new Promise((_, reject) => {
-            reject(new Error('Not implemented'));
-        });
-    }
-
-    async commit(prev_root, expected_root) {
-        return new Promise((resolve, reject) => {
-            const check_root = expected_root !== undefined;
-            const expected = expected_root || Buffer.alloc(0);
-            state_db_commit.call(this._db, prev_root, expected, check_root, (err, result) => {
-                state_db_clear.call(this._db);
-                if (err) {
-                    return reject(err);
-                }
-                resolve(result);
-            });
-        });
-    }
-
-    async finalize(height) {
-    }
-
-    close() {
-        state_db_close.call(this._db);
-    }
-
-}
 
 class InMemoryDatabase {
     constructor() {
@@ -330,8 +233,7 @@ class InMemoryDatabase {
         });
     }
 
-    // TODO: use bloomfilter
-    async exists(key) {
+    async has(key) {
         return new Promise((resolve, reject) => {
             in_memory_db_get.call(this._db, key, (err, result) => {
                 if (err) {
@@ -391,7 +293,4 @@ module.exports = {
     Database,
     InMemoryDatabase,
     Batch,
-    Iterator,
-    StateDB,
-    NotFoundError,
 };

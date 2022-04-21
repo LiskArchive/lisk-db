@@ -1,15 +1,14 @@
-
 use neon::prelude::*;
-use std::sync::{Arc, Mutex};
-use std::cell::RefCell;
 use sha2::{Digest, Sha256};
-use std::collections::{ HashMap, VecDeque };
-use thiserror::Error;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use thiserror::Error;
 
-use crate::utils;
-use crate::smt_db;
 use crate::consts;
+use crate::smt_db;
+use crate::utils;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UpdateData {
@@ -52,9 +51,7 @@ struct KVPair(Vec<u8>, Vec<u8>);
 
 impl UpdateData {
     pub fn new_from(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self{
-            data: data,
-        }
+        Self { data: data }
     }
 
     pub fn entries(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
@@ -260,7 +257,10 @@ impl SubTree {
         nodes: Vec<Node>,
         hasher: Hasher,
     ) -> Result<Self, SMTError> {
-        let height = structure.iter().max().ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
+        let height = structure
+            .iter()
+            .max()
+            .ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
 
         let node_hashes = nodes.iter().map(|n| n.hash.clone()).collect();
         let calculated = hasher(&node_hashes, &structure, *height as usize);
@@ -338,7 +338,13 @@ fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -
     tree_hasher(&next_hashes, &next_structure, height - 1)
 }
 
-fn calculate_subtree(layer_nodes: &Vec<Node>, layer_structure: &Vec<u8>, height: u8, tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>, hasher: Hasher) -> Result<SubTree, SMTError> {
+fn calculate_subtree(
+    layer_nodes: &Vec<Node>,
+    layer_structure: &Vec<u8>,
+    height: u8,
+    tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
+    hasher: Hasher,
+) -> Result<SubTree, SMTError> {
     let mut next_layer_nodes: Vec<Node> = vec![];
     let mut next_layer_structure: Vec<u8> = vec![];
     let mut i = 0;
@@ -349,24 +355,37 @@ fn calculate_subtree(layer_nodes: &Vec<Node>, layer_structure: &Vec<u8>, height:
             i += 1;
             continue;
         }
-        let parent_node = if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Empty {
+        let parent_node = if layer_nodes[i].kind == NodeKind::Empty
+            && layer_nodes[i + 1].kind == NodeKind::Empty
+        {
             layer_nodes[i].clone()
-        } else if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Leaf {
+        } else if layer_nodes[i].kind == NodeKind::Empty
+            && layer_nodes[i + 1].kind == NodeKind::Leaf
+        {
             layer_nodes[i + 1].clone()
-        } else if layer_nodes[i].kind == NodeKind::Leaf && layer_nodes[i + 1].kind == NodeKind::Empty {
+        } else if layer_nodes[i].kind == NodeKind::Leaf
+            && layer_nodes[i + 1].kind == NodeKind::Empty
+        {
             layer_nodes[i].clone()
         } else {
             let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(
+                    String::from("Subtree must exist for stub"),
+                ))?;
                 (nodes.clone(), structure.clone())
             } else {
                 (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
             };
             let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(
+                    String::from("Subtree must exist for stub"),
+                ))?;
                 (nodes.clone(), structure.clone())
             } else {
-                (vec![layer_nodes[i + 1].clone()], vec![layer_structure[i + 1]])
+                (
+                    vec![layer_nodes[i + 1].clone()],
+                    vec![layer_structure[i + 1]],
+                )
             };
             left_structure.extend(right_structure);
             left_nodes.extend(right_nodes);
@@ -382,12 +401,23 @@ fn calculate_subtree(layer_nodes: &Vec<Node>, layer_structure: &Vec<u8>, height:
     }
     if height == 1 {
         if next_layer_nodes[0].kind == NodeKind::Temp {
-            let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(String::from("Subtree must exist for stub"))).and_then(|node| Ok(node.clone()))?;
+            let (nodes, structure) = tree_map
+                .pop_front()
+                .ok_or(SMTError::Unknown(String::from(
+                    "Subtree must exist for stub",
+                )))
+                .and_then(|node| Ok(node.clone()))?;
             return SubTree::from_data(structure, nodes, hasher);
         }
         return SubTree::from_data(vec![0], next_layer_nodes, hasher);
     }
-    calculate_subtree(&next_layer_nodes, &next_layer_structure, height - 1, tree_map, hasher)
+    calculate_subtree(
+        &next_layer_nodes,
+        &next_layer_structure,
+        height - 1,
+        tree_map,
+        hasher,
+    )
 }
 
 impl SMT {
@@ -414,7 +444,7 @@ impl SMT {
     }
 
     pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
-        Ok(Proof{
+        Ok(Proof {
             queries: vec![],
             sibling_hashes: vec![],
         })
@@ -514,10 +544,19 @@ impl SMT {
             return Err(SMTError::Unknown(String::from("Invalid value")));
         }
         // Go through nodes again and push up empty nodes
-        let max_structure = new_structures.iter().max().ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
+        let max_structure = new_structures
+            .iter()
+            .max()
+            .ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
         let mut tree_map = VecDeque::new();
 
-        let new_subtree = calculate_subtree(&new_nodes, &new_structures, *max_structure, &mut tree_map, self.hasher)?;
+        let new_subtree = calculate_subtree(
+            &new_nodes,
+            &new_structures,
+            *max_structure,
+            &mut tree_map,
+            self.hasher,
+        )?;
         let value = new_subtree.encode();
         db.set(new_subtree.root.clone(), value)
             .or_else(|err| Err(SMTError::Unknown(err.to_string())))?;
@@ -648,7 +687,7 @@ type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 
 impl InMemorySMT {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
-        let tree = InMemorySMT{
+        let tree = InMemorySMT {
             db: smt_db::InMemorySMTDB::new(),
         };
 
@@ -657,27 +696,36 @@ impl InMemorySMT {
     }
 
     pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let in_memory_smt = ctx.this().downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
+        let in_memory_smt = ctx
+            .this()
+            .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
         let in_memory_smt = in_memory_smt.borrow().clone();
 
-        let input = ctx.argument::<JsArray>(0)?.to_vec(&mut ctx)?;
+        let mut buf = ctx.argument::<JsBuffer>(0)?;
+        let state_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+
+        let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut data: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let mut key_buf = obj.get(&mut ctx, "key")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let mut key_buf = obj
+                .get(&mut ctx, "key")?
+                .downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
             let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
-            let mut value_buf = obj.get(&mut ctx, "value")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let mut value_buf = obj
+                .get(&mut ctx, "value")?
+                .downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
             let value = ctx.borrow(&mut value_buf, |data| data.as_slice().to_vec());
             data.insert(key, value);
         }
 
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
 
         let channel = ctx.channel();
 
         thread::spawn(move || {
             let mut update_data = UpdateData::new_from(data);
-            let mut tree = SMT::new(vec![], consts::KEY_LENGTH, consts::SUBTREE_SIZE);
+            let mut tree = SMT::new(state_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
 
             let mut inner_smt = in_memory_smt.lock().unwrap();
             let result = tree.commit(&mut inner_smt.db, &mut update_data);
@@ -701,8 +749,10 @@ impl InMemorySMT {
         Ok(ctx.undefined())
     }
 
-    pub fn js_proof(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let in_memory_smt = ctx.this().downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
+    pub fn js_prove(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let in_memory_smt = ctx
+            .this()
+            .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
         let in_memory_smt = in_memory_smt.borrow().clone();
 
         let mut buf = ctx.argument::<JsBuffer>(0)?;
@@ -711,9 +761,8 @@ impl InMemorySMT {
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut data: Vec<Vec<u8>> = vec![];
         for key in input.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let mut key_buf = obj.get(&mut ctx, "key")?.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
-            let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+            let mut obj = key.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
+            let key = ctx.borrow(&mut obj, |data| data.as_slice().to_vec());
             data.push(key);
         }
 
@@ -817,7 +866,7 @@ mod tests {
 
         for (keys, values, root) in test_data {
             let mut tree = SMT::new(vec![], 32, 8);
-            let mut data = UpdateData{
+            let mut data = UpdateData {
                 data: HashMap::new(),
             };
             for idx in 0..keys.len() {
