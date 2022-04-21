@@ -54,6 +54,18 @@ impl UpdateData {
         Self { data: data }
     }
 
+    pub fn new_with_hash(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
+        let mut new_data = HashMap::new();
+        for (k, v) in data {
+            if v.len() != 0 {
+                new_data.insert(key_hash(&k), value_hash(&v));
+            } else {
+                new_data.insert(key_hash(&k), vec![]);
+            }
+        }
+        Self { data: new_data }
+    }
+
     pub fn entries(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         let mut kvpairs = vec![];
         for (k, v) in self.data.iter() {
@@ -130,7 +142,6 @@ pub struct QueryProof {
 enum NodeKind {
     Empty,
     Leaf,
-    Branch,
     Stub,
     Temp,
 }
@@ -144,16 +155,6 @@ struct Node {
 }
 
 impl Node {
-    fn new_branch(node_hash: &[u8]) -> Self {
-        let data = [PREFIX_BRANCH_HASH, node_hash].concat();
-        Self {
-            kind: NodeKind::Branch,
-            data: data,
-            hash: node_hash.to_vec(),
-            key: vec![],
-        }
-    }
-
     fn new_temp() -> Self {
         Self {
             kind: NodeKind::Temp,
@@ -209,10 +210,7 @@ impl SubTree {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
         }
         let node_length: usize = data[0] as usize + 1;
-        let mut structure = vec![];
-        for idx in 1..node_length + 1 {
-            structure.push(data[idx]);
-        }
+        let structure = data[1..node_length + 1].to_vec();
         let node_data = data[node_length + 1..].to_vec();
         let mut nodes = vec![];
         let mut idx = 0;
@@ -234,7 +232,7 @@ impl SubTree {
                     let node_hash = node_data[idx + PREFIX_BRANCH_HASH.len()
                         ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE]
                         .to_vec();
-                    nodes.push(Node::new_branch(node_hash.as_slice()));
+                    nodes.push(Node::new_stub(node_hash.as_slice()));
                     idx += PREFIX_BRANCH_HASH.len() + HASH_SIZE;
                 }
                 PREFIX_INT_EMPTY => {
@@ -286,7 +284,9 @@ impl SubTree {
 
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
-        let node_hashes: Vec<Vec<u8>> = self.nodes.iter().map(|n| n.data.clone()).collect();
+        let node_hashes: Vec<Vec<u8>> = self.nodes.iter().map(|n| {
+            n.data.clone()
+        }).collect();
         [
             vec![node_length],
             self.structure.clone(),
@@ -313,6 +313,9 @@ pub trait DB {
 }
 
 fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -> Vec<u8> {
+    if node_hashes.len() == 1 {
+        return node_hashes[0].clone();
+    }
     let mut next_hashes = vec![];
     let mut next_structure = vec![];
     let mut i = 0;
@@ -345,6 +348,9 @@ fn calculate_subtree(
     tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
     hasher: Hasher,
 ) -> Result<SubTree, SMTError> {
+    if height == 0 {
+        return SubTree::from_data(vec![0], layer_nodes.clone(), hasher);
+    }
     let mut next_layer_nodes: Vec<Node> = vec![];
     let mut next_layer_structure: Vec<u8> = vec![];
     let mut i = 0;
@@ -369,7 +375,7 @@ fn calculate_subtree(
             layer_nodes[i].clone()
         } else {
             let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(
+                let (nodes, structure) = tree_map.pop_back().ok_or(SMTError::Unknown(
                     String::from("Subtree must exist for stub"),
                 ))?;
                 (nodes.clone(), structure.clone())
@@ -377,7 +383,7 @@ fn calculate_subtree(
                 (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
             };
             let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_front().ok_or(SMTError::Unknown(
+                let (nodes, structure) = tree_map.pop_back().ok_or(SMTError::Unknown(
                     String::from("Subtree must exist for stub"),
                 ))?;
                 (nodes.clone(), structure.clone())
@@ -423,8 +429,13 @@ fn calculate_subtree(
 impl SMT {
     pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
         let max_number_of_nodes = 1 << subtree_height;
+        let r = if root.len() == 0 {
+            utils::empty_hash()
+        } else {
+            root
+        };
         Self {
-            root: root,
+            root: r,
             key_length: key_length,
             hasher: tree_hasher,
             subtree_height: subtree_height,
@@ -455,16 +466,16 @@ impl SMT {
             return Ok(SubTree::new_empty());
         }
 
-        if utils::is_empty_bytes(node_hash) {
+        if utils::is_empty_hash(node_hash) {
             return Ok(SubTree::new_empty());
         }
 
-        let key = db
+        let value = db
             .get(node_hash.clone())
             .or_else(|err| Err(SMTError::Unknown(err.to_string())))?
             .ok_or(SMTError::NotFound(String::from("node_hash does not exist")))?;
 
-        SubTree::new(key, self.key_length, self.hasher)
+        SubTree::new(value, self.key_length, self.hasher)
     }
 
     fn update_subtree(
@@ -537,11 +548,11 @@ impl SMT {
 
             new_nodes.extend(nodes);
             new_structures.extend(heights);
-            bin_offset = new_offset;
+            bin_offset += new_offset;
         }
 
         if bin_offset != self.max_number_of_nodes {
-            return Err(SMTError::Unknown(String::from("Invalid value")));
+            return Err(SMTError::Unknown(format!("bin_offset {} expected {}", bin_offset, self.max_number_of_nodes)));
         }
         // Go through nodes again and push up empty nodes
         let max_structure = new_structures
@@ -620,6 +631,9 @@ impl SMT {
                     return Err(SMTError::Unknown(String::from("invalid node type")));
                 }
             };
+            if key_bins.len() != 1 || value_bins.len() != 1 {
+                return Err(SMTError::Unknown(String::from("invalid key/value length")));
+            }
             let new_subtree = self.update_subtree(
                 db,
                 key_bins[0].clone(),
@@ -679,6 +693,7 @@ impl SMT {
 
 pub struct InMemorySMT {
     db: smt_db::InMemorySMTDB,
+    key_length: usize,
 }
 
 impl Finalize for InMemorySMT {}
@@ -687,8 +702,10 @@ type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 
 impl InMemorySMT {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
+        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
         let tree = InMemorySMT {
             db: smt_db::InMemorySMTDB::new(),
+            key_length: key_length,
         };
 
         let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
@@ -725,9 +742,11 @@ impl InMemorySMT {
 
         thread::spawn(move || {
             let mut update_data = UpdateData::new_from(data);
-            let mut tree = SMT::new(state_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
-
             let mut inner_smt = in_memory_smt.lock().unwrap();
+            let key_length = inner_smt.key_length;
+
+            let mut tree = SMT::new(state_root, key_length, consts::SUBTREE_SIZE);
+
             let result = tree.commit(&mut inner_smt.db, &mut update_data);
 
             channel.send(move |mut ctx| {
@@ -771,9 +790,9 @@ impl InMemorySMT {
         let channel = ctx.channel();
 
         thread::spawn(move || {
-            let mut tree = SMT::new(state_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
-
             let mut inner_smt = in_memory_smt.lock().unwrap();
+            let mut tree = SMT::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+
             let result = tree.prove(&mut inner_smt.db, data);
 
             channel.send(move |mut ctx| {
@@ -851,7 +870,53 @@ mod tests {
     }
 
     #[test]
-    fn test_small_tree() {
+    fn test_empty_tree() {
+        let mut tree = SMT::new(vec![], 32, 8);
+        let mut data = UpdateData {
+            data: HashMap::new(),
+        };
+        let mut db = smt_db::InMemorySMTDB::new();
+        let result = tree.commit(&mut db, &mut data);
+
+        assert_eq!(
+            result.unwrap(),
+            hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_small_tree_0() {
+        let test_data = vec![(
+            vec![
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            ],
+            vec![
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+            ],
+            "ccd1c136c75ffd2e3947466ad17dd6687d890ce50cbeb7ca7a4da638df482b96",
+        )];
+
+        for (keys, values, root) in test_data {
+            let mut tree = SMT::new(vec![], 32, 8);
+            let mut data = UpdateData {
+                data: HashMap::new(),
+            };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+            let mut db = smt_db::InMemorySMTDB::new();
+            let result = tree.commit(&mut db, &mut data);
+
+            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_small_tree_1() {
         let test_data = vec![(
             vec![
                 "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
@@ -862,6 +927,94 @@ mod tests {
                 "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
             ],
             "6d13bfad2a210dc084b9a896f79243d58c7fbd2721181b86cdaed00af349f429",
+        )];
+
+        for (keys, values, root) in test_data {
+            let mut tree = SMT::new(vec![], 32, 8);
+            let mut data = UpdateData {
+                data: HashMap::new(),
+            };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+            let mut db = smt_db::InMemorySMTDB::new();
+            let result = tree.commit(&mut db, &mut data);
+
+            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_small_tree_2() {
+        let test_data = vec![(
+            vec![
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            ],
+            vec![
+                "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
+                "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
+                "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+            ],
+            "d336d7a29ec55728822a2f9ec6aae3bee549e743d50469d7fe924914348ff758",
+        )];
+
+        for (keys, values, root) in test_data {
+            let mut tree = SMT::new(vec![], 32, 8);
+            let mut data = UpdateData {
+                data: HashMap::new(),
+            };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+            let mut db = smt_db::InMemorySMTDB::new();
+            let result = tree.commit(&mut db, &mut data);
+
+            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_small_tree_3() {
+        let test_data = vec![(
+            vec![
+                "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+                "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                "beead77994cf573341ec17b58bbf7eb34d2711c993c1d976b128b3188dc1829a",
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6",
+                "2b4c342f5433ebe591a1da77e013d1b72475562d48578dca8b84bac6651c3cb9",
+            ],
+            vec![
+                "b6d58dfa6547c1eb7f0d4ffd3e3bd6452213210ea51baa70b97c31f011187215",
+                "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
+                "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
+                "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
+                "42bbafcdee807bf0e14577e5fa6ed1bc0cd19be4f7377d31d90cd7008cb74d73",
+                "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                "f3035c79a84a2dda7a7b5f356b3aeb82fb934d5f126af99bbee9a404c425b888",
+                "2ad16b189b68e7672a886c82a0550bc531782a3a4cfb2f08324e316bb0f3174d",
+            ],
+            "3f91f1b7bc96933102dcce6a6c9200c68146a8327c16b91f8e4b37f40e2e2fb4",
         )];
 
         for (keys, values, root) in test_data {

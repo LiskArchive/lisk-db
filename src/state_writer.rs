@@ -87,7 +87,7 @@ impl StateWriter {
         self.cache.insert(key.to_vec(), cache);
     }
 
-    pub fn get(&mut self, key: &[u8]) -> (Vec<u8>, bool) {
+    pub fn get(&self, key: &[u8]) -> (Vec<u8>, bool) {
         let val = self.cache.get(key);
         if val.is_none() {
             return (vec![], false);
@@ -99,7 +99,7 @@ impl StateWriter {
         (val.value.clone(), false)
     }
 
-    pub fn is_cached(&mut self, key: &[u8]) -> bool {
+    pub fn is_cached(&self, key: &[u8]) -> bool {
         self.cache.get(key).is_some()
     }
 
@@ -208,7 +208,7 @@ impl StateWriter {
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
         let writer = batch.borrow().clone();
-        let mut inner_writer = writer.lock().unwrap();
+        let inner_writer = writer.lock().unwrap();
 
         let (value, deleted) = inner_writer.get(&key);
         let obj = ctx.empty_object();
@@ -308,7 +308,7 @@ impl StateWriter {
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
         let writer = batch.borrow().clone();
-        let mut inner_writer = writer.lock().unwrap();
+        let inner_writer = writer.lock().unwrap();
 
         let cached = inner_writer.is_cached(&key);
 

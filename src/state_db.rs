@@ -29,6 +29,7 @@ impl Finalize for StateDB {}
 pub struct StateDB {
     tx: mpsc::Sender<options::DbMessage>,
     readonly: bool,
+    key_length: usize,
 }
 
 impl StateDB {
@@ -47,10 +48,9 @@ impl StateDB {
 
         let mut options = rocksdb::Options::default();
         options.create_if_missing(true);
-        options.create_missing_column_families(true);
 
         let mut opened: rocksdb::DB;
-        if opts.readonly || opts.immutable {
+        if opts.readonly {
             opened = rocksdb::DB::open_for_read_only(&options, path, false)?;
         } else {
             opened = rocksdb::DB::open(&options, path)?;
@@ -70,6 +70,7 @@ impl StateDB {
         return Ok(Self {
             tx: tx,
             readonly: opts.readonly,
+            key_length: opts.key_length,
         });
     }
 
@@ -144,6 +145,7 @@ impl StateDB {
         conn: &rocksdb::DB,
         height: u32,
         state_root: Vec<u8>,
+        key_length: usize,
     ) -> Result<Vec<u8>, DataStoreError> {
         let diff_bytes = conn
             .get(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat())
@@ -152,9 +154,9 @@ impl StateDB {
 
         let d = diff::Diff::decode(diff_bytes)
             .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
-        let mut data = smt::UpdateData::new_from(d.revert_update());
+        let mut data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SMTDB::new(conn);
-        let mut tree = smt::SMT::new(state_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
+        let mut tree = smt::SMT::new(state_root, key_length, consts::SUBTREE_SIZE);
         let prev_root = tree
             .commit(&mut smtdb, &mut data)
             .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
@@ -181,8 +183,9 @@ impl StateDB {
         state_root: Vec<u8>,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        let key_length = self.key_length;
         self.send(move |conn, channel| {
-            let result = StateDB::get_revert_result(conn, height, state_root);
+            let result = StateDB::get_revert_result(conn, height, state_root, key_length);
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -254,11 +257,12 @@ impl StateDB {
         check_expected: bool,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        let key_length = self.key_length;
         self.send(move |conn, channel| {
             let w = writer.lock().unwrap();
-            let mut data = smt::UpdateData::new_from(w.get_updated());
+            let mut data = smt::UpdateData::new_with_hash(w.get_updated());
             let mut smtdb = smt_db::SMTDB::new(conn);
-            let mut tree = smt::SMT::new(prev_root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
+            let mut tree = smt::SMT::new(prev_root, key_length, consts::SUBTREE_SIZE);
             let root = tree.commit(&mut smtdb, &mut data);
             let result = StateDB::handle_commit_result(
                 conn,
@@ -295,8 +299,9 @@ impl StateDB {
         queries: Vec<Vec<u8>>,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
+        let key_length = self.key_length;
         self.send(move |conn, channel| {
-            let mut tree = smt::SMT::new(root, consts::KEY_LENGTH, consts::SUBTREE_SIZE);
+            let mut tree = smt::SMT::new(root, key_length, consts::SUBTREE_SIZE);
             let mut smtdb = smt_db::SMTDB::new(conn);
             let result = tree.prove(&mut smtdb, queries);
 

@@ -18,7 +18,7 @@ export interface Options {
 
 export interface StateDBOptions {
     readonly?: boolean;
-    immutable?: boolean;
+    keyLength?: number;
 }
 
 export interface IterateOptions {
@@ -28,7 +28,7 @@ export interface IterateOptions {
     lte?: Buffer;
 }
 
-export class NotFoundError extends Error {}
+export class NotFoundError extends Error { }
 
 interface DatabaseReader {
     get(key: Buffer): Promise<Buffer>;
@@ -81,7 +81,7 @@ declare class StateReadWriter {
     has(key: Buffer): Promise<boolean>;
     set(key: Buffer, value: Buffer): Promise<void>;
     del(key: Buffer): Promise<void>;
-    iterate(options?: IterateOptions): Promise<{key: Buffer, value: Buffer}[]>;
+    iterate(options?: IterateOptions): Promise<{ key: Buffer, value: Buffer }[]>;
     snapshot(): void;
     restoreSnapshot(): void;
 }
@@ -114,4 +114,10 @@ export class StateDB {
     newReader(): StateReader;
     newReadWtiter(): StateReadWriter;
     close(): void;
+}
+
+export class SparseMerkleTree {
+    constructor(keyLength?: number);
+    update(root: Buffer, kvpair: { key: Buffer, value: Buffer }[]): Promise<Buffer>;
+    prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
 }

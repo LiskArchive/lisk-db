@@ -45,9 +45,13 @@ const getRandomBytes = () => crypto.randomBytes(32);
 
 
     const stateDB = new StateDB('.tmp-state', { readonly: false });
-    stateDB.set(Buffer.from('0000000d00000000000000000000000000000000000000000001', 'hex'), Buffer.from('1', 'utf-8'));
-    stateDB.set(Buffer.from('0000000d400000dfc343245e3382d92f4cfc328802ad184ac07a', 'hex'), Buffer.from('a', 'utf-8'));
-    stateDB.set(Buffer.from('0000000d4000013b181a4ac911616e7115f5aa8133b0b38dc2eb', 'hex'), Buffer.from('b', 'utf-8'));
+    const stateWriter = stateDB.newReadWriter();
+    stateWriter.set(Buffer.from('0000000d00000000000000000000000000000000000000000001', 'hex'), Buffer.from('1', 'utf-8'));
+    stateWriter.set(Buffer.from('0000000d400000dfc343245e3382d92f4cfc328802ad184ac07a', 'hex'), Buffer.from('a', 'utf-8'));
+    stateWriter.set(Buffer.from('0000000d4000013b181a4ac911616e7115f5aa8133b0b38dc2eb', 'hex'), Buffer.from('b', 'utf-8'));
+
+    const root = await stateDB.commit(stateWriter, 0, Buffer.alloc(0));
+    console.log('root', root);
 
     const res = await stateDB.iterate({
         gte: Buffer.from('0000000d00000000000000000000000000000000000000000000', 'hex'),
@@ -56,13 +60,6 @@ const getRandomBytes = () => crypto.randomBytes(32);
         reverse: false,
     });
     console.log({ res });
-    for (let i = 0; i < 2; i++) {
-        const key = getRandomBytes();
-        const value = getRandomBytes();
-        stateDB.set(key, value);
-    }
-    const root = await stateDB.commit(Buffer.from([]));
-    console.log('root', root);
 
     await stateDB.close();
 

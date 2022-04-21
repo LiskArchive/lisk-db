@@ -51,12 +51,15 @@ const count = 10000;
     for (let i = 0; i < 10000; i++) {
         logger.info(`Executing ${i + 1} with root ${root.toString('hex')}`);
         performance.mark('s-start');
+        const writer = db.newReadWriter();
         for (let j = 0; j < count; j++) {
-            db.set(Buffer.concat([Buffer.from([0,0,0,0,0,0]), getRandomBytes(20)]), getRandomBytes(100));
+            await writer.set(Buffer.concat([Buffer.from([0,0,0,0,0,0]), getRandomBytes(32)]), getRandomBytes(32));
         }
         performance.mark('s-end');
         performance.mark('c-start');
-        root = await db.commit(root);
+        console.log({ i, root })
+        root = await db.commit(writer, i, root);
+        console.log({ root })
         performance.mark('c-end');
 
         performance.measure(`Setting ${i}`, 's-start', 's-end');

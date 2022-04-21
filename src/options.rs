@@ -1,9 +1,12 @@
 use neon::prelude::*;
 
+
+use crate::consts;
+
 #[derive(Debug)]
 pub struct DatabaseOptions {
     pub readonly: bool,
-    pub immutable: bool,
+    pub key_length: usize,
 }
 
 impl DatabaseOptions {
@@ -12,7 +15,7 @@ impl DatabaseOptions {
         C: Context<'a>,
     {
         if input.is_none() {
-            return Ok(Self{ readonly: false, immutable: false });
+            return Ok(Self{ readonly: false, key_length: consts::KEY_LENGTH });
         }
         let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
         let readonly = obj
@@ -23,18 +26,18 @@ impl DatabaseOptions {
                     .unwrap_or(false)
             })
             .unwrap_or(false);
-        let immutable = obj
-            .get(ctx, "immutable")
+        let key_length = obj
+            .get(ctx, "keyLength")
             .map(|val| {
-                val.downcast::<JsBoolean, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx)))
-                    .unwrap_or(false)
+                val.downcast::<JsNumber, _>(ctx)
+                    .and_then(|val| Ok(val.value(ctx) as usize))
+                    .unwrap_or(consts::KEY_LENGTH)
             })
-            .unwrap_or(false);
+            .unwrap_or(consts::KEY_LENGTH);
 
         Ok(Self {
             readonly: readonly,
-            immutable: immutable,
+            key_length: key_length,
         })
     }
 }

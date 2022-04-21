@@ -18,10 +18,10 @@ const {
     in_memory_smt_prove,
 } = require("./index.node");
 
-
+const DEFAULT_KEY_LENGTH = 38;
 class SparseMerkleTree {
-    constructor() {
-        this._inner = in_memory_smt_new();
+    constructor(keyLength = DEFAULT_KEY_LENGTH) {
+        this._inner = in_memory_smt_new(keyLength);
     }
 
     async update(root, kvpairs) {

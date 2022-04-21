@@ -12,9 +12,11 @@ pub enum CodecError {
     InvalidWireType,
 }
 
+const MAX_VARINT_LEN: usize = 10;
+
 fn write_varint(value: u32) -> Vec<u8> {
     let mut value = value;
-    let mut result = vec![];
+    let mut result = vec![0; MAX_VARINT_LEN];
     let mut index = 0;
     while value > 0x7f {
         result[index] = 0x80 | ((value & 0x7f) >> 0) as u8;
@@ -23,7 +25,7 @@ fn write_varint(value: u32) -> Vec<u8> {
     }
     result[index] = value as u8;
 
-    result
+    result[0..index+1].to_vec()
 }
 
 fn read_key(val: u32) -> Result<(u32, u32), CodecError> {

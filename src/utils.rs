@@ -26,6 +26,6 @@ pub fn is_bytes_equal(a: &Vec<u8>, b: &Vec<u8>) -> bool {
     compare(a, b) == cmp::Ordering::Equal
 }
 
-pub fn is_empty_bytes(a: &Vec<u8>) -> bool {
+pub fn is_empty_hash(a: &Vec<u8>) -> bool {
     compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
 }

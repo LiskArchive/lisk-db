@@ -13,12 +13,17 @@
  */
 'use strict';
 
-const { Database } = require('../index');
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+const { Database } = require('../');
 
-describe('Database', () => {
+describe.only('Database', () => {
     describe('constructor', () => {
         it('should open DB', () => {
-            const db = new Database('./.tmp', { readonly: true });
+            const dbPath = path.join(os.tmpdir(), Date.now().toString());
+            fs.mkdirSync(dbPath, { recursive: true });
+            const db = new Database(dbPath);
             expect(db).not.toBeUndefined();
             db.close();
         });
