@@ -15,22 +15,6 @@ impl WriteBatch {
         Self{batch: rocksdb::WriteBatch::default()}
     }
 
-    pub fn put(&mut self, key: &[u8], value: &[u8]) {
-        self.batch.put(key, value)
-    }
-
-    pub fn delete(&mut self, key: &[u8]) {
-        self.batch.delete(key)
-    }
-
-    pub fn clear(&mut self) {
-        self.batch.clear()
-    }
-
-    pub fn iterate(&mut self, callbacks: &mut dyn rocksdb::WriteBatchIterator) {
-        self.batch.iterate(callbacks)
-    }
-
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<SendableWriteBatch>> {
         let batch = RefCell::new(Arc::new(Mutex::new(WriteBatch {
             batch: rocksdb::WriteBatch::default(),
@@ -95,33 +79,51 @@ impl Clone for WriteBatch {
     }
 }
 
-pub struct CfWriteBatch<'a> {
+pub struct PrefixWriteBatch<'a> {
     pub batch: rocksdb::WriteBatch,
-    cf: Option<&'a rocksdb::ColumnFamily>,
-    pub count: u32,
+    prefix: Option<&'a[u8]>,
 }
 
-impl <'a>CfWriteBatch<'a> {
+pub trait BatchWriter {
+    fn put(&mut self, key: &[u8], value: &[u8]);
+    fn delete(&mut self, key: &[u8]);
+} 
+
+impl <'a>PrefixWriteBatch<'a> {
     pub fn new() -> Self {
-        Self{batch: rocksdb::WriteBatch::default(), cf: None, count: 0}
+        PrefixWriteBatch{batch: rocksdb::WriteBatch::default(), prefix: None}
     }
     
-    pub fn set_cf(&mut self, cf: &'a rocksdb::ColumnFamily) {
-        self.cf = Some(cf);
-        self.count = 0;
+    pub fn set_prefix(&mut self, prefix: &'a &[u8]) {
+        self.prefix = Some(prefix);
+    }
+
+    pub fn put(&mut self, key: &[u8], value: &[u8]) {
+        self.batch.put(key, value);
+    }
+
+    pub fn delete(&mut self, key: &[u8]) {
+        self.batch.delete(key);
     }
 }
 
-impl <'a>rocksdb::WriteBatchIterator for CfWriteBatch<'a> {
+impl <'a>BatchWriter for PrefixWriteBatch<'a> {
+    fn put(&mut self, key: &[u8], value: &[u8]) {
+        self.batch.put(key, value);
+    }
+
+    fn delete(&mut self, key: &[u8]) {
+        self.batch.delete(key);
+    }
+}
+
+impl <'a>rocksdb::WriteBatchIterator for PrefixWriteBatch<'a> {
     /// Called with a key and value that were `put` into the batch.
     fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
-        let cf = self.cf.unwrap();
-        self.batch.put_cf(cf, key, value);
-        self.count += 1;
+        self.batch.put([self.prefix.unwrap(), key.as_ref()].concat(), value);
     }
     /// Called with a key that was `delete`d from the batch.
     fn delete(&mut self, key: Box<[u8]>) {
-        let cf = self.cf.unwrap();
-        self.batch.delete_cf(cf, key);
+        self.batch.delete([self.prefix.unwrap(), key.as_ref()].concat());
     }
 }

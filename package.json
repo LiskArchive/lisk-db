@@ -20,7 +20,7 @@
     "node": ">=12.13.0",
     "npm": ">=6.12.0"
   },
-  "main": "index.js",
+  "main": "main.js",
   "types": "types.d.ts",
   "scripts": {
     "prebuild": "rimraf index.node",

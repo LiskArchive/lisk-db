@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::batch;
 use crate::options;
+use crate::utils;
 
 #[derive(Clone, Debug)]
 struct KVPair(Vec<u8>, Vec<u8>);
@@ -27,7 +28,7 @@ pub struct CacheData {
 }
 
 impl Database {
-    fn new() -> Result<Self, rocksdb::Error> {
+    pub fn new() -> Result<Self, rocksdb::Error> {
         return Ok(Database {
             cache: CacheData {
                 data: HashMap::new(),
@@ -40,8 +41,8 @@ impl Database {
             .data
             .iter()
             .filter(|(k, _)| {
-                options::compare(k, start) != cmp::Ordering::Less
-                    && options::compare(k, end) != cmp::Ordering::Greater
+                utils::compare(k, start) != cmp::Ordering::Less
+                    && utils::compare(k, end) != cmp::Ordering::Greater
             })
             .map(|(k, v)| KVPair(k.clone(), v.clone()))
             .collect()

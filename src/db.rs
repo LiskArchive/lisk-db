@@ -6,6 +6,7 @@ use neon::prelude::*;
 
 use crate::batch;
 use crate::options;
+use crate::utils;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
@@ -96,6 +97,33 @@ impl Database {
             })
         })
     }
+
+    fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        self.send(move |conn, channel| {
+            let exist = conn.key_may_exist(&key);
+            let result = if !exist {
+                conn.get(&key).and_then(|res| Ok(res.is_some()))
+            } else {
+                Ok(false)
+            };
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        let converted = ctx.boolean(val);
+                        vec![ctx.null().upcast(), converted.upcast()]
+                    }
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        })
+    }
 }
 
 impl Database {
@@ -158,6 +186,21 @@ impl Database {
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
         db.get_by_key(key, cb)
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
+
+    pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let mut buf = ctx.argument::<JsBuffer>(0)?;
+        let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        // Get the `this` value as a `JsBox<Database>`
+        let db = ctx
+            .this()
+            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+
+        db.exists(key, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -308,13 +351,13 @@ impl Database {
                 }
                 if options.reverse {
                     if let Some(gte) = &options.gte {
-                        if options::compare(&key, &gte) == cmp::Ordering::Less {
+                        if utils::compare(&key, &gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
                 } else {
                     if let Some(lte) = &options.lte {
-                        if options::compare(&key, &lte) == cmp::Ordering::Greater {
+                        if utils::compare(&key, &lte) == cmp::Ordering::Greater {
                             break;
                         }
                     }
