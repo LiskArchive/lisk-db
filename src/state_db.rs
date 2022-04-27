@@ -116,7 +116,7 @@ impl StateDB {
         self.send(move |conn, channel| {
             let key_with_prefix = [consts::PREFIX_STATE, key.as_slice()].concat();
             let exist = conn.key_may_exist(&key_with_prefix);
-            let result = if !exist {
+            let result = if exist {
                 conn.get(&key_with_prefix).and_then(|res| Ok(res.is_some()))
             } else {
                 Ok(false)
@@ -165,7 +165,8 @@ impl StateDB {
         // Insert state batch with diff
         write_batch.set_prefix(&consts::PREFIX_STATE);
         d.revert_commit(&mut write_batch);
-        write_batch.delete(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat());
+        write_batch.set_prefix(&consts::PREFIX_DIFF);
+        write_batch.delete(height.to_be_bytes().as_slice());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -231,8 +232,9 @@ impl StateDB {
         // Insert state batch with diff
         write_batch.set_prefix(&consts::PREFIX_STATE);
         let diff = writer.commit(&mut write_batch);
+        write_batch.set_prefix(&consts::PREFIX_DIFF);
         write_batch.put(
-            &[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat(),
+            height.to_be_bytes().as_slice(),
             diff.encode().as_ref(),
         );
 
@@ -349,14 +351,21 @@ impl StateDB {
             let zero: u32 = 0;
             let start = [consts::PREFIX_DIFF, zero.to_be_bytes().as_slice()].concat();
             let end = [consts::PREFIX_DIFF, (height - 1).to_be_bytes().as_slice()].concat();
-            let result = if let Some(handle) = conn.cf_handle(rocksdb::DEFAULT_COLUMN_FAMILY_NAME) {
-                conn.delete_range_cf(handle, start, end)
-                    .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
-            } else {
-                Err(DataStoreError::Unknown(String::from(
-                    "Failed to get default cf handle",
-                )))
-            };
+            let mut batch = rocksdb::WriteBatch::default();
+
+            let iter = conn.iterator(rocksdb::IteratorMode::From(
+                end.as_ref(),
+                rocksdb::Direction::Reverse,
+            ));
+
+            for (key, _) in iter {
+                if utils::compare(&key, &start) == cmp::Ordering::Less {
+                    break;
+                }
+                batch.delete(&key);
+            }
+
+            let result = conn.write(batch);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);

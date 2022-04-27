@@ -101,7 +101,7 @@ impl Database {
     fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), mpsc::SendError<options::DbMessage>> {
         self.send(move |conn, channel| {
             let exist = conn.key_may_exist(&key);
-            let result = if !exist {
+            let result = if exist {
                 conn.get(&key).and_then(|res| Ok(res.is_some()))
             } else {
                 Ok(false)
@@ -145,8 +145,12 @@ impl Database {
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
         db.send(move |conn, channel| {
-            let cf = conn.cf_handle(rocksdb::DEFAULT_COLUMN_FAMILY_NAME).unwrap();
-            let result = conn.delete_range_cf(cf, vec![0], vec![255;255]);
+            let mut batch = rocksdb::WriteBatch::default();
+            let iter = conn.iterator(rocksdb::IteratorMode::Start);
+            for (key, _) in iter {
+                batch.delete(&key);
+            }
+            let result = conn.write(batch);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);

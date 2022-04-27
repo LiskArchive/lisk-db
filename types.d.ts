@@ -81,7 +81,7 @@ declare class StateReadWriter {
     has(key: Buffer): Promise<boolean>;
     set(key: Buffer, value: Buffer): Promise<void>;
     del(key: Buffer): Promise<void>;
-    iterate(options?: IterateOptions): Promise<{ key: Buffer, value: Buffer }[]>;
+    range(options?: IterateOptions): Promise<{ key: Buffer, value: Buffer }[]>;
     snapshot(): void;
     restoreSnapshot(): void;
 }
@@ -112,7 +112,7 @@ export class StateDB {
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
     finalize(height: number): Promise<void>;
     newReader(): StateReader;
-    newReadWtiter(): StateReadWriter;
+    newReadWriter(): StateReadWriter;
     close(): void;
 }
 
