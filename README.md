@@ -1,6 +1,6 @@
 # @liskhq/lisk-db
 
-@liskhq/lisk-db is a database access implementation for use with Lisk-related software.
+@liskhq/lisk-db is a database access implementation according to the Lisk protocol
 
 ## Installation
 
@@ -10,7 +10,7 @@ $ npm install --save @liskhq/lisk-db
 
 ## License
 
-Copyright 2016-2020 Lisk Foundation
+Copyright 2016-2022 Lisk Foundation
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
