@@ -1,6 +1,4 @@
 module.exports = {
-	testMatch: ['<rootDir>/test/**/?(*.)+(spec|test).+(ts|tsx|js)'],
-	setupFilesAfterEnv: ['<rootDir>/test/_setup.js'],
 	verbose: false,
 	collectCoverage: false,
 	coverageReporters: ['json'],

@@ -33,7 +33,7 @@ const {
     in_memory_db_clear,
     in_memory_db_write,
     in_memory_db_iterate,
-} = require("./index.node");
+} = require("./bin-package/index.node");
 const { Readable } = require('stream');
 const { NotFoundError } = require('./error');
 const { Iterator } = require('./iterator');

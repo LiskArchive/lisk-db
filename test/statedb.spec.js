@@ -16,7 +16,7 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { StateDB, NotFoundError } = require('../');
+const { StateDB, NotFoundError } = require('../main');
 const { getRandomBytes } = require('./utils');
 
 describe('statedb', () => {
@@ -43,7 +43,7 @@ describe('statedb', () => {
     let root;
 
     beforeAll(async () => {
-        const dbPath = path.join(os.tmpdir(), Date.now().toString());
+        const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
         fs.mkdirSync(dbPath, { recursive: true });
         db = new StateDB(dbPath);
         const writer = db.newReadWriter();

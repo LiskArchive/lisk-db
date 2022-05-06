@@ -16,7 +16,7 @@ const {
     in_memory_smt_new,
     in_memory_smt_update,
     in_memory_smt_prove,
-} = require("./index.node");
+} = require("./bin-package/index.node");
 
 const DEFAULT_KEY_LENGTH = 38;
 class SparseMerkleTree {

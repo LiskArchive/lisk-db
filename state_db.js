@@ -33,7 +33,7 @@ const {
     state_writer_cache_existing,
     state_writer_snapshot,
     state_writer_restore_snapshot,
-} = require("./index.node");
+} = require("./bin-package/index.node");
 
 const { NotFoundError } = require('./error');
 const { Iterator } = require("./iterator");

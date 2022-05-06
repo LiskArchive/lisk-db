@@ -6,3 +6,6 @@ target
 .tmp-state
 .vscode
 jest.config.js
+build
+.github
+bin-package
