@@ -182,7 +182,7 @@ impl StateWriter {
                 continue;
             }
             if value.dirty {
-                updated.push(diff::KeyValue::new(key.to_vec(), value.value.clone()));
+                updated.push(diff::KeyValue::new(key.to_vec(), value.init.clone().unwrap().to_vec()));
                 batch.put(key, &value.value);
                 continue;
             }

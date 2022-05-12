@@ -208,7 +208,8 @@ class Batch {
         batch_set.call(this._batch, key, value);
     }
 
-    del(key) { batch_del.call(this._batch, key);
+    del(key) {
+        batch_del.call(this._batch, key);
     }
 }
 
@@ -235,10 +236,10 @@ class InMemoryDatabase {
 
     async has(key) {
         return new Promise((resolve, reject) => {
-            in_memory_db_get.call(this._db, key, (err, result) => {
+            in_memory_db_get.call(this._db, key, (err) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(false);
+                        return resolve(false);
                     }
                     return reject(err);
                 }

@@ -70,11 +70,11 @@ class StateReader {
         });
     }
 
-    async iterate(options = {}) {
+    iterate(options = {}) {
         return new Iterator(this._db, state_db_iterate, getOptionsWithDefault(options));
     }
 
-    async createReadStream(options = {}) {
+    createReadStream(options = {}) {
         return new Iterator(this._db, state_db_iterate, getOptionsWithDefault(options));
     }
 }
@@ -146,7 +146,7 @@ class StateReadWriter {
         state_writer_del.call(this._writer, key);
     }
 
-    async iterate(options = {}) {
+    async range(options = {}) {
         const defaultOptions = getOptionsWithDefault(options);
         const stream = new Iterator(this._db, state_db_iterate, defaultOptions);
         const storedData = await new Promise((resolve, reject) => {
@@ -155,7 +155,7 @@ class StateReadWriter {
                 .on('data', ({ key, value }) => {
                     const { value: cachedValue, deleted } = state_writer_get.call(this._writer, key);
                     // if key is already stored in cache, return cached value
-                    if (cachedValue) {
+                    if (cachedValue.length) {
                         values.push({
                             key,
                             value: cachedValue,
@@ -179,7 +179,7 @@ class StateReadWriter {
                     resolve(values);
                 });
         });
-        const cachedValues = state_writer_get_range.call(defaultOptions.gte, defaultOptions.lte);
+        const cachedValues = state_writer_get_range.call(this._writer, defaultOptions.gte, defaultOptions.lte);
         const existingKey = {};
         const result = [];
         for (const data of cachedValues) {
@@ -271,11 +271,11 @@ class StateDB {
         });
     }
 
-    async iterate(options = {}) {
+    iterate(options = {}) {
         return new Iterator(this._db, state_db_iterate, getOptionsWithDefault(options));
     }
 
-    async createReadStream(options = {}) {
+    createReadStream(options = {}) {
         return new Iterator(this._db, state_db_iterate, getOptionsWithDefault(options));
     }
 
@@ -328,7 +328,7 @@ class StateDB {
         });
     }
 
-    newReadWriter() {
+    newReader() {
         return new StateReader(this._db);
     }
 

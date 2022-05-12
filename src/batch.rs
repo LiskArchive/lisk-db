@@ -99,21 +99,21 @@ impl <'a>PrefixWriteBatch<'a> {
     }
 
     pub fn put(&mut self, key: &[u8], value: &[u8]) {
-        self.batch.put(key, value);
+        self.batch.put([self.prefix.unwrap(), key.as_ref()].concat(), value);
     }
 
     pub fn delete(&mut self, key: &[u8]) {
-        self.batch.delete(key);
+        self.batch.delete([self.prefix.unwrap(), key.as_ref()].concat());
     }
 }
 
 impl <'a>BatchWriter for PrefixWriteBatch<'a> {
     fn put(&mut self, key: &[u8], value: &[u8]) {
-        self.batch.put(key, value);
+        self.batch.put([self.prefix.unwrap(), key.as_ref()].concat(), value);
     }
 
     fn delete(&mut self, key: &[u8]) {
-        self.batch.delete(key);
+        self.batch.delete([self.prefix.unwrap(), key.as_ref()].concat());
     }
 }
 
