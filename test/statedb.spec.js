@@ -102,7 +102,7 @@ describe('statedb', () => {
             expect(values).toEqual(initState.slice(1, 3));
         });
 
-        it('should iterate with specified range with limit in revserse order', async () => {
+        it('should iterate with specified range with limit in reverse order', async () => {
             const stream = db.iterate({
                 gte: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 1]),
                 lte: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
