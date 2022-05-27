@@ -87,16 +87,16 @@ impl StateWriter {
         self.cache.insert(key.to_vec(), cache);
     }
 
-    pub fn get(&self, key: &[u8]) -> (Vec<u8>, bool) {
+    pub fn get(&self, key: &[u8]) -> (Vec<u8>, bool, bool) {
         let val = self.cache.get(key);
         if val.is_none() {
-            return (vec![], false);
+            return (vec![], false, false);
         }
         let val = val.unwrap();
         if val.deleted {
-            return (vec![], true);
+            return (vec![], true, true);
         }
-        (val.value.clone(), false)
+        (val.value.clone(), false, true)
     }
 
     pub fn is_cached(&self, key: &[u8]) -> bool {
@@ -210,12 +210,15 @@ impl StateWriter {
         let writer = batch.borrow().clone();
         let inner_writer = writer.lock().unwrap();
 
-        let (value, deleted) = inner_writer.get(&key);
+        let (value, deleted, exists) = inner_writer.get(&key);
         let obj = ctx.empty_object();
         let val_buf = JsBuffer::external(&mut ctx, value);
         obj.set(&mut ctx, "value", val_buf)?;
         let deleted_js = ctx.boolean(deleted);
         obj.set(&mut ctx, "deleted", deleted_js)?;
+
+        let exists_js = ctx.boolean(exists);
+        obj.set(&mut ctx, "exists", exists_js)?;
 
         Ok(obj)
     }

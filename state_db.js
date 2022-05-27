@@ -90,8 +90,8 @@ class StateReadWriter {
     }
 
     async get(key) {
-        const { value, deleted } = state_writer_get.call(this._writer, key);
-        if (value && value.length > 0) {
+        const { value, deleted, exists } = state_writer_get.call(this._writer, key);
+        if (exists && !deleted) {
             return value;
         }
         if (deleted) {

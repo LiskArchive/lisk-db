@@ -96,6 +96,30 @@ describe('database', () => {
             await expect(db.has(pairs[1].key)).resolves.toEqual(false);
         });
 
+        it('should clear partial value', async () => {
+            const pairs = [
+                { key: getRandomBytes(), value: getRandomBytes() },
+                { key: getRandomBytes(), value: getRandomBytes() },
+            ];
+            const batch = new Batch();
+            for (const kv of pairs) {
+                batch.set(kv.key, kv.value);
+            }
+            await db.write(batch);
+
+            await expect(db.has(pairs[0].key)).resolves.toEqual(true);
+            await expect(db.has(pairs[1].key)).resolves.toEqual(true);
+
+            await db.clear({
+                gte: pairs[0].key,
+                lte: pairs[0].key,
+                limit: 1,
+            });
+
+            await expect(db.has(pairs[0].key)).resolves.toEqual(false);
+            await expect(db.has(pairs[1].key)).resolves.toEqual(true);
+        });
+
         describe('iteration', () => {
             let pairs;
             beforeAll(async () => {

@@ -74,6 +74,13 @@ describe('statedb', () => {
             await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
         });
 
+        it('should get the empty Buffer if exist but empty', async () => {
+            const writer = db.newReadWriter();
+            const key = getRandomBytes();
+            await writer.set(key, Buffer.alloc(0));
+            await expect(writer.get(key)).resolves.toEqual(Buffer.alloc(0));
+        });
+
         it('should return true when called has if key exist', async () => {
             await expect(db.has(initState[0].key)).resolves.toEqual(true);
         });
