@@ -49,7 +49,7 @@ class Reader {
             db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Specified key ${key.toString('hex')} does not exist`));
                     }
                     return reject(err);
                 }
@@ -88,7 +88,7 @@ class Database {
             db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Specified key ${key.toString('hex')} does not exist`));
                     }
                     return reject(err);
                 }
@@ -244,7 +244,7 @@ class InMemoryDatabase {
             in_memory_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Specified key ${key.toString('hex')} does not exist`));
                     }
                     return reject(err);
                 }

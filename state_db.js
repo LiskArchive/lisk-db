@@ -50,7 +50,7 @@ class StateReader {
             state_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                     }
                     return reject(err);
                 }
@@ -102,7 +102,7 @@ class StateReadWriter {
             state_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                     }
                     return reject(err);
                 }
@@ -223,7 +223,7 @@ class StateReadWriter {
                 state_db_get.call(this._db, key, (err, result) => {
                     if (err) {
                         if (err.message === 'No data') {
-                            return reject(new NotFoundError('Data not found'));
+                            return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                         }
                         return reject(err);
                     }
@@ -251,7 +251,7 @@ class StateDB {
             state_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                     }
                     return reject(err);
                 }
