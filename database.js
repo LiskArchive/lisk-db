@@ -150,6 +150,25 @@ class Database {
     }
 
     async clear(options = {}) {
+        if (options.gte && options.lte) {
+            const stream = this.createReadStream(getOptionsWithDefault(options));
+            const batch = new Batch();
+            await new Promise((resolve, reject) => {
+                const keys = [];
+                stream
+                    .on('data', ({ key }) => {
+                        batch.del(key);
+                    })
+                    .on('error', error => {
+                        reject(error);
+                    })
+                    .on('end', () => {
+                        resolve(keys);
+                    });
+            });
+            await this.write(batch);
+            return;
+        }
         return new Promise((resolve, reject) => {
             db_clear.call(this._db, getOptionsWithDefault(options), err => {
                 if (err) {
