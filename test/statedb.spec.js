@@ -37,6 +37,18 @@ describe('statedb', () => {
             key: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
             value: getRandomBytes(),
         },
+        {
+            key: Buffer.from([0, 1, 0, 0, 0, 0, 1]),
+            value: getRandomBytes(),
+        },
+        {
+            key: Buffer.from([2, 0, 0, 0, 0, 0]),
+            value: getRandomBytes(),
+        },
+        {
+            key: Buffer.from('0000000d800067656e657369735f323', 'hex'),
+            value: getRandomBytes(),
+        },
     ];
 
     let db;
@@ -232,6 +244,18 @@ describe('statedb', () => {
         });
 
         describe('StateReadWriter', () => {
+            it('should return values with range', async () => {
+                const writer = db.newReadWriter();
+                await writer.set(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 3]), getRandomBytes());
+
+                const result = await writer.range({
+                    gte: Buffer.from('00000002800000000000', 'hex'),
+                    lte: Buffer.from('000000028000ffffffff', 'hex'),
+                });
+
+                expect(result).toHaveLength(0);
+            });
+
             it('should return updated value with range', async () => {
                 const writer = db.newReadWriter();
                 const newValue = getRandomBytes();

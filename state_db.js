@@ -153,9 +153,9 @@ class StateReadWriter {
             const values = [];
             stream
                 .on('data', ({ key, value }) => {
-                    const { value: cachedValue, deleted } = state_writer_get.call(this._writer, key);
+                    const { value: cachedValue, deleted, exists } = state_writer_get.call(this._writer, key);
                     // if key is already stored in cache, return cached value
-                    if (cachedValue.length) {
+                    if (exists && !deleted) {
                         values.push({
                             key,
                             value: cachedValue,

@@ -501,13 +501,15 @@ impl StateDB {
                 }
                 if options.reverse {
                     if let Some(gte) = &options.gte {
-                        if utils::compare(&key, &gte) == cmp::Ordering::Less {
+                        let prefixed_gte = &[consts::PREFIX_STATE, &gte].concat();
+                        if utils::compare(&key, &prefixed_gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
                 } else {
                     if let Some(lte) = &options.lte {
-                        if utils::compare(&key, &lte) == cmp::Ordering::Greater {
+                        let prefixed_lte = &[consts::PREFIX_STATE, &lte].concat();
+                        if utils::compare(&key, &prefixed_lte) == cmp::Ordering::Greater {
                             break;
                         }
                     }

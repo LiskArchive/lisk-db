@@ -23,7 +23,7 @@
   "main": "main.js",
   "types": "types.d.ts",
   "scripts": {
-    "prebuild": "rimraf index.node",
+    "prebuild": "rimraf ./bin-package/index.node",
     "build": "cargo-cp-artifact -nc ./bin-package/index.node -- cargo build --message-format=json-render-diagnostics",
     "build-debug": "npm run build --",
     "build-release": "npm run build -- --release",
