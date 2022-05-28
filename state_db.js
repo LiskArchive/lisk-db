@@ -54,6 +54,12 @@ class StateReader {
                     }
                     return reject(err);
                 }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                if (result.length === 0) {
+					resolve(Buffer.alloc(0));
+					return;
+				}
                 resolve(result);
             });
         });
@@ -106,10 +112,17 @@ class StateReadWriter {
                     }
                     return reject(err);
                 }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                if (result.length === 0) {
+					resolve(Buffer.alloc(0));
+					return;
+				}
                 resolve(result);
             });
         });
         state_writer_cache_existing.call(this._writer, key, fetched);
+        return fetched;
     }
 
     async has(key) {
@@ -227,6 +240,12 @@ class StateReadWriter {
                         }
                         return reject(err);
                     }
+                    // If result is empty, force to use different memory space from what's given from binding
+                    // Issue: https://github.com/nodejs/node/issues/32463
+                    if (result.length === 0) {
+                        resolve(Buffer.alloc(0));
+                        return;
+                    }
                     resolve(result);
                 });
             });
@@ -255,6 +274,12 @@ class StateDB {
                     }
                     return reject(err);
                 }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                if (result.length === 0) {
+					resolve(Buffer.alloc(0));
+					return;
+				}
                 resolve(result);
             });
         });

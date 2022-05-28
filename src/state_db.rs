@@ -1,4 +1,5 @@
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use std::cell::RefCell;
 use std::cmp;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
@@ -107,7 +108,7 @@ impl StateDB {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
@@ -136,7 +137,7 @@ impl StateDB {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
@@ -201,7 +202,7 @@ impl StateDB {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
     }
 
@@ -291,7 +292,7 @@ impl StateDB {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
     }
 
@@ -338,7 +339,7 @@ impl StateDB {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
@@ -379,7 +380,7 @@ impl StateDB {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
@@ -411,8 +412,7 @@ impl StateDB {
     }
 
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
@@ -425,8 +425,7 @@ impl StateDB {
     }
 
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
@@ -439,9 +438,8 @@ impl StateDB {
     }
 
     pub fn js_revert(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
+        let prev_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx) as u32;
-        let prev_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
         let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
@@ -557,13 +555,11 @@ impl StateDB {
 
         let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx) as u32;
 
-        let mut buf = ctx.argument::<JsBuffer>(2)?;
-        let prev_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let prev_root = ctx.argument::<JsTypedArray<u8>>(2)?.as_slice(&ctx).to_vec();
 
         let readonly = ctx.argument::<JsBoolean>(3)?.value(&mut ctx);
 
-        let mut expected_buf = ctx.argument::<JsBuffer>(4)?;
-        let expected = ctx.borrow(&mut expected_buf, |data| data.as_slice().to_vec());
+        let expected = ctx.argument::<JsTypedArray<u8>>(4)?.as_slice(&ctx).to_vec();
 
         let check_root = ctx.argument::<JsBoolean>(5)?.value(&mut ctx);
         let cb = ctx.argument::<JsFunction>(6)?.root(&mut ctx);
@@ -587,17 +583,14 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
 
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let state_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut queries: Vec<Vec<u8>> = vec![];
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let mut key_buf = obj
-                .get(&mut ctx, "key")?
-                .downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
-            let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+            let key = obj
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?.as_slice(&ctx).to_vec();
             queries.push(key);
         }
 

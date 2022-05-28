@@ -1,4 +1,5 @@
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -718,21 +719,16 @@ impl InMemorySMT {
             .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
         let in_memory_smt = in_memory_smt.borrow().clone();
 
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let state_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut data: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let mut key_buf = obj
-                .get(&mut ctx, "key")?
-                .downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
-            let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
-            let mut value_buf = obj
-                .get(&mut ctx, "value")?
-                .downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
-            let value = ctx.borrow(&mut value_buf, |data| data.as_slice().to_vec());
+            let key = obj
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?.as_slice(&ctx).to_vec();
+            let value = obj
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?.as_slice(&ctx).to_vec();
             data.insert(key, value);
         }
 
@@ -774,14 +770,12 @@ impl InMemorySMT {
             .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
         let in_memory_smt = in_memory_smt.borrow().clone();
 
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let state_root = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut data: Vec<Vec<u8>> = vec![];
         for key in input.iter() {
-            let mut obj = key.downcast_or_throw::<JsBuffer, _>(&mut ctx)?;
-            let key = ctx.borrow(&mut obj, |data| data.as_slice().to_vec());
+            let key = key.downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?.as_slice(&ctx).to_vec();
             data.push(key);
         }
 

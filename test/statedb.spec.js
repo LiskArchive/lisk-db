@@ -49,6 +49,10 @@ describe('statedb', () => {
             key: Buffer.from('0000000d800067656e657369735f323', 'hex'),
             value: getRandomBytes(),
         },
+        {
+            key: Buffer.from([0, 0, 0, 15, 0, 0]),
+            value: Buffer.alloc(0),
+        },
     ];
 
     let db;
@@ -169,6 +173,12 @@ describe('statedb', () => {
             });
 
             expect(values).toEqual([]);
+        });
+    
+        it('should get empty buffer multiple times', async () => {
+                const writer = db.newReadWriter();
+                const val = await writer.get(initState[7].key);
+                expect(val).toEqual(Buffer.alloc(0));
         });
 
         describe('commit', () => {

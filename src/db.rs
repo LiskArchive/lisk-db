@@ -3,6 +3,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 
 use crate::batch;
 use crate::options;
@@ -49,7 +50,7 @@ impl Database {
                     options::DbMessage::Callback(f) => {
                         f(&mut opened, &channel);
                     }
-                    options::DbMessage::Close => break,
+                    options::DbMessage::Close => return,
                 }
             }
         });
@@ -94,7 +95,7 @@ impl Database {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
     }
 
@@ -121,7 +122,7 @@ impl Database {
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
-            })
+            });
         })
     }
 }
@@ -181,8 +182,7 @@ impl Database {
     }
 
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx
@@ -196,8 +196,7 @@ impl Database {
     }
 
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx
@@ -211,10 +210,8 @@ impl Database {
     }
 
     pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key_buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
-        let mut value_buf = ctx.argument::<JsBuffer>(1)?;
-        let value = ctx.borrow(&mut value_buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx
@@ -243,8 +240,7 @@ impl Database {
     }
 
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key_buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx

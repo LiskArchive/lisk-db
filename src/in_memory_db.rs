@@ -1,4 +1,5 @@
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
@@ -80,8 +81,7 @@ impl Database {
     }
 
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?;
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
@@ -101,10 +101,8 @@ impl Database {
     }
 
     pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key_buf = ctx.argument::<JsBuffer>(0)?;
-        let mut key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
-        let mut value_buf = ctx.argument::<JsBuffer>(1)?;
-        let mut value = ctx.borrow(&mut value_buf, |data| data.as_slice().to_vec());
+        let mut key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let mut value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
@@ -115,8 +113,7 @@ impl Database {
     }
 
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key_buf = ctx.argument::<JsBuffer>(0)?;
-        let mut key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+        let mut key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
