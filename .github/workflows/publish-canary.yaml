@@ -5,7 +5,7 @@ name: Publish (Canary)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 3-add_automation ]
 
 env:
   # hack to get dynlibs working with musl
@@ -96,10 +96,8 @@ jobs:
           override: true
       - name: Install modules
         run: yarn install --ignore-scripts
-      - run: npm config set //npm.lisk.com/:_authToken=$NPM_TOKEN
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish NPM release
         run: |
           set -x
+          echo "registry=https://npm.lisk.com/\n//npm.lisk.com/:_authToken=${{ secrets.NPM_TOKEN }}" >~/.npmrc
           node publish.js --publish --canary ${{ github.sha }} --registry ${{ env.NPM_REGISTRY }}
