@@ -102,4 +102,4 @@ jobs:
       - name: Publish NPM release
         run: |
           set -x
-          node publish.js --publish "${PRE}" --canary ${{ github.sha }} --registry ${ env.NPM_REGISTRY }
+          node publish.js --publish --canary ${{ github.sha }} --registry ${{ env.NPM_REGISTRY }}

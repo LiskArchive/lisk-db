@@ -33,14 +33,6 @@ jobs:
             target: aarch64-apple-darwin
           node_version: 16
           rust_version: stable
-        # - system:
-        #     os:
-        #     - self-hosted
-        #     - macOS
-        #     - ARM64
-        #     target: aarch64-apple-darwin
-        #   node_version: 16
-        #   rust_version: beta
 
     steps:
     - name: Set LIBCLANG_PATH
