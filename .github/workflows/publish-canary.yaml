@@ -11,7 +11,7 @@ env:
   # hack to get dynlibs working with musl
   # https://github.com/rust-lang/rust/pull/55163#issuecomment-436631090
   RUSTFLAGS: -C target-feature=-crt-static
-  NPM_REGISTRY: https://npm.lisk.io
+  NPM_REGISTRY: https://npm.lisk.com
 
 jobs:
   publish-github:
