@@ -23,15 +23,17 @@
   "main": "main.js",
   "types": "types.d.ts",
   "scripts": {
-    "prebuild": "rimraf index.node",
-    "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics",
+    "prebuild": "rimraf ./bin-package/index.node",
+    "build": "cargo-cp-artifact -nc ./bin-package/index.node -- cargo build --message-format=json-render-diagnostics",
     "build-debug": "npm run build --",
     "build-release": "npm run build -- --release",
     "test": "npm run test:node; npm run test:rust",
+    "clean": "cargo clean && rm -rf bin-package && rm -rf build",
     "test:node": "jest",
     "test:rust": "cargo test"
   },
   "dependencies": {
+    "@mapbox/node-pre-gyp": "^1.0.9",
     "@types/node": "^16"
   },
   "devDependencies": {
@@ -39,6 +41,14 @@
     "cargo-cp-artifact": "^0.1",
     "jest": "^27.5.1",
     "rimraf": "^3.0.2",
+    "shelljs": "^0.8.5",
     "sodium-native": "^3.3.0"
+  },
+  "binary": {
+    "module_name": "index",
+    "module_path": "./bin-package",
+    "host": "https://js.lisk.com/lisk-db",
+    "package_name": "{module_name}-v{version}-{node_abi}-{platform}-{arch}-{libc}.tar.gz",
+    "remote_path": "{version}"
   }
 }

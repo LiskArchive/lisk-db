@@ -16,14 +16,14 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { Database, Batch, NotFoundError, InMemoryDatabase } = require('../');
+const { Database, Batch, NotFoundError, InMemoryDatabase } = require('../main');
 const { getRandomBytes } = require('./utils');
 
 describe('database', () => {
     describe('Database', () => {
         let db;
         beforeAll(() => {
-            const dbPath = path.join(os.tmpdir(), Date.now().toString());
+            const dbPath = path.join(os.tmpdir(), 'db', Date.now().toString());
             fs.mkdirSync(dbPath, { recursive: true });
             db = new Database(dbPath);
         });
@@ -31,6 +31,7 @@ describe('database', () => {
         afterAll(() => {
             db.close();
         });
+
         it('should open DB', () => {
             expect(db).not.toBeUndefined();
         });
@@ -123,6 +124,7 @@ describe('database', () => {
         describe('iteration', () => {
             let pairs;
             beforeAll(async () => {
+                await db.clear();
                 pairs = [
                     {
                         key: Buffer.from([0, 0, 0]),

@@ -89,7 +89,7 @@ declare class StateReadWriter {
 interface StateCommitOption {
     readonly?: boolean;
     checkRoot?: boolean;
-    expectedRoot?: boolean;
+    expectedRoot?: Buffer;
 }
 
 interface Proof {

@@ -16,7 +16,7 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { StateDB, NotFoundError } = require('../');
+const { StateDB, NotFoundError } = require('../main');
 const { getRandomBytes } = require('./utils');
 
 describe('statedb', () => {
@@ -37,13 +37,29 @@ describe('statedb', () => {
             key: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
             value: getRandomBytes(),
         },
+        {
+            key: Buffer.from([0, 1, 0, 0, 0, 0, 1]),
+            value: getRandomBytes(),
+        },
+        {
+            key: Buffer.from([2, 0, 0, 0, 0, 0]),
+            value: getRandomBytes(),
+        },
+        {
+            key: Buffer.from('0000000d800067656e657369735f323', 'hex'),
+            value: getRandomBytes(),
+        },
+        {
+            key: Buffer.from([0, 0, 0, 15, 0, 0]),
+            value: Buffer.alloc(0),
+        },
     ];
 
     let db;
     let root;
 
     beforeAll(async () => {
-        const dbPath = path.join(os.tmpdir(), Date.now().toString());
+        const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
         fs.mkdirSync(dbPath, { recursive: true });
         db = new StateDB(dbPath);
         const writer = db.newReadWriter();
@@ -158,6 +174,12 @@ describe('statedb', () => {
 
             expect(values).toEqual([]);
         });
+    
+        it('should get empty buffer multiple times', async () => {
+                const writer = db.newReadWriter();
+                const val = await writer.get(initState[7].key);
+                expect(val).toEqual(Buffer.alloc(0));
+        });
 
         describe('commit', () => {
             it('should not update state if readonly is specified', async () => {
@@ -232,6 +254,18 @@ describe('statedb', () => {
         });
 
         describe('StateReadWriter', () => {
+            it('should return values with range', async () => {
+                const writer = db.newReadWriter();
+                await writer.set(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 3]), getRandomBytes());
+
+                const result = await writer.range({
+                    gte: Buffer.from('00000002800000000000', 'hex'),
+                    lte: Buffer.from('000000028000ffffffff', 'hex'),
+                });
+
+                expect(result).toHaveLength(0);
+            });
+
             it('should return updated value with range', async () => {
                 const writer = db.newReadWriter();
                 const newValue = getRandomBytes();

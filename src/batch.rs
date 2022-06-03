@@ -1,4 +1,5 @@
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 
@@ -24,12 +25,9 @@ impl WriteBatch {
     }
 
     pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
-        let value = ctx
-            .argument::<JsBuffer>(1)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
+        
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -44,8 +42,7 @@ impl WriteBatch {
     }
 
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key_buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()

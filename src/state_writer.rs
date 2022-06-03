@@ -1,4 +1,5 @@
 use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
@@ -7,9 +8,9 @@ use thiserror::Error;
 
 pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
 
-use crate::utils;
 use crate::batch;
 use crate::diff;
+use crate::utils;
 
 #[derive(Error, Debug)]
 pub enum StateWriterError {
@@ -165,7 +166,6 @@ impl StateWriter {
         result
     }
 
-
     pub fn commit(&self, batch: &mut impl batch::BatchWriter) -> diff::Diff {
         let mut created = vec![];
         let mut updated = vec![];
@@ -182,7 +182,10 @@ impl StateWriter {
                 continue;
             }
             if value.dirty {
-                updated.push(diff::KeyValue::new(key.to_vec(), value.init.clone().unwrap().to_vec()));
+                updated.push(diff::KeyValue::new(
+                    key.to_vec(),
+                    value.init.clone().unwrap().to_vec(),
+                ));
                 batch.put(key, &value.value);
                 continue;
             }
@@ -199,9 +202,7 @@ impl StateWriter {
     }
 
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsObject> {
-        let key = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -224,12 +225,8 @@ impl StateWriter {
     }
 
     pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
-        let value = ctx
-            .argument::<JsBuffer>(1)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -246,12 +243,8 @@ impl StateWriter {
     }
 
     pub fn js_cache_new(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
-        let value = ctx
-            .argument::<JsBuffer>(1)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -266,12 +259,8 @@ impl StateWriter {
     }
 
     pub fn js_cache_existing(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
-        let value = ctx
-            .argument::<JsBuffer>(1)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -286,8 +275,7 @@ impl StateWriter {
     }
 
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key_buf = ctx.argument::<JsBuffer>(0)?;
-        let key = ctx.borrow(&mut key_buf, |data| data.as_slice().to_vec());
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let writer = ctx
             .this()
@@ -302,9 +290,7 @@ impl StateWriter {
     }
 
     pub fn js_is_cached(mut ctx: FunctionContext) -> JsResult<JsBoolean> {
-        let key = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -345,12 +331,8 @@ impl StateWriter {
     }
 
     pub fn js_get_range(mut ctx: FunctionContext) -> JsResult<JsArray> {
-        let start = ctx
-            .argument::<JsBuffer>(0)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
-        let end = ctx
-            .argument::<JsBuffer>(1)
-            .map(|mut val| ctx.borrow(&mut val, |data| data.as_slice().to_vec()))?;
+        let start = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let end = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -371,5 +353,33 @@ impl StateWriter {
         }
 
         Ok(arr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cache() {
+        let mut writer = StateWriter::new();
+
+        writer.cache_new(&[0, 0, 2], &[1, 2, 3]);
+        writer.cache_existing(&[0, 0, 3], &[1, 2, 4]);
+
+        let (value, deleted, exists) = writer.get(&[0, 0, 2]);
+        assert_eq!(value, &[1, 2, 3]);
+        assert_eq!(deleted, false);
+        assert_eq!(exists, true);
+
+        let (value, deleted, exists) = writer.get(&[0, 0, 3]);
+        assert_eq!(value, &[1, 2, 4]);
+        assert_eq!(deleted, false);
+        assert_eq!(exists, true);
+
+        let (value, deleted, exists) = writer.get(&[0, 0, 1]);
+        assert_eq!(value, &[]);
+        assert_eq!(deleted, false);
+        assert_eq!(exists, false)
     }
 }

@@ -33,7 +33,7 @@ const {
     state_writer_cache_existing,
     state_writer_snapshot,
     state_writer_restore_snapshot,
-} = require("./index.node");
+} = require("./bin-package/index.node");
 
 const { NotFoundError } = require('./error');
 const { Iterator } = require("./iterator");
@@ -50,10 +50,16 @@ class StateReader {
             state_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                     }
                     return reject(err);
                 }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                if (result.length === 0) {
+					resolve(Buffer.alloc(0));
+					return;
+				}
                 resolve(result);
             });
         });
@@ -102,14 +108,21 @@ class StateReadWriter {
             state_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                     }
                     return reject(err);
                 }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                if (result.length === 0) {
+					resolve(Buffer.alloc(0));
+					return;
+				}
                 resolve(result);
             });
         });
         state_writer_cache_existing.call(this._writer, key, fetched);
+        return fetched;
     }
 
     async has(key) {
@@ -153,9 +166,9 @@ class StateReadWriter {
             const values = [];
             stream
                 .on('data', ({ key, value }) => {
-                    const { value: cachedValue, deleted } = state_writer_get.call(this._writer, key);
+                    const { value: cachedValue, deleted, exists } = state_writer_get.call(this._writer, key);
                     // if key is already stored in cache, return cached value
-                    if (cachedValue.length) {
+                    if (exists && !deleted) {
                         values.push({
                             key,
                             value: cachedValue,
@@ -223,9 +236,15 @@ class StateReadWriter {
                 state_db_get.call(this._db, key, (err, result) => {
                     if (err) {
                         if (err.message === 'No data') {
-                            return reject(new NotFoundError('Data not found'));
+                            return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                         }
                         return reject(err);
+                    }
+                    // If result is empty, force to use different memory space from what's given from binding
+                    // Issue: https://github.com/nodejs/node/issues/32463
+                    if (result.length === 0) {
+                        resolve(Buffer.alloc(0));
+                        return;
                     }
                     resolve(result);
                 });
@@ -251,10 +270,16 @@ class StateDB {
             state_db_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
-                        return reject(new NotFoundError('Data not found'));
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
                     }
                     return reject(err);
                 }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                if (result.length === 0) {
+					resolve(Buffer.alloc(0));
+					return;
+				}
                 resolve(result);
             });
         });

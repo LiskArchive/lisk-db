@@ -14,7 +14,7 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { StateDB, SparseMerkleTree } = require('../');
+const { StateDB, SparseMerkleTree } = require('../main');
 const fixtures = require('./fixtures/update_tree.json');
 const SMTFixtures = require('./fixtures/smt_fixtures.json');
 const JumboFixtures = require('./fixtures/smt_jumbo_fixtures.json');

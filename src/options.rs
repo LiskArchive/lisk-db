@@ -1,5 +1,5 @@
 use neon::prelude::*;
-
+use neon::types::buffer::TypedArray;
 
 use crate::consts;
 
@@ -19,7 +19,7 @@ impl DatabaseOptions {
         }
         let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
         let readonly = obj
-            .get(ctx, "readonly")
+            .get_opt::<JsBoolean, _, _>(ctx, "readonly")?
             .map(|val| {
                 val.downcast::<JsBoolean, _>(ctx)
                     .and_then(|val| Ok(val.value(ctx)))
@@ -27,7 +27,7 @@ impl DatabaseOptions {
             })
             .unwrap_or(false);
         let key_length = obj
-            .get(ctx, "keyLength")
+            .get_opt::<JsNumber, _, _>(ctx, "keyLength")?
             .map(|val| {
                 val.downcast::<JsNumber, _>(ctx)
                     .and_then(|val| Ok(val.value(ctx) as usize))
@@ -66,41 +66,41 @@ impl IterationOption {
         C: Context<'a>,
     {
         let reverse = input
-            .get(ctx, "reverse")
+            .get_opt::<JsBoolean, _, _>(ctx, "reverse")
             .map(|val| {
-                val.downcast::<JsBoolean, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx)))
-                    .unwrap_or(false)
+                match val {
+                    Some(v) => v.value(ctx),
+                    None => false,
+                }
             })
             .unwrap_or(false);
         let limit = input
-            .get(ctx, "limit")
+            .get_opt::<JsNumber, _, _>(ctx, "limit")
             .map(|val| {
-                val.downcast::<JsNumber, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx)))
-                    .unwrap_or(-1.0)
+                match val {
+                    Some(v) => v.value(ctx),
+                    None => -1.0,
+                }
             })
             .unwrap_or(-1.0);
 
         let gte = input
-            .get(ctx, "gte")
+            .get_opt::<JsTypedArray<u8>, _, _>(ctx, "gte")
             .map(|val| {
-                val.downcast::<JsBuffer, _>(ctx)
-                    .map(|mut val| {
-                        ctx.borrow(&mut val, |data| Some(data.as_slice::<u8>().to_vec()))
-                    })
-                    .unwrap_or(None)
+                match val {
+                    Some(v) => Some(v.as_slice(ctx).to_vec()),
+                    None => None,
+                }
             })
             .unwrap_or(None);
 
         let lte = input
-            .get(ctx, "lte")
+            .get_opt::<JsTypedArray<u8>, _, _>(ctx, "lte")
             .map(|val| {
-                val.downcast::<JsBuffer, _>(ctx)
-                    .map(|mut val| {
-                        ctx.borrow(&mut val, |data| Some(data.as_slice::<u8>().to_vec()))
-                    })
-                    .unwrap_or(None)
+                match val {
+                    Some(v) => Some(v.as_slice(ctx).to_vec()),
+                    None => None,
+                }
             })
             .unwrap_or(None);
 
