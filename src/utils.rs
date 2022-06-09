@@ -22,10 +22,104 @@ pub fn is_bit_set(bits: &[u8], i: usize) -> bool {
     ((bits[i / 8] << i % 8) & 0x80) == 0x80
 }
 
-pub fn is_bytes_equal(a: &Vec<u8>, b: &Vec<u8>) -> bool {
+pub fn is_bytes_equal(a: &[u8], b: &[u8]) -> bool {
     compare(a, b) == cmp::Ordering::Equal
 }
 
 pub fn is_empty_hash(a: &Vec<u8>) -> bool {
     compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
+}
+
+pub fn bools_to_bytes(a: &[bool]) -> Vec<u8> {
+    let mut result = vec![0; (a.len() + 7) / 8];
+    let mut missing_byte = 0;
+    if a.len() % 8 != 0 {
+        missing_byte = 8 - a.len() % 8;
+    }
+    let mut target = vec![];
+    for _ in 0..missing_byte {
+        target.push(false);
+    }
+    target.extend(a);
+
+    for (i, v) in target.iter().enumerate() {
+        if *v {
+            result[i/8] |= 0x80 >> (i%8);
+        }
+    }
+    result
+}
+
+pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
+    let mut result = vec![false; a.len() * 8];
+    for (i, x) in a.iter().enumerate() {
+        for j in 0..8 {
+            result[8*i+j] = (x<<j)&0x80 == 0x80;
+        }
+    }
+    result
+}
+
+pub fn strip_left_false(a: &[bool]) -> Vec<bool> {
+    let mut result = vec![];
+    let mut saw_true = false;
+    for v in a {
+        if saw_true || *v {
+            saw_true = true;
+            result.push(*v);
+        }
+    }
+    result
+}
+
+pub fn bytes_in(list: &Vec<Vec<u8>>, a: &[u8]) -> bool {
+    for v in list {
+        if is_bytes_equal(v, a) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn arr_eq_bool(a: &[bool], b: &[bool]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (i, _) in a.iter().enumerate() {
+        if a[i] != b[i] {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn binary_search<T>(list: &[T], cb: impl Fn(&T) -> bool) -> i32 {
+    let mut lo = -1;
+    let mut hi = list.len() as i32;
+    while 1 + lo < hi {
+        let mi = lo + ((hi - lo) >> 1);
+        if cb(&list[mi as usize]) {
+            hi = mi;
+        } else {
+            lo = mi;
+        }
+    }
+    hi
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bools_to_bytes() {
+        let test_data = vec![
+            (vec![true, true, true], vec![7]),
+            (vec![false, false, false, false, false, false, false, false], vec![0b00000000]),
+            (vec![true, false, false, true, false, false, false, false], vec![0b10010000]),
+        ];
+        for (data, result) in test_data {
+            assert_eq!(bools_to_bytes(&data), result);
+        }
+    }
 }
