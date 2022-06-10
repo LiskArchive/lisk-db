@@ -175,7 +175,7 @@ describe('SparseMerkleTree', () => {
 
 				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
 				expect(queriesString).toEqual(outputProof.queries);
-				// expect(verify(queryKeys, proof, Buffer.from(outputMerkleRoot, 'hex'), 32)).toBeTrue();
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
 			});
 		}
 	});
@@ -223,7 +223,7 @@ describe('SparseMerkleTree', () => {
 
 				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
 				expect(queriesString).toEqual(outputProof.queries);
-				// expect(verify(queryKeys, proof, Buffer.from(outputMerkleRoot, 'hex'), 32)).toBeTrue();
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
 			});
 		}
 	});

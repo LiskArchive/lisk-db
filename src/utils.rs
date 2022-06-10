@@ -30,6 +30,18 @@ pub fn is_empty_hash(a: &Vec<u8>) -> bool {
     compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
 }
 
+pub fn is_bools_equal(a: &[bool], b: &[bool]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (i, val) in a.iter().enumerate() {
+        if *val != b[i] {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn bools_to_bytes(a: &[bool]) -> Vec<u8> {
     let mut result = vec![0; (a.len() + 7) / 8];
     let mut missing_byte = 0;
@@ -55,6 +67,26 @@ pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
     for (i, x) in a.iter().enumerate() {
         for j in 0..8 {
             result[8*i+j] = (x<<j)&0x80 == 0x80;
+        }
+    }
+    result
+}
+
+pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {
+    let mut result = vec![];
+    let mut longer = a;
+    let mut shorter = b;
+    if longer.len() < shorter.len() {
+        let tmp = longer;
+        longer = shorter;
+        shorter = tmp;
+    }
+    for (i, v) in longer.iter().enumerate() {
+        if i >= shorter.len() {
+            return result;
+        }
+        if *v == shorter[i] {
+            result.push(*v);
         }
     }
     result
@@ -120,6 +152,19 @@ mod tests {
         ];
         for (data, result) in test_data {
             assert_eq!(bools_to_bytes(&data), result);
+        }
+    }
+
+    #[test]
+    fn test_common_prefix() {
+        let test_data = vec![
+            (vec![true, true, true], vec![true], vec![true]),
+            (vec![false, false, true, false, false, false, false, false], vec![false, false, true, true], vec![false, false, true]),
+            (vec![true, false], vec![true, false, true], vec![true, false]),
+        ];
+        for (data_left, data_right, result) in test_data {
+            assert_eq!(common_prefix(&data_left, &data_right), result);
+            assert_eq!(common_prefix(&data_right, &data_left), result);
         }
     }
 }
