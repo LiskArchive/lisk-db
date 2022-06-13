@@ -61,6 +61,7 @@ export class InMemoryDatabase {
     iterate(options?: IterateOptions): NodeJS.ReadableStream;
     createReadStream(options?: IterateOptions): NodeJS.ReadableStream;
     clear(options?: IterateOptions): Promise<void>;
+    clone(): InMemoryDatabase;
     close(): void;
 }
 
