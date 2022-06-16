@@ -24,6 +24,7 @@ pub struct Database {
     cache: CacheData,
 }
 
+#[derive(Clone, Debug)]
 pub struct CacheData {
     data: HashMap<Vec<u8>, Vec<u8>>,
 }
@@ -67,6 +68,13 @@ impl Database {
 
     fn del(&mut self, key: &[u8]) {
         self.cache.data.remove(key);
+    }
+
+    fn clone(&self) -> Self {
+        let new_cache = self.cache.clone();
+        Self {
+            cache: new_cache,
+        }
     }
 }
 
@@ -200,6 +208,18 @@ impl Database {
         cb.call(&mut ctx, this, args)?;
 
         Ok(ctx.undefined())
+    }
+
+    pub fn js_clone(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
+        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
+
+        let db = db.borrow_mut();
+        let this = ctx.undefined();
+        let cloned = db.clone();
+
+        let ref_db = RefCell::new(cloned);
+
+        return Ok(ctx.boxed(ref_db));
     }
 }
 
