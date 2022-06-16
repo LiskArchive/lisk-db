@@ -394,6 +394,22 @@ describe('database', () => {
             await expect(db.get(kv.key)).resolves.toEqual(kv.value);
         });
 
+        it('should clone the data', async () => {
+            const kv = { key: getRandomBytes(), value: getRandomBytes() };
+            const batch = new Batch();
+            batch.set(kv.key, kv.value);
+            await db.write(batch);
+
+            await expect(db.get(kv.key)).resolves.toEqual(kv.value);
+
+            const cloned = db.clone();
+            // update original db to something else
+            await db.set(kv.key, getRandomBytes());
+
+            await expect(db.get(kv.key)).resolves.not.toEqual(kv.value);
+            await expect(cloned.get(kv.key)).resolves.toEqual(kv.value);
+        });
+
         describe('iteration', () => {
             let pairs;
             beforeAll(async () => {

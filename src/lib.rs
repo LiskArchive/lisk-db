@@ -51,6 +51,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_writer_restore_snapshot", state_writer::StateWriter::js_restore_snapshot)?;
 
     cx.export_function("in_memory_db_new", in_memory_db::Database::js_new)?;
+    cx.export_function("in_memory_db_clone", in_memory_db::Database::js_clone)?;
     cx.export_function("in_memory_db_get", in_memory_db::Database::js_get)?;
     cx.export_function("in_memory_db_set", in_memory_db::Database::js_set)?;
     cx.export_function("in_memory_db_del", in_memory_db::Database::js_del)?;

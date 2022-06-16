@@ -27,6 +27,7 @@ const {
     batch_set,
     batch_del,
     in_memory_db_new,
+    in_memory_db_clone,
     in_memory_db_get,
     in_memory_db_set,
     in_memory_db_del,
@@ -235,8 +236,8 @@ class Batch {
 
 
 class InMemoryDatabase {
-    constructor() {
-        this._db = in_memory_db_new();
+    constructor(data) {
+        this._db = data || in_memory_db_new();
     }
 
     async get(key) {
@@ -306,6 +307,11 @@ class InMemoryDatabase {
 
     close() {
         in_memory_db_clear.call(this._db);
+    }
+
+    clone() {
+        const cloned = in_memory_db_clone.call(this._db);
+        return new InMemoryDatabase(cloned);
     }
 }
 
