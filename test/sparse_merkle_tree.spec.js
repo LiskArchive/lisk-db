@@ -224,6 +224,30 @@ describe('SparseMerkleTree', () => {
 				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
 				expect(queriesString).toEqual(outputProof.queries);
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+
+				// delete fist 25% of queries
+				const deletingKVPair = [];
+				const deleteQueryKeys = [];
+				for (let i = 0; i < Math.floor(inputKeys.length / 4); i += 1) {
+					deletingKVPair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.alloc(0)});
+					deleteQueryKeys.push(Buffer.from(inputKeys[i], 'hex'));
+				}
+				const rootAfterDelete = await smt.update(rootHash, deletingKVPair);
+				const deletedKeyProof = await smt.prove(rootAfterDelete, queryKeys);
+
+				const isInclusion = (proofQuery, queryKey) =>
+					queryKey.equals(proofQuery.key) && !proofQuery.value.equals(Buffer.alloc(0));
+				await expect(smt.verify(rootAfterDelete, queryKeys, deletedKeyProof)).resolves.toEqual(true);
+				for (let i = 0; i < queryKeys.length; i += 1) {
+					const query = queryKeys[i];
+					const proofQuery = deletedKeyProof.queries[i];
+
+					if (inputKeys.find(k => Buffer.from(k, 'hex').equals(query)) !== undefined && [...deleteQueryKeys, ...deletedKeys.map(keyHex => Buffer.from(keyHex, 'hex'))].find(k => k.equals(query)) === undefined) {
+						expect(isInclusion(proofQuery, query)).toEqual(true);
+					} else {
+						expect(isInclusion(proofQuery, query)).toEqual(false);
+					}
+				}
 			});
 		}
 	});
