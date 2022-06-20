@@ -602,6 +602,84 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
+        let db = db.borrow();
+        let key_lengh = db.key_length;
+        // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof
+        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+
+        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
+        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
+        for key in query_keys.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
+                .as_slice(&ctx)
+                .to_vec();
+            parsed_query_keys.push(key);
+        }
+        let raw_proof = ctx.argument::<JsObject>(2)?;
+        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
+        let raw_sibling_hashes = raw_proof.get::<JsArray, _, _>(&mut ctx, "siblingHashes")?.to_vec(&mut ctx)?;
+        for key in raw_sibling_hashes.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
+                .as_slice(&ctx)
+                .to_vec();
+            sibling_hashes.push(key);
+        }
+        let mut queries: Vec<smt::QueryProof> = vec![];
+        let raw_queries = raw_proof.get::<JsArray, _, _>(&mut ctx, "queries")?.to_vec(&mut ctx)?;
+        for key in raw_queries.iter() {
+            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
+            let key = obj
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
+                .as_slice(&ctx)
+                .to_vec();
+            let value = obj
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
+                .as_slice(&ctx)
+                .to_vec();
+            let bitmap = obj
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
+                .as_slice(&ctx)
+                .to_vec();
+            queries.push(smt::QueryProof {
+                key: key,
+                value: value,
+                bitmap: bitmap,
+            });
+        }
+        let proof = smt::Proof {
+            queries: queries,
+            sibling_hashes: sibling_hashes,
+        };
+
+        let cb = ctx.argument::<JsFunction>(4)?.root(&mut ctx);
+
+        let channel = ctx.channel();
+
+        thread::spawn(move || {
+            let result = smt::SMT::verify(&parsed_query_keys, &proof, &state_root, key_lengh);
+
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        vec![ctx.null().upcast(), JsBoolean::new(&mut ctx, val).upcast()]
+                    }
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        });
+
+        Ok(ctx.undefined())
+    }
+
     pub fn js_clean_diff_until(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();

@@ -51,7 +51,7 @@ jobs:
     - name: Install modules
       run: yarn install --ignore-scripts
     - name: Compile
-      run: yarn run build
+      run: yarn run build-release
     - name: Run rust tests
       run: yarn run test:rust
     - name: Run node.js tests
@@ -63,4 +63,4 @@ jobs:
       with:
         fullCoverageDiff: false
         delta: 0.2
-        afterSwitchCommand: yarn install --ignore-scripts && yarn run build
+        afterSwitchCommand: yarn install --ignore-scripts && yarn run build-release

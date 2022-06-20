@@ -61,6 +61,7 @@ export class InMemoryDatabase {
     iterate(options?: IterateOptions): NodeJS.ReadableStream;
     createReadStream(options?: IterateOptions): NodeJS.ReadableStream;
     clear(options?: IterateOptions): Promise<void>;
+    clone(): InMemoryDatabase;
     close(): void;
 }
 
@@ -110,6 +111,7 @@ export class StateDB {
     revert(prevRoot: Buffer, height: number): Promise<Buffer>;
     commit(readWriter: StateReadWriter, height: number, prevRoot: Buffer, options?: StateCommitOption): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
+    verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<bool>;
     finalize(height: number): Promise<void>;
     newReader(): StateReader;
     newReadWriter(): StateReadWriter;
@@ -120,4 +122,5 @@ export class SparseMerkleTree {
     constructor(keyLength?: number);
     update(root: Buffer, kvpair: { key: Buffer, value: Buffer }[]): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
+    verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<bool>;
 }

@@ -20,10 +20,10 @@ const SMTFixtures = require('./fixtures/smt_fixtures.json');
 const JumboFixtures = require('./fixtures/smt_jumbo_fixtures.json');
 const removeTreeFixtures = require('./fixtures/remove_tree.json');
 const removeExtraTreeFixtures = require('./fixtures/remove_extra_tree.json');
-// const ProofFixtures = require('./fixtures/smt_proof_fixtures.json');
+const ProofFixtures = require('./fixtures/smt_proof_fixtures.json');
 
 describe('SparseMerkleTree', () => {
-    jest.setTimeout(10000);
+    jest.setTimeout(100000);
 
     describe('updates', () => {
 		for (const test of fixtures.testCases) {
@@ -132,102 +132,123 @@ describe('SparseMerkleTree', () => {
 		}
 	});
 
-	// describe('generateMultiProof', () => {
-	// 	let db: Database;
-	// 	let smt: SparseMerkleTree;
+	describe('prove', () => {
+		for (const test of ProofFixtures.testCases) {
+			// eslint-disable-next-line no-loop-func
+			it(test.description, async () => {
+				const smt = new SparseMerkleTree(32);
+				const inputKeys = test.input.keys;
+				const inputValues = test.input.values;
+				const deletedKeys = test.input.deleteKeys;
+				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
+				const outputMerkleRoot = test.output.merkleRoot;
+				const outputProof = test.output.proof;
 
-	// 	beforeEach(() => {
-	// 		db = new InMemoryDB();
-	// 		smt = new SparseMerkleTree({ db, keyLength: 32 });
-	// 	});
+				const kvpair = [];
+				for (let i = 0; i < inputKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
+				}
 
-	// 	for (const test of ProofFixtures.testCases) {
-	// 		// eslint-disable-next-line no-loop-func
-	// 		it(test.description, async () => {
-	// 			const inputKeys = test.input.keys;
-	// 			const inputValues = test.input.values;
-	// 			const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
-	// 			const outputMerkleRoot = test.output.merkleRoot;
-	// 			const outputProof = test.output.proof;
+				for (let i = 0; i < deletedKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
+				}
 
-	// 			for (let i = 0; i < inputKeys.length; i += 1) {
-	// 				await smt.update(Buffer.from(inputKeys[i], 'hex'), Buffer.from(inputValues[i], 'hex'));
-	// 			}
+				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
 
-	// 			const proof = await smt.generateMultiProof(queryKeys);
+				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
 
-	// 			const siblingHashesString = [];
-	// 			for (const siblingHash of proof.siblingHashes) {
-	// 				siblingHashesString.push(siblingHash.toString('hex'));
-	// 			}
+				const proof = await smt.prove(rootHash, queryKeys);
 
-	// 			const queriesString = [];
-	// 			for (const query of proof.queries) {
-	// 				queriesString.push({
-	// 					key: query.key.toString('hex'),
-	// 					value: query.value.toString('hex'),
-	// 					bitmap: query.bitmap.toString('hex'),
-	// 				});
-	// 			}
+				const siblingHashesString = [];
+				for (const siblingHash of proof.siblingHashes) {
+					siblingHashesString.push(siblingHash.toString('hex'));
+				}
 
-	// 			expect(siblingHashesString).toEqual(outputProof.siblingHashes);
-	// 			expect(queriesString).toEqual(outputProof.queries);
-	// 			expect(verify(queryKeys, proof, Buffer.from(outputMerkleRoot, 'hex'), 32)).toBeTrue();
-	// 		});
-	// 	}
-	// });
+				const queriesString = [];
+				for (const query of proof.queries) {
+					queriesString.push({
+						key: query.key.toString('hex'),
+						value: query.value.toString('hex'),
+						bitmap: query.bitmap.toString('hex'),
+					});
+				}
 
-	// // TODO: Enable or migrate with new testing strategy. This test takes 20min~
-	// // eslint-disable-next-line jest/no-disabled-tests
-	// describe.skip('generateMultiProof - Jumbo fixtures', () => {
-	// 	let smt;
-    // beforeAll(() => {
-    //     const dbPath = path.join(os.tmpdir(), Date.now().toString());
-    //     fs.mkdirSync(dbPath, { recursive: true });
-    //     smt = new StateDB(dbPath, { keyLength: 32 });
-    // });
-    // afterAll(async () => {
-    //     await smt.close();
-    // });
+				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
+				expect(queriesString).toEqual(outputProof.queries);
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+			});
+		}
+	});
 
-	// 	for (const test of JumboFixtures.testCases) {
-	// 		// eslint-disable-next-line no-loop-func
-	// 		it(test.description, async () => {
-	// 			const inputKeys = test.input.keys;
-	// 			const inputValues = test.input.values;
-	// 			const removeKeys = test.input.deleteKeys;
-	// 			const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
-	// 			const outputMerkleRoot = test.output.merkleRoot;
-	// 			const outputProof = test.output.proof;
+	describe('prove - Jumbo fixtures', () => {
+		for (const test of JumboFixtures.testCases) {
+			// eslint-disable-next-line no-loop-func
+			it(test.description, async () => {
+				const smt = new SparseMerkleTree(32);
+				const inputKeys = test.input.keys;
+				const inputValues = test.input.values;
+				const deletedKeys = test.input.deleteKeys;
+				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
+				const outputMerkleRoot = test.output.merkleRoot;
+				const outputProof = test.output.proof;
 
-	// 			for (let i = 0; i < inputKeys.length; i += 1) {
-	// 				await smt.update(Buffer.from(inputKeys[i], 'hex'), Buffer.from(inputValues[i], 'hex'));
-	// 			}
+				const kvpair = [];
+				for (let i = 0; i < inputKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
+				}
 
-	// 			for (const key of removeKeys) {
-	// 				await smt.remove(Buffer.from(key, 'hex'));
-	// 			}
+				for (let i = 0; i < deletedKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
+				}
 
-	// 			const proof = await smt.generateMultiProof(queryKeys);
+				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
 
-	// 			const siblingHashesString = [];
-	// 			for (const siblingHash of proof.siblingHashes) {
-	// 				siblingHashesString.push(siblingHash.toString('hex'));
-	// 			}
+				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
 
-	// 			const queriesString = [];
-	// 			for (const query of proof.queries) {
-	// 				queriesString.push({
-	// 					key: query.key.toString('hex'),
-	// 					value: query.value.toString('hex'),
-	// 					bitmap: query.bitmap.toString('hex'),
-	// 				});
-	// 			}
+				const proof = await smt.prove(rootHash, queryKeys);
 
-	// 			expect(siblingHashesString).toEqual(outputProof.siblingHashes);
-	// 			expect(queriesString).toEqual(outputProof.queries);
-	// 			expect(verify(queryKeys, proof, Buffer.from(outputMerkleRoot, 'hex'), 32)).toBeTrue();
-	// 		});
-	// 	}
-	// });
+				const siblingHashesString = [];
+				for (const siblingHash of proof.siblingHashes) {
+					siblingHashesString.push(siblingHash.toString('hex'));
+				}
+
+				const queriesString = [];
+				for (const query of proof.queries) {
+					queriesString.push({
+						key: query.key.toString('hex'),
+						value: query.value.toString('hex'),
+						bitmap: query.bitmap.toString('hex'),
+					});
+				}
+
+				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
+				expect(queriesString).toEqual(outputProof.queries);
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+
+				// delete fist 25% of queries
+				const deletingKVPair = [];
+				const deleteQueryKeys = [];
+				for (let i = 0; i < Math.floor(inputKeys.length / 4); i += 1) {
+					deletingKVPair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.alloc(0)});
+					deleteQueryKeys.push(Buffer.from(inputKeys[i], 'hex'));
+				}
+				const rootAfterDelete = await smt.update(rootHash, deletingKVPair);
+				const deletedKeyProof = await smt.prove(rootAfterDelete, queryKeys);
+
+				const isInclusion = (proofQuery, queryKey) =>
+					queryKey.equals(proofQuery.key) && !proofQuery.value.equals(Buffer.alloc(0));
+				await expect(smt.verify(rootAfterDelete, queryKeys, deletedKeyProof)).resolves.toEqual(true);
+				for (let i = 0; i < queryKeys.length; i += 1) {
+					const query = queryKeys[i];
+					const proofQuery = deletedKeyProof.queries[i];
+
+					if (inputKeys.find(k => Buffer.from(k, 'hex').equals(query)) !== undefined && [...deleteQueryKeys, ...deletedKeys.map(keyHex => Buffer.from(keyHex, 'hex'))].find(k => k.equals(query)) === undefined) {
+						expect(isInclusion(proofQuery, query)).toEqual(true);
+					} else {
+						expect(isInclusion(proofQuery, query)).toEqual(false);
+					}
+				}
+			});
+		}
+	});
 });

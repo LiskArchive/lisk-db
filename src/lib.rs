@@ -37,6 +37,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_db_revert", state_db::StateDB::js_revert)?;
     cx.export_function("state_db_commit", state_db::StateDB::js_commit)?;
     cx.export_function("state_db_prove", state_db::StateDB::js_prove)?;
+    cx.export_function("state_db_verify", state_db::StateDB::js_verify)?;
     cx.export_function("state_db_clean_diff_until", state_db::StateDB::js_clean_diff_until)?;
 
     cx.export_function("state_writer_new", state_writer::StateWriter::js_new)?;
@@ -51,6 +52,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_writer_restore_snapshot", state_writer::StateWriter::js_restore_snapshot)?;
 
     cx.export_function("in_memory_db_new", in_memory_db::Database::js_new)?;
+    cx.export_function("in_memory_db_clone", in_memory_db::Database::js_clone)?;
     cx.export_function("in_memory_db_get", in_memory_db::Database::js_get)?;
     cx.export_function("in_memory_db_set", in_memory_db::Database::js_set)?;
     cx.export_function("in_memory_db_del", in_memory_db::Database::js_del)?;
@@ -62,6 +64,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("in_memory_smt_new", smt::InMemorySMT::js_new)?;
     cx.export_function("in_memory_smt_update", smt::InMemorySMT::js_update)?;
     cx.export_function("in_memory_smt_prove", smt::InMemorySMT::js_prove)?;
+    cx.export_function("in_memory_smt_verify", smt::InMemorySMT::js_verify)?;
 
     Ok(())
 }
