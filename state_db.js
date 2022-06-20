@@ -22,6 +22,7 @@ const {
     state_db_revert,
     state_db_commit,
     state_db_prove,
+    state_db_verify,
     state_db_clean_diff_until,
     state_writer_new,
     state_writer_get,
@@ -334,6 +335,17 @@ class StateDB {
     async prove(root, queries) {
         return new Promise((resolve, reject) => {
             state_db_prove.call(this._db, root, queries, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    async prove(root, queries, proof) {
+        return new Promise((resolve, reject) => {
+            state_db_verify.call(this._db, root, queries, proof, (err, result) => {
                 if (err) {
                     return reject(err);
                 }
