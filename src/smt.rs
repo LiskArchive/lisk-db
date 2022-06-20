@@ -2,6 +2,7 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
+use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -153,6 +154,32 @@ struct Node {
     key: Vec<u8>,
     data: Vec<u8>,
     hash: Vec<u8>,
+    index: usize,
+}
+
+#[derive(Clone, Debug)]
+struct QueryProofWithProof {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    binary_bitmap: Vec<bool>,
+    bitmap: Vec<u8>,
+    ancestor_hashes: Vec<Vec<u8>>,
+    sibling_hashes: Vec<Vec<u8>>,
+}
+
+impl QueryProofWithProof {
+    fn height(&self) -> usize {
+        self.binary_bitmap.len()
+    }
+
+    fn slice_bitmap(&mut self) {
+        self.binary_bitmap = self.binary_bitmap[1..].to_vec();
+        self.bitmap = utils::bools_to_bytes(&self.binary_bitmap);
+    }
+
+    fn binary_path(&self) -> Vec<bool> {
+        utils::bytes_to_bools(&self.key)[..self.height()].to_vec()
+    }
 }
 
 impl Node {
@@ -162,6 +189,7 @@ impl Node {
             data: vec![],
             hash: vec![],
             key: vec![],
+            index: 0,
         }
     }
 
@@ -172,6 +200,20 @@ impl Node {
             data: data,
             hash: node_hash.to_vec(),
             key: vec![],
+            index: 0,
+        }
+    }
+
+    fn new_branch(left_hash: &[u8], right_hash: &[u8]) -> Self {
+        let combined = [left_hash, right_hash].concat();
+        let data = [PREFIX_BRANCH_HASH, &combined].concat();
+        let hashed = branch_hash(&combined);
+        Self {
+            kind: NodeKind::Stub,
+            data: data,
+            hash: hashed,
+            key: vec![],
+            index: 0,
         }
     }
 
@@ -183,6 +225,7 @@ impl Node {
             data: data,
             hash: h,
             key: key.to_vec(),
+            index: 0,
         }
     }
 
@@ -194,6 +237,7 @@ impl Node {
             data: data,
             hash: h,
             key: vec![],
+            index: 0,
         }
     }
 }
@@ -285,9 +329,7 @@ impl SubTree {
 
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
-        let node_hashes: Vec<Vec<u8>> = self.nodes.iter().map(|n| {
-            n.data.clone()
-        }).collect();
+        let node_hashes: Vec<Vec<u8>> = self.nodes.iter().map(|n| n.data.clone()).collect();
         [
             vec![node_length],
             self.structure.clone(),
@@ -427,6 +469,118 @@ fn calculate_subtree(
     )
 }
 
+fn calculate_query_hashes(
+    layer_nodes: &Vec<Node>,
+    layer_structure: &Vec<u8>,
+    height: u8,
+    target_id: usize,
+    max_index: usize,
+    sibling_hashes: &mut VecDeque<Vec<u8>>,
+    ancestor_hashes: &mut VecDeque<Vec<u8>>,
+    binary_bitmap: &mut Vec<bool>,
+) {
+    if height == 0 {
+        return;
+    }
+    let mut next_layer_nodes: Vec<Node> = vec![];
+    let mut next_layer_structure: Vec<u8> = vec![];
+    let mut next_target_id = target_id;
+    let mut i = 0;
+    while i < layer_nodes.len() {
+        if layer_structure[i] != height {
+            next_layer_nodes.push(layer_nodes[i].clone());
+            next_layer_structure.push(layer_structure[i]);
+            i += 1;
+            continue;
+        }
+        let mut parent_node = Node::new_branch(&layer_nodes[i].hash, &layer_nodes[i + 1].hash);
+        parent_node.index = max_index + i;
+        next_layer_nodes.push(parent_node.clone());
+        next_layer_structure.push(layer_structure[i] - 1);
+        if next_target_id == layer_nodes[i].index {
+            ancestor_hashes.push_front(parent_node.hash.clone());
+            next_target_id = parent_node.index;
+            if layer_nodes[i + 1].kind == NodeKind::Empty {
+                binary_bitmap.push(false);
+            } else {
+                binary_bitmap.push(true);
+                sibling_hashes.push_front(layer_nodes[i + 1].hash.clone());
+            }
+        } else if next_target_id == layer_nodes[i + 1].index {
+            ancestor_hashes.push_front(parent_node.hash.clone());
+            next_target_id = parent_node.index;
+            if layer_nodes[i].kind == NodeKind::Empty {
+                binary_bitmap.push(false);
+            } else {
+                binary_bitmap.push(true);
+                sibling_hashes.push_front(layer_nodes[i].hash.clone());
+            }
+        }
+        i += 2;
+    }
+    calculate_query_hashes(
+        &next_layer_nodes,
+        &next_layer_structure,
+        height - 1,
+        next_target_id,
+        max_index + i + 1,
+        sibling_hashes,
+        ancestor_hashes,
+        binary_bitmap,
+    )
+}
+
+fn insert_and_filter_queries(
+    q: QueryProofWithProof,
+    queries: &mut VecDeque<QueryProofWithProof>,
+) {
+    if queries.len() == 0 {
+        queries.push_back(q);
+        return;
+    }
+
+    let index = utils::binary_search(queries.make_contiguous(), |val| {
+        (q.height() == val.height() && utils::compare(&q.key, &val.key) == cmp::Ordering::Less)
+            || q.height() > val.height()
+    });
+
+    if index == queries.len() as i32 {
+        queries.push_back(q);
+        return;
+    }
+
+    let original = &queries[index as usize];
+    if !utils::arr_eq_bool(&q.binary_path(), &original.binary_path()) {
+        queries.insert(index as usize, q);
+    }
+}
+
+fn calculate_sibling_hashes(
+    query_with_proofs: &mut VecDeque<QueryProofWithProof>,
+    ancestor_hashes: &Vec<Vec<u8>>,
+    sibling_hashes: &mut Vec<Vec<u8>>,
+) {
+    if query_with_proofs.len() == 0 {
+        return;
+    }
+    while query_with_proofs.len() > 0 {
+        let mut query = query_with_proofs.pop_front().unwrap();
+        if query.height() == 0 {
+            continue;
+        }
+        if query.binary_bitmap[0] {
+            let node_hash = query.sibling_hashes.pop().unwrap();
+            if !utils::bytes_in(ancestor_hashes, &node_hash)
+                && !utils::bytes_in(sibling_hashes, &node_hash)
+            {
+                sibling_hashes.push(node_hash.clone());
+            }
+        }
+        query.slice_bitmap();
+        insert_and_filter_queries(query, query_with_proofs);
+    }
+}
+
 impl SMT {
     pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
         let max_number_of_nodes = 1 << subtree_height;
@@ -456,9 +610,51 @@ impl SMT {
     }
 
     pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+        if queries.len() == 0 {
+            return Ok(Proof {
+                queries: vec![],
+                sibling_hashes: vec![],
+            });
+        }
+        let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
+        let root = self.get_subtree(db, &self.root)?;
+        let mut ancestor_hashes = vec![];
+        for query in queries {
+            let query_proof = self.generate_query_proof(db, &mut root.clone(), query, 0)?;
+            query_with_proofs.push(query_proof.clone());
+            ancestor_hashes.extend(query_proof.ancestor_hashes);
+        }
+        
+        let mut proof_queries = vec![];
+
+        for query in query_with_proofs.clone() {
+            proof_queries.push(QueryProof {
+                key: query.key.clone(),
+                value: query.value.clone(),
+                bitmap: query.bitmap.clone(),
+            });
+        }
+
+        query_with_proofs.sort_by(|a, b| {
+            if a.height() > b.height() {
+                return cmp::Ordering::Less;
+            } else if a.height() < b.height() {
+                return cmp::Ordering::Greater;
+            }
+            utils::compare(&a.key, &b.key)
+        });
+
+        let mut sibling_hashes = vec![];
+        let mut query_with_proofs = VecDeque::from(query_with_proofs);
+        calculate_sibling_hashes(
+            &mut query_with_proofs,
+            &ancestor_hashes,
+            &mut sibling_hashes,
+        );
+
         Ok(Proof {
-            queries: vec![],
-            sibling_hashes: vec![],
+            queries: proof_queries,
+            sibling_hashes: sibling_hashes,
         })
     }
 
@@ -553,7 +749,10 @@ impl SMT {
         }
 
         if bin_offset != self.max_number_of_nodes {
-            return Err(SMTError::Unknown(format!("bin_offset {} expected {}", bin_offset, self.max_number_of_nodes)));
+            return Err(SMTError::Unknown(format!(
+                "bin_offset {} expected {}",
+                bin_offset, self.max_number_of_nodes
+            )));
         }
         // Go through nodes again and push up empty nodes
         let max_structure = new_structures
@@ -690,6 +889,110 @@ impl SMT {
 
         Ok((left_nodes, left_heights))
     }
+
+    fn generate_query_proof(
+        &mut self,
+        db: &mut impl DB,
+        current_subtree: &mut SubTree,
+        query_key: Vec<u8>,
+        height: usize,
+    ) -> Result<QueryProofWithProof, SMTError> {
+        if query_key.len() != self.key_length {
+            return Err(SMTError::InvalidInput(String::from(
+                "Query key length must be equal to key length",
+            )));
+        }
+
+        let b = height / 8;
+        let bin_idx = if self.subtree_height == 4 {
+            match height % 8 {
+                0 => Ok(query_key[b] >> 4),
+                4 => Ok(query_key[b] & 15),
+                _ => Err(SMTError::Unknown(String::from("Invalid bin index"))),
+            }?
+        // when subtree_height is 8
+        } else {
+            query_key[b]
+        };
+
+        for (i, node) in current_subtree.nodes.iter_mut().enumerate() {
+            node.index = i;
+        }
+
+        let mut bin_offset = 0;
+        let mut current_node: Option<Node> = None;
+        let mut h = 0;
+        for i in 0..current_subtree.nodes.len() {
+            h = current_subtree.structure[i];
+            current_node = Some(current_subtree.nodes[i].clone());
+            let new_offset = 1 << (self.subtree_height - h as usize);
+            if bin_offset <= bin_idx && bin_idx < bin_offset + new_offset {
+                break;
+            }
+            bin_offset += new_offset
+        }
+        let query_height = h as usize;
+
+        let mut ancestor_hashes = VecDeque::new();
+        let mut sibling_hashes = VecDeque::new();
+        let mut binary_bitmap: Vec<bool> = vec![];
+        let current_node = current_node.unwrap();
+
+        let max_structure = current_subtree
+            .structure
+            .iter()
+            .max()
+            .ok_or(SMTError::Unknown(String::from("Invalid structure")))?;
+
+        calculate_query_hashes(
+            &current_subtree.nodes,
+            &current_subtree.structure,
+            *max_structure,
+            current_node.index,
+            current_subtree.nodes.len(),
+            &mut sibling_hashes,
+            &mut ancestor_hashes,
+            &mut binary_bitmap,
+        );
+
+        if current_node.kind == NodeKind::Empty {
+            return Ok(QueryProofWithProof {
+                key: query_key,
+                value: vec![],
+                binary_bitmap: binary_bitmap.clone(),
+                bitmap: utils::bools_to_bytes(&binary_bitmap),
+                ancestor_hashes: Vec::from(ancestor_hashes),
+                sibling_hashes: Vec::from(sibling_hashes),
+            });
+        }
+
+        if current_node.kind == NodeKind::Leaf {
+            ancestor_hashes.push_back(current_node.hash);
+            return Ok(QueryProofWithProof {
+                key: current_node.key,
+                // 0 index is the leaf prefix
+                value: current_node.data[PREFIX_LEAF_HASH.len()+HASH_SIZE..].to_vec(),
+                binary_bitmap: binary_bitmap.clone(),
+                bitmap: utils::bools_to_bytes(&binary_bitmap),
+                ancestor_hashes: Vec::from(ancestor_hashes),
+                sibling_hashes: Vec::from(sibling_hashes),
+            });
+        }
+
+        let mut lower_subtree = self.get_subtree(db, &current_node.hash)?;
+        let lower_query_proof =
+            self.generate_query_proof(db, &mut lower_subtree, query_key, height + query_height)?;
+
+        let combined_binary_bitmap = [lower_query_proof.binary_bitmap, binary_bitmap].concat();
+        Ok(QueryProofWithProof {
+            key: lower_query_proof.key,
+            value: lower_query_proof.value,
+            binary_bitmap: combined_binary_bitmap.clone(),
+            bitmap: utils::bools_to_bytes(&combined_binary_bitmap),
+            ancestor_hashes: [Vec::from(ancestor_hashes), lower_query_proof.ancestor_hashes].concat(),
+            sibling_hashes: [Vec::from(sibling_hashes), lower_query_proof.sibling_hashes].concat(),
+        })
+    }
 }
 
 pub struct InMemorySMT {
@@ -726,9 +1029,13 @@ impl InMemorySMT {
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?.as_slice(&ctx).to_vec();
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
+                .as_slice(&ctx)
+                .to_vec();
             let value = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?.as_slice(&ctx).to_vec();
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
+                .as_slice(&ctx)
+                .to_vec();
             data.insert(key, value);
         }
 
@@ -775,7 +1082,10 @@ impl InMemorySMT {
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut data: Vec<Vec<u8>> = vec![];
         for key in input.iter() {
-            let key = key.downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?.as_slice(&ctx).to_vec();
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
+                .as_slice(&ctx)
+                .to_vec();
             data.push(key);
         }
 
@@ -802,6 +1112,7 @@ impl InMemorySMT {
                         }
                         obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
                         let queries = ctx.empty_array();
+                        obj.set(&mut ctx, "queries", queries)?;
                         for (i, v) in val.queries.iter().enumerate() {
                             let obj = ctx.empty_object();
                             let key = JsBuffer::external(&mut ctx, v.key.to_vec());
@@ -882,12 +1193,8 @@ mod tests {
     #[test]
     fn test_small_tree_0() {
         let test_data = vec![(
-            vec![
-                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
-            ],
-            vec![
-                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
-            ],
+            vec!["6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"],
+            vec!["1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a"],
             "ccd1c136c75ffd2e3947466ad17dd6687d890ce50cbeb7ca7a4da638df482b96",
         )];
 
@@ -1026,6 +1333,440 @@ mod tests {
             let result = tree.commit(&mut db, &mut data);
 
             assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_small_proof() {
+        let test_data = vec![(
+            vec![
+                "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+                "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                "beead77994cf573341ec17b58bbf7eb34d2711c993c1d976b128b3188dc1829a",
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6",
+                "2b4c342f5433ebe591a1da77e013d1b72475562d48578dca8b84bac6651c3cb9",
+            ],
+            vec![
+                "b6d58dfa6547c1eb7f0d4ffd3e3bd6452213210ea51baa70b97c31f011187215",
+                "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
+                "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
+                "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
+                "42bbafcdee807bf0e14577e5fa6ed1bc0cd19be4f7377d31d90cd7008cb74d73",
+                "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                "f3035c79a84a2dda7a7b5f356b3aeb82fb934d5f126af99bbee9a404c425b888",
+                "2ad16b189b68e7672a886c82a0550bc531782a3a4cfb2f08324e316bb0f3174d",
+            ],
+            "3f91f1b7bc96933102dcce6a6c9200c68146a8327c16b91f8e4b37f40e2e2fb4",
+            vec!["6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"],
+            vec![
+                "8d1ffa7d6c798b22e899eb01e2ff37aa38ca5d155c7787ec77e6818cb6058d50",
+                "b40ca4f4d1cc50ab10ec89fcde1a6587003f964c83f040f54e591c9dfc8a549f",
+                "9a428d826c80eeabda0ee5f77458d492b333a171ee781543e09ee62100786142",
+                "f6d10a31f5362e0ceada0b2fccabc648dc25d635bb3331f5cb0f499591f104b8",
+            ],
+            vec![QueryProof {
+                bitmap: hex::decode("17").unwrap(),
+                key: hex::decode(
+                    "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                )
+                .unwrap(),
+                value: hex::decode(
+                    "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                )
+                .unwrap(),
+            }],
+        ),
+        (
+            vec![
+                "58f7b0780592032e4d8602a3e8690fb2c701b2e1dd546e703445aabd6469734d",
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                "2f0fd1e89b8de1d57292742ec380ea47066e307ad645f5bc3adad8a06ff58608",
+                "dc0e9c3658a1a3ed1ec94274d8b19925c93e1abb7ddba294923ad9bde30f8cb8",
+                "77adfc95029e73b173f60e556f915b0cd8850848111358b1c370fb7c154e61fd",
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "68aa2e2ee5dff96e3355e6c7ee373e3d6a4e17f75f9518d843709c0c9bc3e3d4",
+                "4a64a107f0cb32536e5bce6c98c393db21cca7f4ea187ba8c4dca8b51d4ea80a",
+                "2b4c342f5433ebe591a1da77e013d1b72475562d48578dca8b84bac6651c3cb9",
+                "e7cf46a078fed4fafd0b5e3aff144802b853f8ae459a4f0c14add3314b7cc3a6",
+                "beead77994cf573341ec17b58bbf7eb34d2711c993c1d976b128b3188dc1829a",
+                "452ba1ddef80246c48be7690193c76c1d61185906be9401014fe14f1be64b74f",
+                "83891d7fe85c33e52c8b4e5814c92fb6a3b9467299200538a6babaa8b452d879",
+                "c555eab45d08845ae9f10d452a99bfcb06f74a50b988fe7e48dd323789b88ee3",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                "7cb7c4547cf2653590d7a9ace60cc623d25148adfbc88a89aeb0ef88da7839ba",
+                "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                "bd4fc42a21f1f860a1030e6eba23d53ecab71bd19297ab6c074381d4ecee0018",
+                "9d1e0e2d9459d06523ad13e28a4093c2316baafe7aec5b25f30eba2e113599c4",
+                "ab897fbdedfa502b2d839b6a56100887dccdc507555c282e59589e06300a62e2",
+                "f299791cddd3d6664f6670842812ef6053eb6501bd6282a476bbbf3ee91e750c",
+                "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                "8f11b05da785e43e713d03774c6bd3405d99cd3024af334ffd68db663aa37034",
+                "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6",
+                "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+                "ef6cbd2161eaea7943ce8693b9824d23d1793ffb1c0fca05b600d3899b44c977",
+                "4d7b3ef7300acf70c892d8327db8272f54434adbc61a4e130a563cb59a0d0f47"
+            ],
+            vec![
+                "1de48a4dc23d38868ea10c06532780ba734257556da7bc862832d81b3de9ed28",
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                "017e6d288c2ab4ed2f5e4a0b41e147f71b4a23a85b3592e2539b8044cb4c8acc",
+                "be81701528e54129c74003fca940f40fec52cbeeaf3bef01dc3ff14cc75457e4",
+                "fd2e24dccf968b46e13c774b139bf8ce13c74c58713fe25ab752b9701c6de8f9",
+                "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                "e4e6a38d6bcce0067eedfb3343a6aaba9d42b3f3f71effb45abe5c4a35e337e8",
+                "3b7674662e6569056cef73dab8b7809085a32beda0e8eb9e9b580cfc2af22a55",
+                "2ad16b189b68e7672a886c82a0550bc531782a3a4cfb2f08324e316bb0f3174d",
+                "92a9cee8d181100da0604847187508328ef3a768612ec0d0dcd4ca2314b45d2d",
+                "42bbafcdee807bf0e14577e5fa6ed1bc0cd19be4f7377d31d90cd7008cb74d73",
+                "c2908410ab0cbc5ef04a243a6c83ee07630a42cb1727401d384e94f755e320db",
+                "d703d3da6a87bd8e0b453f3b6c41edcc9bf331b2b88ef26eb39dc7abee4e00a3",
+                "1405870ede7c8bede02298a878e66eba9e764a1ba55ca16173f7df470fb4089d",
+                "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                "cf29746d1b1686456123bfe8ee607bb16b3d6e9352873fd34fd7dfc5bbfb156c",
+                "b6d58dfa6547c1eb7f0d4ffd3e3bd6452213210ea51baa70b97c31f011187215",
+                "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
+                "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
+                "6ba6a79b31adb401532edbc80604b4ba490d0df9874ac6b55a30f91edfd15053",
+                "e17d630e7b1ec8612c95f2a37755c70466640272a6aee967e16239f2c66a81d4",
+                "58b8e1205472ebed51a76303179ebf44554714af49ef1f78fb4c1a6a795aa3d7",
+                "d25c96a5a03ec5f58893c6e3d23d31751a1b2f0e09792631d5d2463f5a147187",
+                "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
+                "1bb631b04e6dce2415d564c3ebcd43d6d8baef041f00f9423600e134d2df634d",
+                "f3035c79a84a2dda7a7b5f356b3aeb82fb934d5f126af99bbee9a404c425b888",
+                "9c827201b94019b42f85706bc49c59ff84b5604d11caafb90ab94856c4e1dd7a",
+                "0eac589aa6ef7f5232a21b36ddac0b586b707acebdeac6082e10a9a9f80860da",
+                "d6cdf7c9478a78b29f16c7e6ddcc5612e827beaf6f4aef7c1bb6fef56bbb9a0f"
+            ],
+            "dd6e59d920b0a911ad43bbb6c97453128deece03f5799c13eae050cad6958368",
+            vec![
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+            ],
+            vec![
+                "947f6a2a1faab9e68a23701e1eae120d401148983326794b05063e118f2a0513",
+                "f5a9a1f4a90cf891b6cd0ca1f82bbe90e88835c3aed9106805464890f2734fa1",
+                "c4288c46c16467a3c12928f99be89f9401b813ae123289a09f2ae1fa2211067a",
+                "eb57d25f6308dc90d5d2c34462153040443ef5241441a9e644957b0e51c33944",
+                "c81bf0eea251a7e8ee8bb2960d5e3c5847110496ed68ef889f4050e02f27cb8f",
+                "8d1ffa7d6c798b22e899eb01e2ff37aa38ca5d155c7787ec77e6818cb6058d50",
+                "17c59ac41e2255a5da6f06be5d677618084b6c253c20698cbafe8982fc320e29",
+                "d71d377dedbcfa43ec16423d839914e43edc96c9d2322caf020f51b01727579f",
+                "0debba7a991a1281f9d3e00f788c0325271119fa3839075e9b5fabb42837916e",
+                "fdaad6b0fe38314f5f2b74c745e1de1058ee0e9e1c42a8b025a655a6b1d1a1d3",
+                "94eb9f8005ae50cfae31cef5a25dd2b5d21c70c6f6d45483589cfe771a7ab597",
+                "8e3cad238038e7888db0286ba540cb349abcca266dd5403c6280b6c45cc61002"
+            ],
+            vec![
+                QueryProof {
+                    bitmap: hex::decode("3f").unwrap(),
+                    key: hex::decode(
+                        "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("bf").unwrap(),
+                    key: hex::decode(
+                        "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("2f").unwrap(),
+                    key: hex::decode(
+                        "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                    )
+                    .unwrap(),
+                },
+            ],
+        )
+        ];
+
+        for (keys, values, root, query_keys, sibling_hashes, queries) in test_data {
+            let mut tree = SMT::new(vec![], 32, 8);
+            let mut data = UpdateData {
+                data: HashMap::new(),
+            };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+            let mut db = smt_db::InMemorySMTDB::new();
+            let result = tree.commit(&mut db, &mut data);
+
+            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+
+            let proof = tree
+                .prove(
+                    &mut db,
+                    query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                )
+                .unwrap();
+            for (i, query) in proof.queries.iter().enumerate() {
+                assert_eq!(query.bitmap, queries[i].bitmap);
+                assert_eq!(query.key, queries[i].key);
+                assert_eq!(query.value, queries[i].value);
+            }
+            assert_eq!(proof.sibling_hashes.iter().map(|v| hex::encode(v)).collect::<Vec<String>>(), sibling_hashes);
+        }
+    }
+
+    #[test]
+    fn test_mid_proof() {
+        let test_data = vec![
+        (
+            vec![
+                "58f7b0780592032e4d8602a3e8690fb2c701b2e1dd546e703445aabd6469734d",
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                "4d7b3ef7300acf70c892d8327db8272f54434adbc61a4e130a563cb59a0d0f47",
+                "265fda17a34611b1533d8a281ff680dc5791b0ce0a11c25b35e11c8e75685509",
+                "77adfc95029e73b173f60e556f915b0cd8850848111358b1c370fb7c154e61fd",
+                "9d1e0e2d9459d06523ad13e28a4093c2316baafe7aec5b25f30eba2e113599c4",
+                "beead77994cf573341ec17b58bbf7eb34d2711c993c1d976b128b3188dc1829a",
+                "9652595f37edd08c51dfa26567e6cd76e6fa2709c3e578478ca398d316837a7a",
+                "cdb4ee2aea69cc6a83331bbe96dc2caa9a299d21329efb0336fc02a82e1839a8",
+                "452ba1ddef80246c48be7690193c76c1d61185906be9401014fe14f1be64b74f",
+                "3973e022e93220f9212c18d0d0c543ae7c309e46640da93a4a0314de999f5112",
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1",
+                "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+                "83891d7fe85c33e52c8b4e5814c92fb6a3b9467299200538a6babaa8b452d879",
+                "dc0e9c3658a1a3ed1ec94274d8b19925c93e1abb7ddba294923ad9bde30f8cb8",
+                "bd4fc42a21f1f860a1030e6eba23d53ecab71bd19297ab6c074381d4ecee0018",
+                "ef6cbd2161eaea7943ce8693b9824d23d1793ffb1c0fca05b600d3899b44c977",
+                "4a64a107f0cb32536e5bce6c98c393db21cca7f4ea187ba8c4dca8b51d4ea80a",
+                "951dcee3a7a4f3aac67ec76a2ce4469cc76df650f134bf2572bf60a65c982338",
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                "36a9e7f1c95b82ffb99743e0c5c4ce95d83c9a430aac59f84ef3cbfab6145068",
+                "f299791cddd3d6664f6670842812ef6053eb6501bd6282a476bbbf3ee91e750c",
+                "32ebb1abcc1c601ceb9c4e3c4faba0caa5b85bb98c4f1e6612c40faa528a91c9",
+                "2b4c342f5433ebe591a1da77e013d1b72475562d48578dca8b84bac6651c3cb9",
+                "bb7208bc9b5d7c04f1236a82a0093a5e33f40423d5ba8d4266f7092c3ba43b62",
+                "68aa2e2ee5dff96e3355e6c7ee373e3d6a4e17f75f9518d843709c0c9bc3e3d4",
+                "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                "334359b90efed75da5f0ada1d5e6b256f4a6bd0aee7eb39c0f90182a021ffc8b",
+                "09fc96082d34c2dfc1295d92073b5ea1dc8ef8da95f14dfded011ffb96d3e54b",
+                "8a331fdde7032f33a71e1b2e257d80166e348e00fcb17914f48bdb57a1c63007",
+                "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6",
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                "e7cf46a078fed4fafd0b5e3aff144802b853f8ae459a4f0c14add3314b7cc3a6",
+                "ba5ec51d07a4ac0e951608704431d59a02b21a4e951acc10505a8dc407c501ee",
+                "ffe679bb831c95b67dc17819c63c5090d221aac6f4c7bf530f594ab43d21fa1e",
+                "d03502c43d74a30b936740a9517dc4ea2b2ad7168caa0a774cefe793ce0b33e7",
+                "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+                "8f11b05da785e43e713d03774c6bd3405d99cd3024af334ffd68db663aa37034",
+                "a318c24216defe206feeb73ef5be00033fa9c4a74d0b967f6532a26ca5906d3b",
+                "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+                "ab897fbdedfa502b2d839b6a56100887dccdc507555c282e59589e06300a62e2",
+                "7cb7c4547cf2653590d7a9ace60cc623d25148adfbc88a89aeb0ef88da7839ba",
+                "1f18d650d205d71d934c3646ff5fac1c096ba52eba4cf758b865364f4167d3cd",
+                "2f0fd1e89b8de1d57292742ec380ea47066e307ad645f5bc3adad8a06ff58608",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                "bbf3f11cb5b43e700273a78d12de55e4a7eab741ed2abf13787a4d2dc832b8ec",
+                "c555eab45d08845ae9f10d452a99bfcb06f74a50b988fe7e48dd323789b88ee3"
+            ],
+            vec![
+                "1de48a4dc23d38868ea10c06532780ba734257556da7bc862832d81b3de9ed28",
+                "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
+                "d6cdf7c9478a78b29f16c7e6ddcc5612e827beaf6f4aef7c1bb6fef56bbb9a0f",
+                "e368b5f8bac32462da14cda3a2c944365cbf7f34a5db8aa4e9d85abc21cf8f8a",
+                "fd2e24dccf968b46e13c774b139bf8ce13c74c58713fe25ab752b9701c6de8f9",
+                "e17d630e7b1ec8612c95f2a37755c70466640272a6aee967e16239f2c66a81d4",
+                "42bbafcdee807bf0e14577e5fa6ed1bc0cd19be4f7377d31d90cd7008cb74d73",
+                "2651c51550722c13909ec43f50a1da637f907f7a307e8f60695ae23d3380abad",
+                "8a1fe157beac6df9db1f519afed60928eeb623c104a53a62af6b88c423d47e35",
+                "c2908410ab0cbc5ef04a243a6c83ee07630a42cb1727401d384e94f755e320db",
+                "fc62b10ec59efa8041f5a6c924d7c91572c1bbda280d9e01312b660804df1d47",
+                "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                "e344fcf046503fd53bb404197dac9c86405f8bd53b751e40bfa0e386df112f0f",
+                "ff122c0ea37f12c5c0f330b2616791df8cb8cc8f1114304afbf0cff5d79cec54",
+                "d703d3da6a87bd8e0b453f3b6c41edcc9bf331b2b88ef26eb39dc7abee4e00a3",
+                "be81701528e54129c74003fca940f40fec52cbeeaf3bef01dc3ff14cc75457e4",
+                "6ba6a79b31adb401532edbc80604b4ba490d0df9874ac6b55a30f91edfd15053",
+                "0eac589aa6ef7f5232a21b36ddac0b586b707acebdeac6082e10a9a9f80860da",
+                "3b7674662e6569056cef73dab8b7809085a32beda0e8eb9e9b580cfc2af22a55",
+                "bf1d535d30ebf4b7e639721faa475ea6e5a884f6468929101347e665b90fccdd",
+                "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                "24944f33566d9ed9c410ae72f89454ac6f0cfee446590c01751f094e185e8978",
+                "d25c96a5a03ec5f58893c6e3d23d31751a1b2f0e09792631d5d2463f5a147187",
+                "d8909983be3179a28734edac2ad9e1d0364c8e15e6e8cdc1363d9969d23c7d95",
+                "2ad16b189b68e7672a886c82a0550bc531782a3a4cfb2f08324e316bb0f3174d",
+                "7e0e5207f9102c79bd355ccafc329b517e0d6c2b509b37f30cfc39538992cb36",
+                "e4e6a38d6bcce0067eedfb3343a6aaba9d42b3f3f71effb45abe5c4a35e337e8",
+                "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
+                "7c8b1ed7e1074189bf7ff3618e97b4ce88f25c289f827c30fabfbe6607058af6",
+                "d4880b6be079f51ee991b52f2e92636197de9c8a4063f69987eff619bb934872",
+                "ef79a95edac9b7119192b7765ef48dc8c7ecc0db12b28d9f39b5b4dedcc98ccd",
+                "f3035c79a84a2dda7a7b5f356b3aeb82fb934d5f126af99bbee9a404c425b888",
+                "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
+                "92a9cee8d181100da0604847187508328ef3a768612ec0d0dcd4ca2314b45d2d",
+                "2ec9b3cc687e93871f755d6c9962f62f351598ba779d9838aa2b68c8ef309f50",
+                "084aa2e4bc2defcd2c409c1916023acd6972624cf88112280b6dacde48367b0c",
+                "0ca5765ffb7eb99901483c2cda1dd0209cef517e96e962b8c92c1668e5334d43",
+                "9c827201b94019b42f85706bc49c59ff84b5604d11caafb90ab94856c4e1dd7a",
+                "1bb631b04e6dce2415d564c3ebcd43d6d8baef041f00f9423600e134d2df634d",
+                "0272614c70432bc1f94b8739603ba170ad5f4866a9936f37c463767bda7d005d",
+                "b6d58dfa6547c1eb7f0d4ffd3e3bd6452213210ea51baa70b97c31f011187215",
+                "58b8e1205472ebed51a76303179ebf44554714af49ef1f78fb4c1a6a795aa3d7",
+                "cf29746d1b1686456123bfe8ee607bb16b3d6e9352873fd34fd7dfc5bbfb156c",
+                "a2215262d04d393d4e050d216733138a4e28c0b46375e84b7a34a218db8dc856",
+                "017e6d288c2ab4ed2f5e4a0b41e147f71b4a23a85b3592e2539b8044cb4c8acc",
+                "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                "247f88a674f9f504e95f846272b120deaa29b0ae6b0b9069689488ba3c8e90ab",
+                "1405870ede7c8bede02298a878e66eba9e764a1ba55ca16173f7df470fb4089d"
+            ],
+            "5fc84e67172cd3d03bef61c4a726dc2889418afeaf1afc15a9f02caad777423a",
+            vec![
+                "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db"
+            ],
+            vec![
+                "72ec6f47671dc68bd661a55b0db40776638d504cd7768cfa1ab684a5a2b58df0",
+                "6f6beacd3e8b18a49390762296f8c0c755b4c93b5960c7818719b0993ed20a53",
+                "947f6a2a1faab9e68a23701e1eae120d401148983326794b05063e118f2a0513",
+                "f5a9a1f4a90cf891b6cd0ca1f82bbe90e88835c3aed9106805464890f2734fa1",
+                "9fabc5ebbc9b48138a45b8776b77699ce816fc6defa671d6485c735406267191",
+                "eb57d25f6308dc90d5d2c34462153040443ef5241441a9e644957b0e51c33944",
+                "f706374e4ba44ea13b8bbe6615f3715c785fd54e261e7ab4d9b32e9195c5f989",
+                "c81bf0eea251a7e8ee8bb2960d5e3c5847110496ed68ef889f4050e02f27cb8f",
+                "8d1ffa7d6c798b22e899eb01e2ff37aa38ca5d155c7787ec77e6818cb6058d50",
+                "7ca70841e154f8f3876f667ade1bbe7dc26d03813432501291473e9ef03a3371",
+                "b55661052dd2e2f7aea3f82f73ce7534ee4196ee8ab7ecab69cb029a4bdba203",
+                "58193f723127ede64b63e37de54d5ef15df5379a7d71a562caf06edae231bfb7",
+                "17c59ac41e2255a5da6f06be5d677618084b6c253c20698cbafe8982fc320e29",
+                "d71d377dedbcfa43ec16423d839914e43edc96c9d2322caf020f51b01727579f",
+                "fbf8316ffafee18eafa1e8113ea2f38f564c844ba475181460603edfe714a753",
+                "44f3f97e5667f7b878e1c790ef3a8e5770296b21cd3e168dd65adf9c2fdc5a3b",
+                "74395f5d785bd88fdb6720f9b8429f83501beea5a92582037450244b243e577d",
+                "056c8542f08b631258fb6d545de8a9cab8bea8230ea6b26c3bb78c7cb7044737"
+            ],
+            vec![
+                QueryProof {
+                    bitmap: hex::decode("3f").unwrap(),
+                    key: hex::decode(
+                        "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("bf").unwrap(),
+                    key: hex::decode(
+                        "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("3f").unwrap(),
+                    key: hex::decode(
+                        "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("9f").unwrap(),
+                    key: hex::decode(
+                        "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("5f").unwrap(),
+                    key: hex::decode(
+                        "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
+                    )
+                    .unwrap(),
+                },
+                QueryProof {
+                    bitmap: hex::decode("015f").unwrap(),
+                    key: hex::decode(
+                        "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                    )
+                    .unwrap(),
+                    value: hex::decode(
+                        "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
+                    )
+                    .unwrap(),
+                },
+            ],
+        )
+        ];
+
+        for (keys, values, root, query_keys, sibling_hashes, queries) in test_data {
+            let mut tree = SMT::new(vec![], 32, 8);
+            let mut data = UpdateData {
+                data: HashMap::new(),
+            };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+            let mut db = smt_db::InMemorySMTDB::new();
+            let result = tree.commit(&mut db, &mut data);
+
+            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+
+            let proof = tree
+                .prove(
+                    &mut db,
+                    query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                )
+                .unwrap();
+            for (i, query) in proof.queries.iter().enumerate() {
+                assert_eq!(query.bitmap, queries[i].bitmap);
+                assert_eq!(query.key, queries[i].key);
+                assert_eq!(query.value, queries[i].value);
+            }
+            assert_eq!(proof.sibling_hashes.iter().map(|v| hex::encode(v)).collect::<Vec<String>>(), sibling_hashes);
         }
     }
 }
