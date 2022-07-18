@@ -224,11 +224,12 @@ class StateReadWriter {
     }
 
     snapshot() {
-        state_writer_snapshot.call(this._writer);
+        let result = state_writer_snapshot.call(this._writer);
+        return result;
     }
 
-    restoreSnapshot() {
-        state_writer_restore_snapshot.call(this._writer);
+    restoreSnapshot(index = 0) {
+        state_writer_restore_snapshot.call(this._writer, index);
     }
 
     async _ensureCache(key) {

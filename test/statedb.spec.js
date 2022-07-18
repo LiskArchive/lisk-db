@@ -301,10 +301,10 @@ describe('statedb', () => {
 
             it('should return to original value after restoreSnapshot', async () => {
                 const writer = db.newReadWriter();
-                writer.snapshot();
+                const index = writer.snapshot();
                 const newValue = getRandomBytes();
                 await writer.set(initState[1].key, newValue);
-                writer.restoreSnapshot();
+                writer.restoreSnapshot(index);
 
                 const result = await writer.range({
                     gte: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 1]),
@@ -315,6 +315,36 @@ describe('statedb', () => {
                 expect(result).toHaveLength(2);
                 expect(result[0].value).toEqual(initState[1].value);
                 expect(result[1].value).toEqual(initState[2].value);
+            });
+
+            it('should return to original value after restoreSnapshot with multiple snapshot', async () => {
+                const writer = db.newReadWriter();
+                const index = writer.snapshot();
+                const newValue = getRandomBytes();
+                await writer.set(initState[1].key, newValue);
+                writer.snapshot()
+                await writer.set(initState[1].key, getRandomBytes());
+                writer.restoreSnapshot(index);
+
+                const result = await writer.range({
+                    gte: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 1]),
+                    lte: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
+                    limit: 2,
+                });
+
+                expect(result).toHaveLength(2);
+                expect(result[0].value).toEqual(initState[1].value);
+                expect(result[1].value).toEqual(initState[2].value);
+            });
+
+            it('should throw error with non existing snapshot', async () => {
+                const writer = db.newReadWriter();
+                writer.snapshot();
+                const newValue = getRandomBytes();
+                await writer.set(initState[1].key, newValue);
+                writer.snapshot()
+                await writer.set(initState[1].key, getRandomBytes());
+                expect(() => writer.restoreSnapshot(99)).toThrow('Invalid usage');
             });
         });
 
