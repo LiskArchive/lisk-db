@@ -56,7 +56,8 @@ trait Batch {
 }
 
 pub struct StateWriter {
-    pub backup: Option<Box<HashMap<Vec<u8>, StateCache>>>,
+    counter: u32,
+    pub backup: HashMap<u32, Box<HashMap<Vec<u8>, StateCache>>>,
     pub cache: HashMap<Vec<u8>, StateCache>,
 }
 
@@ -73,7 +74,8 @@ impl Clone for StateWriter {
 impl StateWriter {
     pub fn new() -> Self {
         Self {
-            backup: None,
+            counter: 0,
+            backup: HashMap::new(),
             cache: HashMap::new(),
         }
     }
@@ -140,16 +142,19 @@ impl StateWriter {
         cached.deleted = true;
     }
 
-    fn snapshot(&mut self) {
-        let cloned = self.cache.clone();
-        self.backup = Some(Box::new(cloned));
+    fn snapshot(&mut self) -> u32 {
+        let cloned = Box::new(self.cache.clone());
+        self.backup.insert(self.counter, cloned);
+        let index = self.counter;
+        self.counter += 1;
+        index
     }
 
-    fn restore_snapshot(&mut self) {
-        if let Some(batch) = &mut self.backup {
-            self.cache.clone_from(batch);
-        }
-        self.backup = None;
+    fn restore_snapshot(&mut self, index: u32) -> Result<(), StateWriterError> {
+        let backup = self.backup.get(&index).ok_or(StateWriterError::InvalidUsage)?;
+        self.cache.clone_from(backup);
+        self.backup = HashMap::new();
+        Ok(())
     }
 
     pub fn get_updated(&self) -> HashMap<Vec<u8>, Vec<u8>> {
@@ -304,7 +309,7 @@ impl StateWriter {
         Ok(ctx.boolean(cached))
     }
 
-    pub fn js_snapshot(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+    pub fn js_snapshot(mut ctx: FunctionContext) -> JsResult<JsNumber> {
         let writer = ctx
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
@@ -312,9 +317,9 @@ impl StateWriter {
         let batch = writer.borrow().clone();
         let mut inner_writer = batch.lock().unwrap();
 
-        inner_writer.snapshot();
+        let index = inner_writer.snapshot();
 
-        Ok(ctx.undefined())
+        Ok(ctx.number(index))
     }
 
     pub fn js_restore_snapshot(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
@@ -324,10 +329,16 @@ impl StateWriter {
 
         let batch = writer.borrow().clone();
         let mut inner_writer = batch.lock().unwrap();
+        let index = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as u32;
 
-        inner_writer.restore_snapshot();
-
-        Ok(ctx.undefined())
+        match inner_writer.restore_snapshot(index) {
+            Ok(()) => {
+                Ok(ctx.undefined())
+            },
+            Err(error) => {
+                ctx.throw_error(error.to_string())?
+            },
+        }
     }
 
     pub fn js_get_range(mut ctx: FunctionContext) -> JsResult<JsArray> {
