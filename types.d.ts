@@ -84,7 +84,7 @@ declare class StateReadWriter {
     del(key: Buffer): Promise<void>;
     range(options?: IterateOptions): Promise<{ key: Buffer, value: Buffer }[]>;
     snapshot(): number;
-    restoreSnapshot(index: number = 0): void;
+    restoreSnapshot(index: number): void;
 }
 
 interface StateCommitOption {
@@ -111,7 +111,7 @@ export class StateDB {
     revert(prevRoot: Buffer, height: number): Promise<Buffer>;
     commit(readWriter: StateReadWriter, height: number, prevRoot: Buffer, options?: StateCommitOption): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
-    verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<bool>;
+    verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
     finalize(height: number): Promise<void>;
     newReader(): StateReader;
     newReadWriter(): StateReadWriter;
@@ -122,5 +122,5 @@ export class SparseMerkleTree {
     constructor(keyLength?: number);
     update(root: Buffer, kvpair: { key: Buffer, value: Buffer }[]): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
-    verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<bool>;
+    verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
 }
