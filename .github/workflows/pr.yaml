@@ -17,6 +17,8 @@ jobs:
         # - beta
         node_version:
         - 16
+        architecture:
+        - x64
         system:
         - os: macos-12
           target: x86_64-apple-darwin
@@ -32,7 +34,8 @@ jobs:
             - ARM64
             target: aarch64-apple-darwin
           node_version: 16
-          rust_version: stable
+          architecture: arm64
+          rust_version: stable-aarch64-apple-darwin 
 
     steps:
     - name: Set LIBCLANG_PATH
@@ -42,6 +45,7 @@ jobs:
     - uses: actions/setup-node@v3
       with:
         node-version: ${{ matrix.node_version }}
+        architecture: ${{ matrix.architecture }}
         cache: yarn
     - uses: actions-rs/toolchain@v1
       with:
