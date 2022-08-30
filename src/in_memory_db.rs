@@ -214,7 +214,7 @@ impl Database {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
-        let this = ctx.undefined();
+        ctx.undefined();
         let cloned = db.clone();
 
         let ref_db = RefCell::new(cloned);
