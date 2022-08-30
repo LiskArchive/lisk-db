@@ -24,9 +24,9 @@
   "types": "types.d.ts",
   "scripts": {
     "prebuild": "rimraf ./bin-package/index.node",
-    "build": "cargo-cp-artifact -nc ./bin-package/index.node -- cargo build --message-format=json-render-diagnostics",
-    "build-debug": "npm run build --",
-    "build-release": "npm run build -- --release",
+    "build": "cargo-cp-artifact -nc ./bin-package/index.node -- cargo rustc --message-format=json-render-diagnostics",
+    "build-debug": "npm run build -- -- -D warnings",
+    "build-release": "npm run build -- --release -- -D warnings",
     "test": "npm run test:node; npm run test:rust",
     "clean": "cargo clean && rm -rf bin-package && rm -rf build",
     "test:node": "jest",
