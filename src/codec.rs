@@ -25,7 +25,7 @@ fn write_varint(value: u32) -> Vec<u8> {
     }
     result[index] = value as u8;
 
-    result[0..index+1].to_vec()
+    result[0..index + 1].to_vec()
 }
 
 fn read_key(val: u32) -> Result<(u32, u32), CodecError> {
@@ -52,7 +52,7 @@ fn read_varint(data: &[u8], offset: usize) -> Result<(u32, usize), CodecError> {
         }
         result |= (bit & 0x7f as u32) << shift;
         if (bit & 0x80) == 0 {
-            return Ok((result, index - offset))
+            return Ok((result, index - offset));
         }
 
         shift += 7;
@@ -86,7 +86,7 @@ impl Reader {
             let value = self.read_only_bytes()?;
             result.push(value);
         }
-        
+
         Ok(result)
     }
 
@@ -104,7 +104,7 @@ impl Reader {
         if result as usize > self.data.len() {
             return Err(CodecError::InvalidBytesLength);
         }
-        let decoded = self.data[self.index..self.index+result as usize].to_vec();
+        let decoded = self.data[self.index..self.index + result as usize].to_vec();
         self.index += result as usize;
 
         Ok(decoded)
@@ -123,12 +123,11 @@ impl Reader {
         self.index += size;
         Ok(true)
     }
-
 }
 
 pub struct Writer {
     result: Vec<u8>,
-	size:   usize,
+    size: usize,
 }
 
 impl Writer {
@@ -172,5 +171,3 @@ impl Writer {
         self.result.extend(val_bytes);
     }
 }
-
-

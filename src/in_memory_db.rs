@@ -72,9 +72,7 @@ impl Database {
 
     fn clone(&self) -> Self {
         let new_cache = self.cache.clone();
-        Self {
-            cache: new_cache,
-        }
+        Self { cache: new_cache }
     }
 }
 

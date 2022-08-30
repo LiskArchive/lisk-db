@@ -1302,7 +1302,9 @@ impl InMemorySMT {
         }
         let raw_proof = ctx.argument::<JsObject>(2)?;
         let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof.get::<JsArray, _, _>(&mut ctx, "siblingHashes")?.to_vec(&mut ctx)?;
+        let raw_sibling_hashes = raw_proof
+            .get::<JsArray, _, _>(&mut ctx, "siblingHashes")?
+            .to_vec(&mut ctx)?;
         for raw_sibling_hash in raw_sibling_hashes.iter() {
             let sibling_hash = raw_sibling_hash
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
@@ -1311,7 +1313,9 @@ impl InMemorySMT {
             sibling_hashes.push(sibling_hash);
         }
         let mut queries: Vec<QueryProof> = vec![];
-        let raw_queries = raw_proof.get::<JsArray, _, _>(&mut ctx, "queries")?.to_vec(&mut ctx)?;
+        let raw_queries = raw_proof
+            .get::<JsArray, _, _>(&mut ctx, "queries")?
+            .to_vec(&mut ctx)?;
         for key in raw_queries.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj

@@ -234,10 +234,7 @@ impl StateDB {
         write_batch.set_prefix(&consts::PREFIX_STATE);
         let diff = writer.commit(&mut write_batch);
         write_batch.set_prefix(&consts::PREFIX_DIFF);
-        write_batch.put(
-            height.to_be_bytes().as_slice(),
-            diff.encode().as_ref(),
-        );
+        write_batch.put(height.to_be_bytes().as_slice(), diff.encode().as_ref());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -590,7 +587,9 @@ impl StateDB {
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?.as_slice(&ctx).to_vec();
+                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
+                .as_slice(&ctx)
+                .to_vec();
             queries.push(key);
         }
 
@@ -620,7 +619,9 @@ impl StateDB {
         }
         let raw_proof = ctx.argument::<JsObject>(2)?;
         let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof.get::<JsArray, _, _>(&mut ctx, "siblingHashes")?.to_vec(&mut ctx)?;
+        let raw_sibling_hashes = raw_proof
+            .get::<JsArray, _, _>(&mut ctx, "siblingHashes")?
+            .to_vec(&mut ctx)?;
         for key in raw_sibling_hashes.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
@@ -629,7 +630,9 @@ impl StateDB {
             sibling_hashes.push(key);
         }
         let mut queries: Vec<smt::QueryProof> = vec![];
-        let raw_queries = raw_proof.get::<JsArray, _, _>(&mut ctx, "queries")?.to_vec(&mut ctx)?;
+        let raw_queries = raw_proof
+            .get::<JsArray, _, _>(&mut ctx, "queries")?
+            .to_vec(&mut ctx)?;
         for key in raw_queries.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj

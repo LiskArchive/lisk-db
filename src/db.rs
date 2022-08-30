@@ -99,7 +99,11 @@ impl Database {
         })
     }
 
-    fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), mpsc::SendError<options::DbMessage>> {
+    fn exists(
+        &self,
+        key: Vec<u8>,
+        cb: Root<JsFunction>,
+    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         self.send(move |conn, channel| {
             let exist = conn.key_may_exist(&key);
             let result = if exist {
@@ -391,4 +395,3 @@ impl Database {
         Ok(ctx.undefined())
     }
 }
-

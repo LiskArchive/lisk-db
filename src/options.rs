@@ -10,12 +10,18 @@ pub struct DatabaseOptions {
 }
 
 impl DatabaseOptions {
-    pub fn new<'a, C>(ctx: &mut C, input: Option<Handle<JsValue>>) -> Result<Self, neon::result::Throw>
+    pub fn new<'a, C>(
+        ctx: &mut C,
+        input: Option<Handle<JsValue>>,
+    ) -> Result<Self, neon::result::Throw>
     where
         C: Context<'a>,
     {
         if input.is_none() {
-            return Ok(Self{ readonly: false, key_length: consts::KEY_LENGTH });
+            return Ok(Self {
+                readonly: false,
+                key_length: consts::KEY_LENGTH,
+            });
         }
         let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
         let readonly = obj
@@ -67,40 +73,32 @@ impl IterationOption {
     {
         let reverse = input
             .get_opt::<JsBoolean, _, _>(ctx, "reverse")
-            .map(|val| {
-                match val {
-                    Some(v) => v.value(ctx),
-                    None => false,
-                }
+            .map(|val| match val {
+                Some(v) => v.value(ctx),
+                None => false,
             })
             .unwrap_or(false);
         let limit = input
             .get_opt::<JsNumber, _, _>(ctx, "limit")
-            .map(|val| {
-                match val {
-                    Some(v) => v.value(ctx),
-                    None => -1.0,
-                }
+            .map(|val| match val {
+                Some(v) => v.value(ctx),
+                None => -1.0,
             })
             .unwrap_or(-1.0);
 
         let gte = input
             .get_opt::<JsTypedArray<u8>, _, _>(ctx, "gte")
-            .map(|val| {
-                match val {
-                    Some(v) => Some(v.as_slice(ctx).to_vec()),
-                    None => None,
-                }
+            .map(|val| match val {
+                Some(v) => Some(v.as_slice(ctx).to_vec()),
+                None => None,
             })
             .unwrap_or(None);
 
         let lte = input
             .get_opt::<JsTypedArray<u8>, _, _>(ctx, "lte")
-            .map(|val| {
-                match val {
-                    Some(v) => Some(v.as_slice(ctx).to_vec()),
-                    None => None,
-                }
+            .map(|val| match val {
+                Some(v) => Some(v.as_slice(ctx).to_vec()),
+                None => None,
             })
             .unwrap_or(None);
 

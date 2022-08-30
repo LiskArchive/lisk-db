@@ -1,7 +1,7 @@
-use std::collections::{ HashMap };
+use std::collections::HashMap;
 
-use crate::codec;
 use crate::batch;
+use crate::codec;
 
 #[derive(Clone, Debug)]
 pub struct KeyValue {
@@ -11,14 +11,17 @@ pub struct KeyValue {
 
 impl KeyValue {
     pub fn new(key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self {key: key, value: value }
+        Self {
+            key: key,
+            value: value,
+        }
     }
 
     pub fn decode(val: Vec<u8>) -> Result<Self, codec::CodecError> {
         let mut reader = codec::Reader::new(val);
         let key = reader.read_bytes(1)?;
         let value = reader.read_bytes(2)?;
-        Ok(Self{
+        Ok(Self {
             key: key,
             value: value,
         })
@@ -41,7 +44,7 @@ pub struct Diff {
 
 impl Diff {
     pub fn new(created: Vec<Vec<u8>>, updated: Vec<KeyValue>, deleted: Vec<KeyValue>) -> Self {
-        Self{
+        Self {
             created: created,
             updated: updated,
             deleted: deleted,
@@ -63,7 +66,7 @@ impl Diff {
             let kv = KeyValue::decode(value.to_vec())?;
             deleted.push(kv);
         }
-        Ok(Self{
+        Ok(Self {
             created: created,
             updated: updated,
             deleted: deleted,
@@ -80,7 +83,6 @@ impl Diff {
 
         writer.result()
     }
-
 
     pub fn revert_update(&self) -> HashMap<Vec<u8>, Vec<u8>> {
         let mut result: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
