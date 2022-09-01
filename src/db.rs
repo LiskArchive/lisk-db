@@ -49,13 +49,13 @@ impl Database {
                 match message {
                     options::DbMessage::Callback(f) => {
                         f(&mut opened, &channel);
-                    }
+                    },
                     options::DbMessage::Close => return,
                 }
             }
         });
 
-        return Ok(Self { tx: tx });
+        return Ok(Self { tx });
     }
 
     // Idiomatic rust would take an owned `self` to prevent use after close
@@ -87,7 +87,7 @@ impl Database {
                     Ok(Some(val)) => {
                         let buffer = JsBuffer::external(&mut ctx, val);
                         vec![ctx.null().upcast(), buffer.upcast()]
-                    }
+                    },
                     Ok(None) => vec![ctx.error("No data")?.upcast()],
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
@@ -119,7 +119,7 @@ impl Database {
                     Ok(val) => {
                         let converted = ctx.boolean(val);
                         vec![ctx.null().upcast(), converted.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
 

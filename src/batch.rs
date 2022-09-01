@@ -61,11 +61,18 @@ impl WriteBatch {
 
 impl rocksdb::WriteBatchIterator for WriteBatch {
     /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+    fn put(
+        &mut self,
+        key: Box<[u8]>,
+        value: Box<[u8]>,
+    ) {
         self.batch.put(key, value);
     }
     /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
+    fn delete(
+        &mut self,
+        key: Box<[u8]>,
+    ) {
         self.batch.delete(key);
     }
 }
@@ -84,8 +91,15 @@ pub struct PrefixWriteBatch<'a> {
 }
 
 pub trait BatchWriter {
-    fn put(&mut self, key: &[u8], value: &[u8]);
-    fn delete(&mut self, key: &[u8]);
+    fn put(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    );
+    fn delete(
+        &mut self,
+        key: &[u8],
+    );
 }
 
 impl<'a> PrefixWriteBatch<'a> {
@@ -96,28 +110,45 @@ impl<'a> PrefixWriteBatch<'a> {
         }
     }
 
-    pub fn set_prefix(&mut self, prefix: &'a &[u8]) {
+    pub fn set_prefix(
+        &mut self,
+        prefix: &'a &[u8],
+    ) {
         self.prefix = Some(prefix);
     }
 
-    pub fn put(&mut self, key: &[u8], value: &[u8]) {
+    pub fn put(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) {
         self.batch
             .put([self.prefix.unwrap(), key.as_ref()].concat(), value);
     }
 
-    pub fn delete(&mut self, key: &[u8]) {
+    pub fn delete(
+        &mut self,
+        key: &[u8],
+    ) {
         self.batch
             .delete([self.prefix.unwrap(), key.as_ref()].concat());
     }
 }
 
 impl<'a> BatchWriter for PrefixWriteBatch<'a> {
-    fn put(&mut self, key: &[u8], value: &[u8]) {
+    fn put(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) {
         self.batch
             .put([self.prefix.unwrap(), key.as_ref()].concat(), value);
     }
 
-    fn delete(&mut self, key: &[u8]) {
+    fn delete(
+        &mut self,
+        key: &[u8],
+    ) {
         self.batch
             .delete([self.prefix.unwrap(), key.as_ref()].concat());
     }
@@ -125,12 +156,19 @@ impl<'a> BatchWriter for PrefixWriteBatch<'a> {
 
 impl<'a> rocksdb::WriteBatchIterator for PrefixWriteBatch<'a> {
     /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+    fn put(
+        &mut self,
+        key: Box<[u8]>,
+        value: Box<[u8]>,
+    ) {
         self.batch
             .put([self.prefix.unwrap(), key.as_ref()].concat(), value);
     }
     /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
+    fn delete(
+        &mut self,
+        key: Box<[u8]>,
+    ) {
         self.batch
             .delete([self.prefix.unwrap(), key.as_ref()].concat());
     }

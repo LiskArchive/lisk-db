@@ -51,8 +51,15 @@ impl StateCache {
 struct KVPair(Vec<u8>, Vec<u8>);
 
 trait Batch {
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>);
-    fn delete(&mut self, key: Box<[u8]>);
+    fn put(
+        &mut self,
+        key: Box<[u8]>,
+        value: Box<[u8]>,
+    );
+    fn delete(
+        &mut self,
+        key: Box<[u8]>,
+    );
 }
 
 pub struct StateWriter {
@@ -80,17 +87,28 @@ impl StateWriter {
         }
     }
 
-    pub fn cache_new(&mut self, key: &[u8], value: &[u8]) {
+    pub fn cache_new(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) {
         let cache = StateCache::new(value.to_vec());
         self.cache.insert(key.to_vec(), cache);
     }
 
-    pub fn cache_existing(&mut self, key: &[u8], value: &[u8]) {
+    pub fn cache_existing(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) {
         let cache = StateCache::new_existing(value.to_vec());
         self.cache.insert(key.to_vec(), cache);
     }
 
-    pub fn get(&self, key: &[u8]) -> (Vec<u8>, bool, bool) {
+    pub fn get(
+        &self,
+        key: &[u8],
+    ) -> (Vec<u8>, bool, bool) {
         let val = self.cache.get(key);
         if val.is_none() {
             return (vec![], false, false);
@@ -102,11 +120,18 @@ impl StateWriter {
         (val.value.clone(), false, true)
     }
 
-    pub fn is_cached(&self, key: &[u8]) -> bool {
+    pub fn is_cached(
+        &self,
+        key: &[u8],
+    ) -> bool {
         self.cache.get(key).is_some()
     }
 
-    fn get_range(&self, start: &[u8], end: &[u8]) -> Vec<KVPair> {
+    fn get_range(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Vec<KVPair> {
         self.cache
             .iter()
             .filter(|(k, v)| {
@@ -118,7 +143,11 @@ impl StateWriter {
             .collect()
     }
 
-    pub fn update(&mut self, key: &[u8], value: &[u8]) -> Result<(), StateWriterError> {
+    pub fn update(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), StateWriterError> {
         let mut cached = self
             .cache
             .get_mut(key)
@@ -129,7 +158,10 @@ impl StateWriter {
         Ok(())
     }
 
-    pub fn delete(&mut self, key: &[u8]) {
+    pub fn delete(
+        &mut self,
+        key: &[u8],
+    ) {
         let cached = self.cache.get_mut(key);
         if cached.is_none() {
             return;
@@ -150,7 +182,10 @@ impl StateWriter {
         index
     }
 
-    fn restore_snapshot(&mut self, index: u32) -> Result<(), StateWriterError> {
+    fn restore_snapshot(
+        &mut self,
+        index: u32,
+    ) -> Result<(), StateWriterError> {
         let backup = self
             .backup
             .get(&index)
@@ -174,7 +209,10 @@ impl StateWriter {
         result
     }
 
-    pub fn commit(&self, batch: &mut impl batch::BatchWriter) -> diff::Diff {
+    pub fn commit(
+        &self,
+        batch: &mut impl batch::BatchWriter,
+    ) -> diff::Diff {
         let mut created = vec![];
         let mut updated = vec![];
         let mut deleted = vec![];

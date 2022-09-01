@@ -11,7 +11,10 @@ use crate::utils;
 #[derive(Clone, Debug)]
 struct KVPair(Vec<u8>, Vec<u8>);
 
-fn sort_kv_pair(pairs: &mut Vec<KVPair>, reverse: bool) {
+fn sort_kv_pair(
+    pairs: &mut Vec<KVPair>,
+    reverse: bool,
+) {
     if !reverse {
         pairs.sort_by(|a, b| a.0.cmp(&b.0));
         return;
@@ -38,7 +41,11 @@ impl Database {
         });
     }
 
-    fn cache_range(&self, start: &[u8], end: &[u8]) -> Vec<KVPair> {
+    fn cache_range(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Vec<KVPair> {
         self.cache
             .data
             .iter()
@@ -62,11 +69,18 @@ impl Database {
         self.cache.data.clear();
     }
 
-    fn set_kv(&mut self, key: &[u8], value: &[u8]) {
+    fn set_kv(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+    ) {
         self.cache.data.insert(key.to_vec(), value.to_vec());
     }
 
-    fn del(&mut self, key: &[u8]) {
+    fn del(
+        &mut self,
+        key: &[u8],
+    ) {
         self.cache.data.remove(key);
     }
 
@@ -98,7 +112,7 @@ impl Database {
             Some(val) => {
                 let buffer = JsBuffer::external(&mut ctx, val.to_vec());
                 vec![ctx.null().upcast(), buffer.upcast()]
-            }
+            },
             None => vec![ctx.error("No data")?.upcast()],
         };
         cb.call(&mut ctx, this, args)?;
@@ -223,11 +237,18 @@ impl Database {
 
 impl rocksdb::WriteBatchIterator for CacheData {
     /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+    fn put(
+        &mut self,
+        key: Box<[u8]>,
+        value: Box<[u8]>,
+    ) {
         self.data.insert(key.to_vec(), value.to_vec());
     }
     /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
+    fn delete(
+        &mut self,
+        key: Box<[u8]>,
+    ) {
         self.data.remove(&key.to_vec());
     }
 }

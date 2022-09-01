@@ -10,21 +10,18 @@ pub struct KeyValue {
 }
 
 impl KeyValue {
-    pub fn new(key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self {
-            key: key,
-            value: value,
-        }
+    pub fn new(
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Self {
+        Self { key, value }
     }
 
     pub fn decode(val: Vec<u8>) -> Result<Self, codec::CodecError> {
         let mut reader = codec::Reader::new(val);
         let key = reader.read_bytes(1)?;
         let value = reader.read_bytes(2)?;
-        Ok(Self {
-            key: key,
-            value: value,
-        })
+        Ok(Self { key, value })
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -43,11 +40,15 @@ pub struct Diff {
 }
 
 impl Diff {
-    pub fn new(created: Vec<Vec<u8>>, updated: Vec<KeyValue>, deleted: Vec<KeyValue>) -> Self {
+    pub fn new(
+        created: Vec<Vec<u8>>,
+        updated: Vec<KeyValue>,
+        deleted: Vec<KeyValue>,
+    ) -> Self {
         Self {
-            created: created,
-            updated: updated,
-            deleted: deleted,
+            created,
+            updated,
+            deleted,
         }
     }
 
@@ -67,9 +68,9 @@ impl Diff {
             deleted.push(kv);
         }
         Ok(Self {
-            created: created,
-            updated: updated,
-            deleted: deleted,
+            created,
+            updated,
+            deleted,
         })
     }
 
@@ -98,7 +99,10 @@ impl Diff {
         result
     }
 
-    pub fn revert_commit(&self, batch: &mut impl batch::BatchWriter) {
+    pub fn revert_commit(
+        &self,
+        batch: &mut impl batch::BatchWriter,
+    ) {
         for kv in self.updated.iter() {
             batch.put(&kv.key, &kv.value);
         }

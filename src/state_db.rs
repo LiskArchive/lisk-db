@@ -62,14 +62,14 @@ impl StateDB {
                 match message {
                     options::DbMessage::Callback(f) => {
                         f(&mut opened, &channel);
-                    }
+                    },
                     options::DbMessage::Close => break,
                 }
             }
         });
 
         return Ok(Self {
-            tx: tx,
+            tx,
             readonly: opts.readonly,
             key_length: opts.key_length,
         });
@@ -89,7 +89,11 @@ impl StateDB {
             .send(options::DbMessage::Callback(Box::new(callback)))
     }
 
-    fn get_by_key(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
+    fn get_by_key(
+        &self,
+        key: Vec<u8>,
+        cb: Root<JsFunction>,
+    ) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
             let result = conn.get([consts::PREFIX_STATE, key.as_slice()].concat());
 
@@ -100,7 +104,7 @@ impl StateDB {
                     Ok(Some(val)) => {
                         let buffer = JsBuffer::external(&mut ctx, val);
                         vec![ctx.null().upcast(), buffer.upcast()]
-                    }
+                    },
                     Ok(None) => vec![ctx.error("No data")?.upcast()],
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
@@ -113,7 +117,11 @@ impl StateDB {
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
 
-    fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
+    fn exists(
+        &self,
+        key: Vec<u8>,
+        cb: Root<JsFunction>,
+    ) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
             let key_with_prefix = [consts::PREFIX_STATE, key.as_slice()].concat();
             let exist = conn.key_may_exist(&key_with_prefix);
@@ -130,7 +138,7 @@ impl StateDB {
                     Ok(val) => {
                         let converted = ctx.boolean(val);
                         vec![ctx.null().upcast(), converted.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
 
@@ -195,7 +203,7 @@ impl StateDB {
                     Ok(val) => {
                         let buffer = JsBuffer::external(&mut ctx, val);
                         vec![ctx.null().upcast(), buffer.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
 
@@ -282,7 +290,7 @@ impl StateDB {
                     Ok(val) => {
                         let buffer = JsBuffer::external(&mut ctx, val);
                         vec![ctx.null().upcast(), buffer.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
 
@@ -330,7 +338,7 @@ impl StateDB {
                             queries.set(&mut ctx, i as u32, obj)?;
                         }
                         vec![ctx.null().upcast(), obj.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
@@ -341,7 +349,11 @@ impl StateDB {
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
 
-    fn clean_diff_until(&self, height: u32, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
+    fn clean_diff_until(
+        &self,
+        height: u32,
+        cb: Root<JsFunction>,
+    ) -> Result<(), DataStoreError> {
         if height == 0 {
             return Ok(());
         }
@@ -371,7 +383,7 @@ impl StateDB {
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(_) => {
                         vec![ctx.null().upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
@@ -647,15 +659,11 @@ impl StateDB {
                 .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
                 .as_slice(&ctx)
                 .to_vec();
-            queries.push(smt::QueryProof {
-                key: key,
-                value: value,
-                bitmap: bitmap,
-            });
+            queries.push(smt::QueryProof { key, value, bitmap });
         }
         let proof = smt::Proof {
-            queries: queries,
-            sibling_hashes: sibling_hashes,
+            queries,
+            sibling_hashes,
         };
 
         let cb = ctx.argument::<JsFunction>(4)?.root(&mut ctx);
@@ -671,7 +679,7 @@ impl StateDB {
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
                         vec![ctx.null().upcast(), JsBoolean::new(&mut ctx, val).upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;

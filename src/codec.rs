@@ -37,7 +37,10 @@ fn read_key(val: u32) -> Result<(u32, u32), CodecError> {
     Ok((field_number, wire_type))
 }
 
-fn read_varint(data: &[u8], offset: usize) -> Result<(u32, usize), CodecError> {
+fn read_varint(
+    data: &[u8],
+    offset: usize,
+) -> Result<(u32, usize), CodecError> {
     let mut result: u32 = 0;
     let mut index = offset;
     let mut shift = 0;
@@ -70,13 +73,16 @@ impl Reader {
     pub fn new(data: Vec<u8>) -> Self {
         let length = data.len();
         Self {
-            data: data,
+            data,
             index: 0,
             end: length,
         }
     }
 
-    pub fn read_bytes_slice(&mut self, field_number: u32) -> Result<Vec<Vec<u8>>, CodecError> {
+    pub fn read_bytes_slice(
+        &mut self,
+        field_number: u32,
+    ) -> Result<Vec<Vec<u8>>, CodecError> {
         let mut result = vec![];
         while self.index < self.end {
             let ok = self.check(field_number)?;
@@ -90,7 +96,10 @@ impl Reader {
         Ok(result)
     }
 
-    pub fn read_bytes(&mut self, field_number: u32) -> Result<Vec<u8>, CodecError> {
+    pub fn read_bytes(
+        &mut self,
+        field_number: u32,
+    ) -> Result<Vec<u8>, CodecError> {
         let ok = self.check(field_number)?;
         match ok {
             true => self.read_only_bytes(),
@@ -110,7 +119,10 @@ impl Reader {
         Ok(decoded)
     }
 
-    fn check(&mut self, field_number: u32) -> Result<bool, CodecError> {
+    fn check(
+        &mut self,
+        field_number: u32,
+    ) -> Result<bool, CodecError> {
         if self.index >= self.end {
             return Ok(false);
         }
@@ -138,14 +150,22 @@ impl Writer {
         }
     }
 
-    pub fn write_bytes(&mut self, field_number: u32, value: &Vec<u8>) {
+    pub fn write_bytes(
+        &mut self,
+        field_number: u32,
+        value: &Vec<u8>,
+    ) {
         self.write_key(2, field_number);
         self.write_varint(value.len() as u32);
         self.size += value.len();
         self.result.extend(value);
     }
 
-    pub fn write_bytes_slice(&mut self, field_number: u32, values: &Vec<Vec<u8>>) {
+    pub fn write_bytes_slice(
+        &mut self,
+        field_number: u32,
+        values: &Vec<Vec<u8>>,
+    ) {
         if values.len() == 0 {
             return;
         }
@@ -158,14 +178,21 @@ impl Writer {
         self.result.clone()
     }
 
-    fn write_key(&mut self, wire_type: u32, field_number: u32) {
+    fn write_key(
+        &mut self,
+        wire_type: u32,
+        field_number: u32,
+    ) {
         let key = (field_number << 3) | wire_type;
         let key_bytes = write_varint(key);
         self.size += key_bytes.len();
         self.result.extend(key_bytes);
     }
 
-    fn write_varint(&mut self, val: u32) {
+    fn write_varint(
+        &mut self,
+        val: u32,
+    ) {
         let val_bytes = write_varint(val);
         self.size += val_bytes.len();
         self.result.extend(val_bytes);

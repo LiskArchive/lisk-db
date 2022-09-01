@@ -42,8 +42,8 @@ impl DatabaseOptions {
             .unwrap_or(consts::KEY_LENGTH);
 
         Ok(Self {
-            readonly: readonly,
-            key_length: key_length,
+            readonly,
+            key_length,
         })
     }
 }
@@ -67,7 +67,10 @@ pub struct IterationOption {
 }
 
 impl IterationOption {
-    pub fn new<'a, C>(ctx: &mut C, input: Handle<JsObject>) -> Self
+    pub fn new<'a, C>(
+        ctx: &mut C,
+        input: Handle<JsObject>,
+    ) -> Self
     where
         C: Context<'a>,
     {
@@ -104,9 +107,9 @@ impl IterationOption {
 
         Self {
             limit: limit as i64,
-            reverse: reverse,
-            gte: gte,
-            lte: lte,
+            reverse,
+            gte,
+            lte,
         }
     }
 }

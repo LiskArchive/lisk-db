@@ -40,11 +40,18 @@ static PREFIX_EMPTY: &[u8] = &[2];
 
 impl rocksdb::WriteBatchIterator for UpdateData {
     /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+    fn put(
+        &mut self,
+        key: Box<[u8]>,
+        value: Box<[u8]>,
+    ) {
         self.data.insert(key_hash(&key), value_hash(&value));
     }
     /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
+    fn delete(
+        &mut self,
+        key: Box<[u8]>,
+    ) {
         self.data.insert(key_hash(&key), vec![]);
     }
 }
@@ -53,7 +60,7 @@ struct KVPair(Vec<u8>, Vec<u8>);
 
 impl UpdateData {
     pub fn new_from(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self { data: data }
+        Self { data }
     }
 
     pub fn new_with_hash(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
@@ -104,7 +111,10 @@ fn value_hash(value: &[u8]) -> Vec<u8> {
     return result.as_slice().to_vec();
 }
 
-fn leaf_hash(key: &[u8], value: &[u8]) -> Vec<u8> {
+fn leaf_hash(
+    key: &[u8],
+    value: &[u8],
+) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(PREFIX_LEAF_HASH);
     hasher.update(key);
@@ -208,7 +218,10 @@ impl QueryProofWithProof {
         utils::bytes_to_bools(&self.key)
     }
 
-    fn is_sibling_of(&self, query: &QueryProofWithProof) -> bool {
+    fn is_sibling_of(
+        &self,
+        query: &QueryProofWithProof,
+    ) -> bool {
         if self.binary_bitmap.len() != query.binary_bitmap.len() {
             return false;
         }
@@ -247,32 +260,38 @@ impl Node {
         let data = [PREFIX_BRANCH_HASH, node_hash].concat();
         Self {
             kind: NodeKind::Stub,
-            data: data,
+            data,
             hash: node_hash.to_vec(),
             key: vec![],
             index: 0,
         }
     }
 
-    fn new_branch(left_hash: &[u8], right_hash: &[u8]) -> Self {
+    fn new_branch(
+        left_hash: &[u8],
+        right_hash: &[u8],
+    ) -> Self {
         let combined = [left_hash, right_hash].concat();
         let data = [PREFIX_BRANCH_HASH, &combined].concat();
         let hashed = branch_hash(&combined);
         Self {
             kind: NodeKind::Stub,
-            data: data,
+            data,
             hash: hashed,
             key: vec![],
             index: 0,
         }
     }
 
-    fn new_leaf(key: &[u8], value: &[u8]) -> Self {
+    fn new_leaf(
+        key: &[u8],
+        value: &[u8],
+    ) -> Self {
         let h = leaf_hash(key, value);
         let data = [PREFIX_LEAF_HASH, key, value].concat();
         Self {
             kind: NodeKind::Leaf,
-            data: data,
+            data,
             hash: h,
             key: key.to_vec(),
             index: 0,
@@ -284,7 +303,7 @@ impl Node {
         let data = [PREFIX_EMPTY].concat();
         Self {
             kind: NodeKind::Empty,
-            data: data,
+            data,
             hash: h,
             key: vec![],
             index: 0,
@@ -300,7 +319,11 @@ struct SubTree {
 }
 
 impl SubTree {
-    pub fn new(data: Vec<u8>, key_length: usize, hasher: Hasher) -> Result<Self, SMTError> {
+    pub fn new(
+        data: Vec<u8>,
+        key_length: usize,
+        hasher: Hasher,
+    ) -> Result<Self, SMTError> {
         if data.len() == 0 {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
         }
@@ -322,23 +345,23 @@ impl SubTree {
                     let node = Node::new_leaf(key.as_slice(), value.as_slice());
                     nodes.push(node);
                     idx += PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE;
-                }
+                },
                 PREFIX_INT_BRANCH_HASH => {
                     let node_hash = node_data[idx + PREFIX_BRANCH_HASH.len()
                         ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE]
                         .to_vec();
                     nodes.push(Node::new_stub(node_hash.as_slice()));
                     idx += PREFIX_BRANCH_HASH.len() + HASH_SIZE;
-                }
+                },
                 PREFIX_INT_EMPTY => {
                     nodes.push(Node::new_empty());
                     idx += PREFIX_EMPTY.len();
-                }
+                },
                 _ => {
                     return Err(SMTError::InvalidInput(String::from(
                         "Invalid data. key prefix is invalid.",
                     )));
-                }
+                },
             }
         }
 
@@ -359,8 +382,8 @@ impl SubTree {
         let calculated = hasher(&node_hashes, &structure, *height as usize);
 
         Ok(Self {
-            structure: structure,
-            nodes: nodes,
+            structure,
+            nodes,
             root: calculated,
         })
     }
@@ -371,7 +394,7 @@ impl SubTree {
         let node_hashes = vec![Node::new_empty()];
 
         Self {
-            structure: structure,
+            structure,
             nodes: node_hashes,
             root: empty.hash,
         }
@@ -400,12 +423,26 @@ pub struct SMT {
 }
 
 pub trait DB {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error>;
-    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error>;
-    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error>;
+    fn get(
+        &self,
+        key: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, rocksdb::Error>;
+    fn set(
+        &mut self,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), rocksdb::Error>;
+    fn del(
+        &mut self,
+        key: Vec<u8>,
+    ) -> Result<(), rocksdb::Error>;
 }
 
-fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -> Vec<u8> {
+fn tree_hasher(
+    node_hashes: &Vec<Vec<u8>>,
+    structure: &Vec<u8>,
+    height: usize,
+) -> Vec<u8> {
     if node_hashes.len() == 1 {
         return node_hashes[0].clone();
     }
@@ -580,7 +617,10 @@ fn calculate_query_hashes(
     )
 }
 
-fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<QueryProofWithProof>) {
+fn insert_and_filter_queries(
+    q: QueryProofWithProof,
+    queries: &mut VecDeque<QueryProofWithProof>,
+) {
     if queries.len() == 0 {
         queries.push_back(q);
         return;
@@ -629,7 +669,11 @@ fn calculate_sibling_hashes(
 }
 
 impl SMT {
-    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
+    pub fn new(
+        root: Vec<u8>,
+        key_length: usize,
+        subtree_height: usize,
+    ) -> Self {
         let max_number_of_nodes = 1 << subtree_height;
         let r = if root.len() == 0 {
             utils::empty_hash()
@@ -638,14 +682,18 @@ impl SMT {
         };
         Self {
             root: r,
-            key_length: key_length,
+            key_length,
             hasher: tree_hasher,
-            subtree_height: subtree_height,
-            max_number_of_nodes: max_number_of_nodes,
+            subtree_height,
+            max_number_of_nodes,
         }
     }
 
-    pub fn commit(&mut self, db: &mut impl DB, data: &mut UpdateData) -> Result<Vec<u8>, SMTError> {
+    pub fn commit(
+        &mut self,
+        db: &mut impl DB,
+        data: &mut UpdateData,
+    ) -> Result<Vec<u8>, SMTError> {
         if data.len() == 0 {
             return Ok(self.root.clone());
         }
@@ -656,7 +704,11 @@ impl SMT {
         Ok(self.root.clone())
     }
 
-    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+    pub fn prove(
+        &mut self,
+        db: &mut impl DB,
+        queries: Vec<Vec<u8>>,
+    ) -> Result<Proof, SMTError> {
         if queries.len() == 0 {
             return Ok(Proof {
                 queries: vec![],
@@ -700,7 +752,7 @@ impl SMT {
 
         Ok(Proof {
             queries: proof_queries,
-            sibling_hashes: sibling_hashes,
+            sibling_hashes,
         })
     }
 
@@ -758,7 +810,11 @@ impl SMT {
         ))
     }
 
-    fn get_subtree(&self, db: &impl DB, node_hash: &Vec<u8>) -> Result<SubTree, SMTError> {
+    fn get_subtree(
+        &self,
+        db: &impl DB,
+        node_hash: &Vec<u8>,
+    ) -> Result<SubTree, SMTError> {
         if node_hash.len() == 0 {
             return Ok(SubTree::new_empty());
         }
@@ -924,12 +980,12 @@ impl SMT {
                     db.del(current_node.hash)
                         .or_else(|err| Err(SMTError::Unknown(err.to_string())))?;
                     subtree
-                }
+                },
                 NodeKind::Empty => self.get_subtree(db, &current_node.hash)?,
                 NodeKind::Leaf => SubTree::from_data(vec![0], vec![current_node], self.hasher)?,
                 _ => {
                     return Err(SMTError::Unknown(String::from("invalid node type")));
-                }
+                },
             };
             if key_bins.len() != 1 || value_bins.len() != 1 {
                 return Err(SMTError::Unknown(String::from("invalid key/value length")));
@@ -957,10 +1013,10 @@ impl SMT {
                 } else {
                     (current_node, Node::new_empty())
                 }
-            }
+            },
             _ => {
                 return Err(SMTError::Unknown(String::from("Invalid node kind")));
-            }
+            },
         };
         let idx = key_bins.len() / 2;
         let (mut left_nodes, mut left_heights) = self.update_node(
@@ -1159,7 +1215,7 @@ impl InMemorySMT {
         let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
         let tree = InMemorySMT {
             db: smt_db::InMemorySMTDB::new(),
-            key_length: key_length,
+            key_length,
         };
 
         let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
@@ -1209,7 +1265,7 @@ impl InMemorySMT {
                     Ok(val) => {
                         let buffer = JsBuffer::external(&mut ctx, val.to_vec());
                         vec![ctx.null().upcast(), buffer.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
@@ -1275,7 +1331,7 @@ impl InMemorySMT {
                             queries.set(&mut ctx, i as u32, obj)?;
                         }
                         vec![ctx.null().upcast(), obj.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
@@ -1330,15 +1386,11 @@ impl InMemorySMT {
                 .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
                 .as_slice(&ctx)
                 .to_vec();
-            queries.push(QueryProof {
-                key: key,
-                value: value,
-                bitmap: bitmap,
-            });
+            queries.push(QueryProof { key, value, bitmap });
         }
         let proof = Proof {
-            queries: queries,
-            sibling_hashes: sibling_hashes,
+            queries,
+            sibling_hashes,
         };
 
         let key_length = ctx.argument::<JsNumber>(3)?.value(&mut ctx) as usize;
@@ -1355,7 +1407,7 @@ impl InMemorySMT {
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
                         vec![ctx.null().upcast(), JsBoolean::new(&mut ctx, val).upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
