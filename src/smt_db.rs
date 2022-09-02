@@ -3,22 +3,21 @@ use std::collections::HashMap;
 use crate::consts;
 use crate::smt;
 
-pub struct SMTDB<'a> {
-    db: Box<&'a rocksdb::DB>,
+pub struct SmtDB<'a> {
+    db: &'a rocksdb::DB,
     pub batch: rocksdb::WriteBatch,
 }
 
-impl<'a> SMTDB<'a> {
+impl<'a> SmtDB<'a> {
     pub fn new(db: &'a rocksdb::DB) -> Self {
-        let b = Box::new(db);
         Self {
-            db: b,
+            db,
             batch: rocksdb::WriteBatch::default(),
         }
     }
 }
 
-impl smt::DB for SMTDB<'_> {
+impl smt::DB for SmtDB<'_> {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error> {
         let result = self.db.get([consts::PREFIX_SMT, key.as_slice()].concat())?;
         Ok(result)
@@ -35,11 +34,11 @@ impl smt::DB for SMTDB<'_> {
     }
 }
 
-pub struct InMemorySMTDB {
+pub struct InMemorySmtDB {
     cache: HashMap<Vec<u8>, Vec<u8>>,
 }
 
-impl InMemorySMTDB {
+impl InMemorySmtDB {
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
@@ -47,7 +46,7 @@ impl InMemorySMTDB {
     }
 }
 
-impl smt::DB for InMemorySMTDB {
+impl smt::DB for InMemorySmtDB {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error> {
         let result = self.cache.get(&key);
         if let Some(value) = result {

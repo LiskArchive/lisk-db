@@ -19,8 +19,8 @@ fn write_varint(value: u32) -> Vec<u8> {
     let mut result = vec![0; MAX_VARINT_LEN];
     let mut index = 0;
     while value > 0x7f {
-        result[index] = 0x80 | ((value & 0x7f) >> 0) as u8;
-        value = (value >> 7) >> 0;
+        result[index] = 0x80 | (value & 0x7f) as u8;
+        value >>= 7;
         index += 1;
     }
     result[index] = value as u8;
@@ -50,7 +50,7 @@ fn read_varint(data: &[u8], offset: usize) -> Result<(u32, usize), CodecError> {
         if index == offset + 5 && bit > 0x0f {
             return Err(CodecError::OutOfRange);
         }
-        result |= (bit & 0x7f as u32) << shift;
+        result |= (bit & 0x7f_u32) << shift;
         if (bit & 0x80) == 0 {
             return Ok((result, index - offset));
         }
@@ -146,11 +146,11 @@ impl Writer {
     }
 
     pub fn write_bytes_slice(&mut self, field_number: u32, values: &Vec<Vec<u8>>) {
-        if values.len() == 0 {
+        if values.is_empty() {
             return;
         }
         for val in values.iter() {
-            self.write_bytes(field_number, &val.to_vec());
+            self.write_bytes(field_number, val);
         }
     }
 

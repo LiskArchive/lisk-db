@@ -57,7 +57,7 @@ trait Batch {
 
 pub struct StateWriter {
     counter: u32,
-    pub backup: HashMap<u32, Box<HashMap<Vec<u8>, StateCache>>>,
+    pub backup: HashMap<u32, HashMap<Vec<u8>, StateCache>>,
     pub cache: HashMap<Vec<u8>, StateCache>,
 }
 
@@ -143,8 +143,7 @@ impl StateWriter {
     }
 
     fn snapshot(&mut self) -> u32 {
-        let cloned = Box::new(self.cache.clone());
-        self.backup.insert(self.counter, cloned);
+        self.backup.insert(self.counter, self.cache.clone());
         let index = self.counter;
         self.counter += 1;
         index

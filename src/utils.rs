@@ -9,7 +9,7 @@ pub fn empty_hash() -> Vec<u8> {
 
 pub fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
     for (ai, bi) in a.iter().zip(b.iter()) {
-        match ai.cmp(&bi) {
+        match ai.cmp(bi) {
             cmp::Ordering::Equal => continue,
             ord => return ord,
         }
@@ -19,14 +19,14 @@ pub fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
 }
 
 pub fn is_bit_set(bits: &[u8], i: usize) -> bool {
-    ((bits[i / 8] << i % 8) & 0x80) == 0x80
+    bits[i / 8] << (i % 8) & 0x80 == 0x80
 }
 
 pub fn is_bytes_equal(a: &[u8], b: &[u8]) -> bool {
     compare(a, b) == cmp::Ordering::Equal
 }
 
-pub fn is_empty_hash(a: &Vec<u8>) -> bool {
+pub fn is_empty_hash(a: &[u8]) -> bool {
     compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
 }
 
@@ -48,10 +48,7 @@ pub fn bools_to_bytes(a: &[bool]) -> Vec<u8> {
     if a.len() % 8 != 0 {
         missing_byte = 8 - a.len() % 8;
     }
-    let mut target = vec![];
-    for _ in 0..missing_byte {
-        target.push(false);
-    }
+    let mut target = vec![false; missing_byte];
     target.extend(a);
 
     for (i, v) in target.iter().enumerate() {
@@ -72,15 +69,17 @@ pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
     result
 }
 
+fn find_longer<'a>(a: &'a [bool], b: &'a [bool]) -> (&'a [bool], &'a [bool]) {
+    match a.len().cmp(&b.len()) {
+        cmp::Ordering::Greater => (a, b),
+        cmp::Ordering::Less => (b, a),
+        cmp::Ordering::Equal => (a, b),
+    }
+}
+
 pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {
     let mut result = vec![];
-    let mut longer = a;
-    let mut shorter = b;
-    if longer.len() < shorter.len() {
-        let tmp = longer;
-        longer = shorter;
-        shorter = tmp;
-    }
+    let (longer, shorter) = find_longer(a, b);
     for (i, v) in longer.iter().enumerate() {
         if i >= shorter.len() {
             return result;

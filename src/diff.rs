@@ -100,7 +100,7 @@ impl Diff {
             batch.put(&kv.key, &kv.value);
         }
         for key in self.created.iter() {
-            batch.delete(&key);
+            batch.delete(key);
         }
     }
 }

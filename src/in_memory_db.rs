@@ -11,7 +11,7 @@ use crate::utils;
 #[derive(Clone, Debug)]
 struct KVPair(Vec<u8>, Vec<u8>);
 
-fn sort_kv_pair(pairs: &mut Vec<KVPair>, reverse: bool) {
+fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
     if !reverse {
         pairs.sort_by(|a, b| a.0.cmp(&b.0));
         return;
@@ -31,11 +31,11 @@ pub struct CacheData {
 
 impl Database {
     pub fn new() -> Result<Self, rocksdb::Error> {
-        return Ok(Database {
+        Ok(Database {
             cache: CacheData {
                 data: HashMap::new(),
             },
-        });
+        })
     }
 
     fn cache_range(&self, start: &[u8], end: &[u8]) -> Vec<KVPair> {
@@ -80,7 +80,7 @@ type SharedStateDB = JsBox<RefCell<Database>>;
 
 impl Database {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
-        let db = Database::new().or_else(|err| ctx.throw_error(err.to_string()))?;
+        let db = Database::new().or_else(|err| ctx.throw_error(&err))?;
         let ref_db = RefCell::new(db);
 
         return Ok(ctx.boxed(ref_db));
@@ -107,24 +107,24 @@ impl Database {
     }
 
     pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let mut value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
 
-        db.set_kv(&mut key, &mut value);
+        db.set_kv(&key, &value);
 
         Ok(ctx.undefined())
     }
 
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let mut key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let mut db = db.borrow_mut();
-        db.del(&mut key);
+        db.del(&key);
 
         Ok(ctx.undefined())
     }
@@ -148,18 +148,17 @@ impl Database {
 
         let db = db.borrow_mut();
 
-        let cached;
         let no_range = options.gte.is_none() && options.lte.is_none();
-        if no_range {
-            cached = db.cache_all();
+        let cached = if no_range {
+            db.cache_all()
         } else {
             let gte = options
                 .gte
                 .clone()
                 .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
             let lte = options.lte.clone().unwrap_or_else(|| vec![255; gte.len()]);
-            cached = db.cache_range(&gte, &lte);
-        }
+            db.cache_range(&gte, &lte)
+        };
 
         let mut results = vec![];
         let mut exist_map = HashMap::new();
