@@ -89,11 +89,7 @@ impl StateDB {
             .send(options::DbMessage::Callback(Box::new(callback)))
     }
 
-    fn get_by_key(
-        &self,
-        key: Vec<u8>,
-        cb: Root<JsFunction>,
-    ) -> Result<(), DataStoreError> {
+    fn get_by_key(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
             let result = conn.get([consts::PREFIX_STATE, key.as_slice()].concat());
 
@@ -117,11 +113,7 @@ impl StateDB {
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
 
-    fn exists(
-        &self,
-        key: Vec<u8>,
-        cb: Root<JsFunction>,
-    ) -> Result<(), DataStoreError> {
+    fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
             let key_with_prefix = [consts::PREFIX_STATE, key.as_slice()].concat();
             let exist = conn.key_may_exist(&key_with_prefix);
@@ -349,11 +341,7 @@ impl StateDB {
         .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
     }
 
-    fn clean_diff_until(
-        &self,
-        height: u32,
-        cb: Root<JsFunction>,
-    ) -> Result<(), DataStoreError> {
+    fn clean_diff_until(&self, height: u32, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
         if height == 0 {
             return Ok(());
         }

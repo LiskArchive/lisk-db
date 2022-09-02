@@ -67,10 +67,7 @@ pub struct IterationOption {
 }
 
 impl IterationOption {
-    pub fn new<'a, C>(
-        ctx: &mut C,
-        input: Handle<JsObject>,
-    ) -> Self
+    pub fn new<'a, C>(ctx: &mut C, input: Handle<JsObject>) -> Self
     where
         C: Context<'a>,
     {

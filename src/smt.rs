@@ -40,18 +40,11 @@ static PREFIX_EMPTY: &[u8] = &[2];
 
 impl rocksdb::WriteBatchIterator for UpdateData {
     /// Called with a key and value that were `put` into the batch.
-    fn put(
-        &mut self,
-        key: Box<[u8]>,
-        value: Box<[u8]>,
-    ) {
+    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
         self.data.insert(key_hash(&key), value_hash(&value));
     }
     /// Called with a key that was `delete`d from the batch.
-    fn delete(
-        &mut self,
-        key: Box<[u8]>,
-    ) {
+    fn delete(&mut self, key: Box<[u8]>) {
         self.data.insert(key_hash(&key), vec![]);
     }
 }
@@ -111,10 +104,7 @@ fn value_hash(value: &[u8]) -> Vec<u8> {
     return result.as_slice().to_vec();
 }
 
-fn leaf_hash(
-    key: &[u8],
-    value: &[u8],
-) -> Vec<u8> {
+fn leaf_hash(key: &[u8], value: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(PREFIX_LEAF_HASH);
     hasher.update(key);
@@ -218,10 +208,7 @@ impl QueryProofWithProof {
         utils::bytes_to_bools(&self.key)
     }
 
-    fn is_sibling_of(
-        &self,
-        query: &QueryProofWithProof,
-    ) -> bool {
+    fn is_sibling_of(&self, query: &QueryProofWithProof) -> bool {
         if self.binary_bitmap.len() != query.binary_bitmap.len() {
             return false;
         }
@@ -267,10 +254,7 @@ impl Node {
         }
     }
 
-    fn new_branch(
-        left_hash: &[u8],
-        right_hash: &[u8],
-    ) -> Self {
+    fn new_branch(left_hash: &[u8], right_hash: &[u8]) -> Self {
         let combined = [left_hash, right_hash].concat();
         let data = [PREFIX_BRANCH_HASH, &combined].concat();
         let hashed = branch_hash(&combined);
@@ -283,10 +267,7 @@ impl Node {
         }
     }
 
-    fn new_leaf(
-        key: &[u8],
-        value: &[u8],
-    ) -> Self {
+    fn new_leaf(key: &[u8], value: &[u8]) -> Self {
         let h = leaf_hash(key, value);
         let data = [PREFIX_LEAF_HASH, key, value].concat();
         Self {
@@ -319,11 +300,7 @@ struct SubTree {
 }
 
 impl SubTree {
-    pub fn new(
-        data: Vec<u8>,
-        key_length: usize,
-        hasher: Hasher,
-    ) -> Result<Self, SMTError> {
+    pub fn new(data: Vec<u8>, key_length: usize, hasher: Hasher) -> Result<Self, SMTError> {
         if data.len() == 0 {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
         }
@@ -423,26 +400,12 @@ pub struct SMT {
 }
 
 pub trait DB {
-    fn get(
-        &self,
-        key: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, rocksdb::Error>;
-    fn set(
-        &mut self,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Result<(), rocksdb::Error>;
-    fn del(
-        &mut self,
-        key: Vec<u8>,
-    ) -> Result<(), rocksdb::Error>;
+    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error>;
+    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error>;
+    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error>;
 }
 
-fn tree_hasher(
-    node_hashes: &Vec<Vec<u8>>,
-    structure: &Vec<u8>,
-    height: usize,
-) -> Vec<u8> {
+fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &Vec<u8>, height: usize) -> Vec<u8> {
     if node_hashes.len() == 1 {
         return node_hashes[0].clone();
     }
@@ -617,10 +580,7 @@ fn calculate_query_hashes(
     )
 }
 
-fn insert_and_filter_queries(
-    q: QueryProofWithProof,
-    queries: &mut VecDeque<QueryProofWithProof>,
-) {
+fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<QueryProofWithProof>) {
     if queries.len() == 0 {
         queries.push_back(q);
         return;
@@ -669,11 +629,7 @@ fn calculate_sibling_hashes(
 }
 
 impl SMT {
-    pub fn new(
-        root: Vec<u8>,
-        key_length: usize,
-        subtree_height: usize,
-    ) -> Self {
+    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
         let max_number_of_nodes = 1 << subtree_height;
         let r = if root.len() == 0 {
             utils::empty_hash()
@@ -704,11 +660,7 @@ impl SMT {
         Ok(self.root.clone())
     }
 
-    pub fn prove(
-        &mut self,
-        db: &mut impl DB,
-        queries: Vec<Vec<u8>>,
-    ) -> Result<Proof, SMTError> {
+    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
         if queries.len() == 0 {
             return Ok(Proof {
                 queries: vec![],
@@ -810,11 +762,7 @@ impl SMT {
         ))
     }
 
-    fn get_subtree(
-        &self,
-        db: &impl DB,
-        node_hash: &Vec<u8>,
-    ) -> Result<SubTree, SMTError> {
+    fn get_subtree(&self, db: &impl DB, node_hash: &Vec<u8>) -> Result<SubTree, SMTError> {
         if node_hash.len() == 0 {
             return Ok(SubTree::new_empty());
         }

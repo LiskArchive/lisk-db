@@ -7,10 +7,7 @@ pub fn empty_hash() -> Vec<u8> {
     return result.as_slice().to_vec();
 }
 
-pub fn compare(
-    a: &[u8],
-    b: &[u8],
-) -> cmp::Ordering {
+pub fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
     for (ai, bi) in a.iter().zip(b.iter()) {
         match ai.cmp(&bi) {
             cmp::Ordering::Equal => continue,
@@ -21,17 +18,11 @@ pub fn compare(
     a.len().cmp(&b.len())
 }
 
-pub fn is_bit_set(
-    bits: &[u8],
-    i: usize,
-) -> bool {
+pub fn is_bit_set(bits: &[u8], i: usize) -> bool {
     ((bits[i / 8] << i % 8) & 0x80) == 0x80
 }
 
-pub fn is_bytes_equal(
-    a: &[u8],
-    b: &[u8],
-) -> bool {
+pub fn is_bytes_equal(a: &[u8], b: &[u8]) -> bool {
     compare(a, b) == cmp::Ordering::Equal
 }
 
@@ -39,10 +30,7 @@ pub fn is_empty_hash(a: &Vec<u8>) -> bool {
     compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
 }
 
-pub fn is_bools_equal(
-    a: &[bool],
-    b: &[bool],
-) -> bool {
+pub fn is_bools_equal(a: &[bool], b: &[bool]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -84,10 +72,7 @@ pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
     result
 }
 
-pub fn common_prefix(
-    a: &[bool],
-    b: &[bool],
-) -> Vec<bool> {
+pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {
     let mut result = vec![];
     let mut longer = a;
     let mut shorter = b;
@@ -119,10 +104,7 @@ pub fn strip_left_false(a: &[bool]) -> Vec<bool> {
     result
 }
 
-pub fn bytes_in(
-    list: &Vec<Vec<u8>>,
-    a: &[u8],
-) -> bool {
+pub fn bytes_in(list: &Vec<Vec<u8>>, a: &[u8]) -> bool {
     for v in list {
         if is_bytes_equal(v, a) {
             return true;
@@ -131,10 +113,7 @@ pub fn bytes_in(
     false
 }
 
-pub fn arr_eq_bool(
-    a: &[bool],
-    b: &[bool],
-) -> bool {
+pub fn arr_eq_bool(a: &[bool], b: &[bool]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -146,10 +125,7 @@ pub fn arr_eq_bool(
     true
 }
 
-pub fn binary_search<T>(
-    list: &[T],
-    cb: impl Fn(&T) -> bool,
-) -> i32 {
+pub fn binary_search<T>(list: &[T], cb: impl Fn(&T) -> bool) -> i32 {
     let mut lo = -1;
     let mut hi = list.len() as i32;
     while 1 + lo < hi {

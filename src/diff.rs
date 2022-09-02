@@ -10,10 +10,7 @@ pub struct KeyValue {
 }
 
 impl KeyValue {
-    pub fn new(
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Self {
+    pub fn new(key: Vec<u8>, value: Vec<u8>) -> Self {
         Self { key, value }
     }
 
@@ -40,11 +37,7 @@ pub struct Diff {
 }
 
 impl Diff {
-    pub fn new(
-        created: Vec<Vec<u8>>,
-        updated: Vec<KeyValue>,
-        deleted: Vec<KeyValue>,
-    ) -> Self {
+    pub fn new(created: Vec<Vec<u8>>, updated: Vec<KeyValue>, deleted: Vec<KeyValue>) -> Self {
         Self {
             created,
             updated,
@@ -99,10 +92,7 @@ impl Diff {
         result
     }
 
-    pub fn revert_commit(
-        &self,
-        batch: &mut impl batch::BatchWriter,
-    ) {
+    pub fn revert_commit(&self, batch: &mut impl batch::BatchWriter) {
         for kv in self.updated.iter() {
             batch.put(&kv.key, &kv.value);
         }

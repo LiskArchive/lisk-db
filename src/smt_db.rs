@@ -19,27 +19,17 @@ impl<'a> SMTDB<'a> {
 }
 
 impl smt::DB for SMTDB<'_> {
-    fn get(
-        &self,
-        key: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, rocksdb::Error> {
+    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error> {
         let result = self.db.get([consts::PREFIX_SMT, key.as_slice()].concat())?;
         Ok(result)
     }
 
-    fn set(
-        &mut self,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Result<(), rocksdb::Error> {
+    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error> {
         self.batch.put(key, value);
         Ok(())
     }
 
-    fn del(
-        &mut self,
-        key: Vec<u8>,
-    ) -> Result<(), rocksdb::Error> {
+    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error> {
         self.batch.delete(key);
         Ok(())
     }
@@ -58,10 +48,7 @@ impl InMemorySMTDB {
 }
 
 impl smt::DB for InMemorySMTDB {
-    fn get(
-        &self,
-        key: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, rocksdb::Error> {
+    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error> {
         let result = self.cache.get(&key);
         if let Some(value) = result {
             return Ok(Some(value.clone()));
@@ -69,19 +56,12 @@ impl smt::DB for InMemorySMTDB {
         Ok(None)
     }
 
-    fn set(
-        &mut self,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Result<(), rocksdb::Error> {
+    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error> {
         self.cache.insert(key, value);
         Ok(())
     }
 
-    fn del(
-        &mut self,
-        key: Vec<u8>,
-    ) -> Result<(), rocksdb::Error> {
+    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error> {
         self.cache.remove(&key);
         Ok(())
     }
