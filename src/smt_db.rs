@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use crate::smt;
 use crate::consts;
+use crate::smt;
 
 pub struct SMTDB<'a> {
     db: Box<&'a rocksdb::DB>,
     pub batch: rocksdb::WriteBatch,
 }
 
-impl <'a> SMTDB<'a> {
-pub fn new(db: &'a rocksdb::DB) -> Self {
+impl<'a> SMTDB<'a> {
+    pub fn new(db: &'a rocksdb::DB) -> Self {
         let b = Box::new(db);
         Self {
             db: b,

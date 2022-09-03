@@ -1,5 +1,5 @@
-use std::cmp;
 use sha2::{Digest, Sha256};
+use std::cmp;
 
 pub fn empty_hash() -> Vec<u8> {
     let hasher = Sha256::new();
@@ -56,7 +56,7 @@ pub fn bools_to_bytes(a: &[bool]) -> Vec<u8> {
 
     for (i, v) in target.iter().enumerate() {
         if *v {
-            result[i/8] |= 0x80 >> (i%8);
+            result[i / 8] |= 0x80 >> (i % 8);
         }
     }
     result
@@ -66,7 +66,7 @@ pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
     let mut result = vec![false; a.len() * 8];
     for (i, x) in a.iter().enumerate() {
         for j in 0..8 {
-            result[8*i+j] = (x<<j)&0x80 == 0x80;
+            result[8 * i + j] = (x << j) & 0x80 == 0x80;
         }
     }
     result
@@ -147,8 +147,14 @@ mod tests {
     fn test_bools_to_bytes() {
         let test_data = vec![
             (vec![true, true, true], vec![7]),
-            (vec![false, false, false, false, false, false, false, false], vec![0b00000000]),
-            (vec![true, false, false, true, false, false, false, false], vec![0b10010000]),
+            (
+                vec![false, false, false, false, false, false, false, false],
+                vec![0b00000000],
+            ),
+            (
+                vec![true, false, false, true, false, false, false, false],
+                vec![0b10010000],
+            ),
         ];
         for (data, result) in test_data {
             assert_eq!(bools_to_bytes(&data), result);
@@ -159,8 +165,16 @@ mod tests {
     fn test_common_prefix() {
         let test_data = vec![
             (vec![true, true, true], vec![true], vec![true]),
-            (vec![false, false, true, false, false, false, false, false], vec![false, false, true, true], vec![false, false, true]),
-            (vec![true, false], vec![true, false, true], vec![true, false]),
+            (
+                vec![false, false, true, false, false, false, false, false],
+                vec![false, false, true, true],
+                vec![false, false, true],
+            ),
+            (
+                vec![true, false],
+                vec![true, false, true],
+                vec![true, false],
+            ),
         ];
         for (data_left, data_right, result) in test_data {
             assert_eq!(common_prefix(&data_left, &data_right), result);

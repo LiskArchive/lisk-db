@@ -30,7 +30,8 @@
     "test": "npm run test:node; npm run test:rust",
     "clean": "cargo clean && rm -rf bin-package && rm -rf build",
     "test:node": "jest",
-    "test:rust": "cargo test"
+    "test:rust": "cargo test",
+    "rust:fmt": "cargo fmt --all -- --check"
   },
   "dependencies": {
     "@mapbox/node-pre-gyp": "^1.0.9",

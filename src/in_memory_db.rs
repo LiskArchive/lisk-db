@@ -72,9 +72,7 @@ impl Database {
 
     fn clone(&self) -> Self {
         let new_cache = self.cache.clone();
-        Self {
-            cache: new_cache,
-        }
+        Self { cache: new_cache }
     }
 }
 
@@ -100,7 +98,7 @@ impl Database {
             Some(val) => {
                 let buffer = JsBuffer::external(&mut ctx, val.to_vec());
                 vec![ctx.null().upcast(), buffer.upcast()]
-            }
+            },
             None => vec![ctx.error("No data")?.upcast()],
         };
         cb.call(&mut ctx, this, args)?;

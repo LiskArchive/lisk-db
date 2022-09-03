@@ -53,7 +53,7 @@ struct KVPair(Vec<u8>, Vec<u8>);
 
 impl UpdateData {
     pub fn new_from(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self { data: data }
+        Self { data }
     }
 
     pub fn new_with_hash(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
@@ -247,7 +247,7 @@ impl Node {
         let data = [PREFIX_BRANCH_HASH, node_hash].concat();
         Self {
             kind: NodeKind::Stub,
-            data: data,
+            data,
             hash: node_hash.to_vec(),
             key: vec![],
             index: 0,
@@ -260,7 +260,7 @@ impl Node {
         let hashed = branch_hash(&combined);
         Self {
             kind: NodeKind::Stub,
-            data: data,
+            data,
             hash: hashed,
             key: vec![],
             index: 0,
@@ -272,7 +272,7 @@ impl Node {
         let data = [PREFIX_LEAF_HASH, key, value].concat();
         Self {
             kind: NodeKind::Leaf,
-            data: data,
+            data,
             hash: h,
             key: key.to_vec(),
             index: 0,
@@ -284,7 +284,7 @@ impl Node {
         let data = [PREFIX_EMPTY].concat();
         Self {
             kind: NodeKind::Empty,
-            data: data,
+            data,
             hash: h,
             key: vec![],
             index: 0,
@@ -322,23 +322,23 @@ impl SubTree {
                     let node = Node::new_leaf(key.as_slice(), value.as_slice());
                     nodes.push(node);
                     idx += PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE;
-                }
+                },
                 PREFIX_INT_BRANCH_HASH => {
                     let node_hash = node_data[idx + PREFIX_BRANCH_HASH.len()
                         ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE]
                         .to_vec();
                     nodes.push(Node::new_stub(node_hash.as_slice()));
                     idx += PREFIX_BRANCH_HASH.len() + HASH_SIZE;
-                }
+                },
                 PREFIX_INT_EMPTY => {
                     nodes.push(Node::new_empty());
                     idx += PREFIX_EMPTY.len();
-                }
+                },
                 _ => {
                     return Err(SMTError::InvalidInput(String::from(
                         "Invalid data. key prefix is invalid.",
                     )));
-                }
+                },
             }
         }
 
@@ -359,8 +359,8 @@ impl SubTree {
         let calculated = hasher(&node_hashes, &structure, *height as usize);
 
         Ok(Self {
-            structure: structure,
-            nodes: nodes,
+            structure,
+            nodes,
             root: calculated,
         })
     }
@@ -371,7 +371,7 @@ impl SubTree {
         let node_hashes = vec![Node::new_empty()];
 
         Self {
-            structure: structure,
+            structure,
             nodes: node_hashes,
             root: empty.hash,
         }
@@ -638,14 +638,18 @@ impl SMT {
         };
         Self {
             root: r,
-            key_length: key_length,
+            key_length,
             hasher: tree_hasher,
-            subtree_height: subtree_height,
-            max_number_of_nodes: max_number_of_nodes,
+            subtree_height,
+            max_number_of_nodes,
         }
     }
 
-    pub fn commit(&mut self, db: &mut impl DB, data: &mut UpdateData) -> Result<Vec<u8>, SMTError> {
+    pub fn commit(
+        &mut self,
+        db: &mut impl DB,
+        data: &mut UpdateData,
+    ) -> Result<Vec<u8>, SMTError> {
         if data.len() == 0 {
             return Ok(self.root.clone());
         }
@@ -700,7 +704,7 @@ impl SMT {
 
         Ok(Proof {
             queries: proof_queries,
-            sibling_hashes: sibling_hashes,
+            sibling_hashes,
         })
     }
 
@@ -924,12 +928,12 @@ impl SMT {
                     db.del(current_node.hash)
                         .or_else(|err| Err(SMTError::Unknown(err.to_string())))?;
                     subtree
-                }
+                },
                 NodeKind::Empty => self.get_subtree(db, &current_node.hash)?,
                 NodeKind::Leaf => SubTree::from_data(vec![0], vec![current_node], self.hasher)?,
                 _ => {
                     return Err(SMTError::Unknown(String::from("invalid node type")));
-                }
+                },
             };
             if key_bins.len() != 1 || value_bins.len() != 1 {
                 return Err(SMTError::Unknown(String::from("invalid key/value length")));
@@ -957,10 +961,10 @@ impl SMT {
                 } else {
                     (current_node, Node::new_empty())
                 }
-            }
+            },
             _ => {
                 return Err(SMTError::Unknown(String::from("Invalid node kind")));
-            }
+            },
         };
         let idx = key_bins.len() / 2;
         let (mut left_nodes, mut left_heights) = self.update_node(
@@ -1159,7 +1163,7 @@ impl InMemorySMT {
         let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
         let tree = InMemorySMT {
             db: smt_db::InMemorySMTDB::new(),
-            key_length: key_length,
+            key_length,
         };
 
         let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
@@ -1209,7 +1213,7 @@ impl InMemorySMT {
                     Ok(val) => {
                         let buffer = JsBuffer::external(&mut ctx, val.to_vec());
                         vec![ctx.null().upcast(), buffer.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
@@ -1275,7 +1279,7 @@ impl InMemorySMT {
                             queries.set(&mut ctx, i as u32, obj)?;
                         }
                         vec![ctx.null().upcast(), obj.upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
@@ -1302,7 +1306,9 @@ impl InMemorySMT {
         }
         let raw_proof = ctx.argument::<JsObject>(2)?;
         let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof.get::<JsArray, _, _>(&mut ctx, "siblingHashes")?.to_vec(&mut ctx)?;
+        let raw_sibling_hashes = raw_proof
+            .get::<JsArray, _, _>(&mut ctx, "siblingHashes")?
+            .to_vec(&mut ctx)?;
         for raw_sibling_hash in raw_sibling_hashes.iter() {
             let sibling_hash = raw_sibling_hash
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
@@ -1311,7 +1317,9 @@ impl InMemorySMT {
             sibling_hashes.push(sibling_hash);
         }
         let mut queries: Vec<QueryProof> = vec![];
-        let raw_queries = raw_proof.get::<JsArray, _, _>(&mut ctx, "queries")?.to_vec(&mut ctx)?;
+        let raw_queries = raw_proof
+            .get::<JsArray, _, _>(&mut ctx, "queries")?
+            .to_vec(&mut ctx)?;
         for key in raw_queries.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj
@@ -1326,15 +1334,11 @@ impl InMemorySMT {
                 .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
                 .as_slice(&ctx)
                 .to_vec();
-            queries.push(QueryProof {
-                key: key,
-                value: value,
-                bitmap: bitmap,
-            });
+            queries.push(QueryProof { key, value, bitmap });
         }
         let proof = Proof {
-            queries: queries,
-            sibling_hashes: sibling_hashes,
+            queries,
+            sibling_hashes,
         };
 
         let key_length = ctx.argument::<JsNumber>(3)?.value(&mut ctx) as usize;
@@ -1351,7 +1355,7 @@ impl InMemorySMT {
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
                         vec![ctx.null().upcast(), JsBoolean::new(&mut ctx, val).upcast()]
-                    }
+                    },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;

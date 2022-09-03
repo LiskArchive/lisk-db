@@ -151,7 +151,10 @@ impl StateWriter {
     }
 
     fn restore_snapshot(&mut self, index: u32) -> Result<(), StateWriterError> {
-        let backup = self.backup.get(&index).ok_or(StateWriterError::InvalidUsage)?;
+        let backup = self
+            .backup
+            .get(&index)
+            .ok_or(StateWriterError::InvalidUsage)?;
         self.cache.clone_from(backup);
         self.backup = HashMap::new();
         Ok(())
@@ -332,12 +335,8 @@ impl StateWriter {
         let index = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as u32;
 
         match inner_writer.restore_snapshot(index) {
-            Ok(()) => {
-                Ok(ctx.undefined())
-            },
-            Err(error) => {
-                ctx.throw_error(error.to_string())?
-            },
+            Ok(()) => Ok(ctx.undefined()),
+            Err(error) => ctx.throw_error(error.to_string())?,
         }
     }
 

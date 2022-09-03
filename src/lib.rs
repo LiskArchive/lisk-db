@@ -1,17 +1,17 @@
 use neon::prelude::*;
 
 mod batch;
+mod codec;
+mod consts;
 mod db;
-mod state_db;
+mod diff;
+mod in_memory_db;
 mod options;
 mod smt;
 mod smt_db;
-mod in_memory_db;
+mod state_db;
 mod state_writer;
-mod diff;
-mod codec;
 mod utils;
-mod consts;
 
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
@@ -38,18 +38,39 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_db_commit", state_db::StateDB::js_commit)?;
     cx.export_function("state_db_prove", state_db::StateDB::js_prove)?;
     cx.export_function("state_db_verify", state_db::StateDB::js_verify)?;
-    cx.export_function("state_db_clean_diff_until", state_db::StateDB::js_clean_diff_until)?;
+    cx.export_function(
+        "state_db_clean_diff_until",
+        state_db::StateDB::js_clean_diff_until,
+    )?;
 
     cx.export_function("state_writer_new", state_writer::StateWriter::js_new)?;
     cx.export_function("state_writer_get", state_writer::StateWriter::js_get)?;
     cx.export_function("state_writer_update", state_writer::StateWriter::js_update)?;
     cx.export_function("state_writer_del", state_writer::StateWriter::js_del)?;
-    cx.export_function("state_writer_is_cached", state_writer::StateWriter::js_is_cached)?;
-    cx.export_function("state_writer_get_range", state_writer::StateWriter::js_get_range)?;
-    cx.export_function("state_writer_cache_new", state_writer::StateWriter::js_cache_new)?;
-    cx.export_function("state_writer_cache_existing", state_writer::StateWriter::js_cache_existing)?;
-    cx.export_function("state_writer_snapshot", state_writer::StateWriter::js_snapshot)?;
-    cx.export_function("state_writer_restore_snapshot", state_writer::StateWriter::js_restore_snapshot)?;
+    cx.export_function(
+        "state_writer_is_cached",
+        state_writer::StateWriter::js_is_cached,
+    )?;
+    cx.export_function(
+        "state_writer_get_range",
+        state_writer::StateWriter::js_get_range,
+    )?;
+    cx.export_function(
+        "state_writer_cache_new",
+        state_writer::StateWriter::js_cache_new,
+    )?;
+    cx.export_function(
+        "state_writer_cache_existing",
+        state_writer::StateWriter::js_cache_existing,
+    )?;
+    cx.export_function(
+        "state_writer_snapshot",
+        state_writer::StateWriter::js_snapshot,
+    )?;
+    cx.export_function(
+        "state_writer_restore_snapshot",
+        state_writer::StateWriter::js_restore_snapshot,
+    )?;
 
     cx.export_function("in_memory_db_new", in_memory_db::Database::js_new)?;
     cx.export_function("in_memory_db_clone", in_memory_db::Database::js_clone)?;
@@ -59,7 +80,6 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("in_memory_db_clear", in_memory_db::Database::js_clear)?;
     cx.export_function("in_memory_db_write", in_memory_db::Database::js_write)?;
     cx.export_function("in_memory_db_iterate", in_memory_db::Database::js_iterate)?;
-
 
     cx.export_function("in_memory_smt_new", smt::InMemorySMT::js_new)?;
     cx.export_function("in_memory_smt_update", smt::InMemorySMT::js_update)?;

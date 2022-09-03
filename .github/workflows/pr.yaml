@@ -35,7 +35,7 @@ jobs:
             target: aarch64-apple-darwin
           node_version: 16
           architecture: arm64
-          rust_version: stable-aarch64-apple-darwin 
+          rust_version: stable-aarch64-apple-darwin
 
     steps:
     - name: Set LIBCLANG_PATH
@@ -56,6 +56,10 @@ jobs:
       run: yarn install --ignore-scripts
     - name: Compile
       run: yarn run build-release
+    - name: Install rustfmt component
+      run: rustup component add rustfmt
+    - name: Run rust fmt checker
+      run: yarn run rust:fmt
     - name: Run rust tests
       run: yarn run test:rust
     - name: Run node.js tests
