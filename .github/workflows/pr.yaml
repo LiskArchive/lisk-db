@@ -60,6 +60,8 @@ jobs:
       run: rustup component add rustfmt
     - name: Run rust fmt checker
       run: yarn run rust:fmt
+    - name: Run clippy as a linter checker
+      run: yarn run rust:clippy
     - name: Run rust tests
       run: yarn run test:rust
     - name: Run node.js tests
