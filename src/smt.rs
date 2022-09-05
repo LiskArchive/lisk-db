@@ -65,7 +65,7 @@ impl UpdateData {
     pub fn new_with_hash(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
         let mut new_data = HashMap::new();
         for (k, v) in data {
-            if v.is_empty() {
+            if !v.is_empty() {
                 new_data.insert(key_hash(&k), value_hash(&v));
             } else {
                 new_data.insert(key_hash(&k), vec![]);
