@@ -1,6 +1,14 @@
 use sha2::{Digest, Sha256};
 use std::cmp;
 
+fn find_longer<'a>(a: &'a [bool], b: &'a [bool]) -> (&'a [bool], &'a [bool]) {
+    match a.len().cmp(&b.len()) {
+        cmp::Ordering::Greater => (a, b),
+        cmp::Ordering::Less => (b, a),
+        cmp::Ordering::Equal => (a, b),
+    }
+}
+
 pub fn empty_hash() -> Vec<u8> {
     let hasher = Sha256::new();
     let result = hasher.finalize();
@@ -67,14 +75,6 @@ pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
         }
     }
     result
-}
-
-fn find_longer<'a>(a: &'a [bool], b: &'a [bool]) -> (&'a [bool], &'a [bool]) {
-    match a.len().cmp(&b.len()) {
-        cmp::Ordering::Greater => (a, b),
-        cmp::Ordering::Less => (b, a),
-        cmp::Ordering::Equal => (a, b),
-    }
 }
 
 pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {

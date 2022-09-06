@@ -12,9 +12,22 @@ use crate::consts;
 use crate::smt_db;
 use crate::utils;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UpdateData {
-    data: HashMap<Vec<u8>, Vec<u8>>,
+const PREFIX_INT_LEAF_HASH: u8 = 0;
+const PREFIX_INT_BRANCH_HASH: u8 = 1;
+const PREFIX_INT_EMPTY: u8 = 2;
+const HASH_SIZE: usize = 32;
+const PREFIX_SIZE: usize = 6;
+static PREFIX_LEAF_HASH: &[u8] = &[0];
+static PREFIX_BRANCH_HASH: &[u8] = &[1];
+static PREFIX_EMPTY: &[u8] = &[2];
+
+type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
+type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
+
+pub trait DB {
+    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error>;
+    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error>;
+    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error>;
 }
 
 #[derive(Error, Debug)]
@@ -29,69 +42,97 @@ pub enum SMTError {
     Unknown(String),
 }
 
-impl std::convert::From<&SMTError> for SMTError {
-    fn from(err: &SMTError) -> Self {
-        SMTError::Unknown(err.to_string())
-    }
-}
-
-const PREFIX_INT_LEAF_HASH: u8 = 0;
-const PREFIX_INT_BRANCH_HASH: u8 = 1;
-const PREFIX_INT_EMPTY: u8 = 2;
-const HASH_SIZE: usize = 32;
-const PREFIX_SIZE: usize = 6;
-static PREFIX_LEAF_HASH: &[u8] = &[0];
-static PREFIX_BRANCH_HASH: &[u8] = &[1];
-static PREFIX_EMPTY: &[u8] = &[2];
-
-impl rocksdb::WriteBatchIterator for UpdateData {
-    /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
-        self.data.insert(key_hash(&key), value_hash(&value));
-    }
-    /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
-        self.data.insert(key_hash(&key), vec![]);
-    }
+#[derive(Clone, Debug, PartialEq)]
+enum NodeKind {
+    Empty,
+    Leaf,
+    Stub,
+    Temp,
 }
 
 struct KVPair(Vec<u8>, Vec<u8>);
 
-impl UpdateData {
-    pub fn new_from(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self { data }
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateData {
+    data: HashMap<Vec<u8>, Vec<u8>>,
+}
 
-    pub fn new_with_hash(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        let mut new_data = HashMap::new();
-        for (k, v) in data {
-            if !v.is_empty() {
-                new_data.insert(key_hash(&k), value_hash(&v));
-            } else {
-                new_data.insert(key_hash(&k), vec![]);
-            }
-        }
-        Self { data: new_data }
-    }
+#[derive(Clone, Debug)]
+pub struct Proof {
+    pub sibling_hashes: Vec<Vec<u8>>,
+    pub queries: Vec<QueryProof>,
+}
 
-    pub fn entries(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-        let mut kvpairs = vec![];
-        for (k, v) in self.data.iter() {
-            kvpairs.push(KVPair(k.clone(), v.clone()));
-        }
-        kvpairs.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut keys = vec![];
-        let mut values = vec![];
-        for kv in kvpairs {
-            keys.push(kv.0);
-            values.push(kv.1);
-        }
-        (keys, values)
-    }
+#[derive(Clone, Debug)]
+pub struct QueryProof {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub bitmap: Vec<u8>,
+}
 
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
+#[derive(Clone, Debug)]
+struct QueryProofWithProof {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    binary_bitmap: Vec<bool>,
+    bitmap: Vec<u8>,
+    ancestor_hashes: Vec<Vec<u8>>,
+    sibling_hashes: Vec<Vec<u8>>,
+    hash: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct Node {
+    kind: NodeKind,
+    key: Vec<u8>,
+    data: Vec<u8>,
+    hash: Vec<u8>,
+    index: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SubTree {
+    structure: Vec<u8>,
+    nodes: Vec<Node>,
+    root: Vec<u8>,
+}
+
+struct QueryHashesExtraInfo {
+    height: u8,
+    target_id: usize,
+    max_index: usize,
+}
+
+struct QueryHashesInfo<'a> {
+    layer_nodes: &'a Vec<Node>,
+    layer_structure: &'a [u8],
+    sibling_hashes: &'a mut VecDeque<Vec<u8>>,
+    ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
+    binary_bitmap: &'a mut Vec<bool>,
+    extra: QueryHashesExtraInfo,
+}
+
+struct UpdateNodeInfo<'a> {
+    key_bins: &'a [Vec<Vec<u8>>],
+    value_bins: &'a [Vec<Vec<u8>>],
+    length_bins: &'a [u32],
+    current_node: Node,
+    length_base: u32,
+    height: u32,
+    h: u8,
+}
+
+pub struct SparseMerkleTree {
+    root: Vec<u8>,
+    key_length: usize,
+    subtree_height: usize,
+    max_number_of_nodes: usize,
+    hasher: Hasher,
+}
+
+pub struct InMemorySMT {
+    db: smt_db::InMemorySmtDB,
+    key_length: usize,
 }
 
 fn key_hash(key: &[u8]) -> Vec<u8> {
@@ -133,45 +174,276 @@ fn empty_hash() -> Vec<u8> {
     return result.as_slice().to_vec();
 }
 
-#[derive(Clone, Debug)]
-pub struct Proof {
-    pub sibling_hashes: Vec<Vec<u8>>,
-    pub queries: Vec<QueryProof>,
+fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8> {
+    if node_hashes.len() == 1 {
+        return node_hashes[0].clone();
+    }
+    let mut next_hashes = vec![];
+    let mut next_structure = vec![];
+    let mut i = 0;
+
+    while i < node_hashes.len() {
+        if structure[i] == height as u8 {
+            let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
+            let hash = branch_hash(branch.as_slice());
+            next_hashes.push(hash);
+            next_structure.push(structure[i] - 1);
+            i += 1;
+        } else {
+            next_hashes.push(node_hashes[i].clone());
+            next_structure.push(structure[i]);
+        }
+        i += 1;
+    }
+
+    if height == 1 {
+        return next_hashes[0].clone();
+    }
+
+    tree_hasher(&next_hashes, &next_structure, height - 1)
 }
 
-#[derive(Clone, Debug)]
-pub struct QueryProof {
-    pub key: Vec<u8>,
-    pub value: Vec<u8>,
-    pub bitmap: Vec<u8>,
+fn calculate_subtree(
+    layer_nodes: &Vec<Node>,
+    layer_structure: &[u8],
+    height: u8,
+    tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
+    hasher: Hasher,
+) -> Result<SubTree, SMTError> {
+    if height == 0 {
+        return SubTree::from_data(vec![0], layer_nodes.clone(), hasher);
+    }
+    let mut next_layer_nodes: Vec<Node> = vec![];
+    let mut next_layer_structure: Vec<u8> = vec![];
+    let mut i = 0;
+    while i < layer_nodes.len() {
+        if layer_structure[i] != height {
+            next_layer_nodes.push(layer_nodes[i].clone());
+            next_layer_structure.push(layer_structure[i]);
+            i += 1;
+            continue;
+        }
+        let parent_node = if layer_nodes[i].kind == NodeKind::Empty
+            && layer_nodes[i + 1].kind == NodeKind::Empty
+        {
+            layer_nodes[i].clone()
+        } else if layer_nodes[i].kind == NodeKind::Empty
+            && layer_nodes[i + 1].kind == NodeKind::Leaf
+        {
+            layer_nodes[i + 1].clone()
+        } else if layer_nodes[i].kind == NodeKind::Leaf
+            && layer_nodes[i + 1].kind == NodeKind::Empty
+        {
+            layer_nodes[i].clone()
+        } else {
+            let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
+                let (nodes, structure) = tree_map.pop_back().ok_or_else(|| {
+                    SMTError::Unknown(String::from("Subtree must exist for stub"))
+                })?;
+                (nodes.clone(), structure.clone())
+            } else {
+                (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
+            };
+            let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
+                let (nodes, structure) = tree_map.pop_back().ok_or_else(|| {
+                    SMTError::Unknown(String::from("Subtree must exist for stub"))
+                })?;
+                (nodes.clone(), structure.clone())
+            } else {
+                (
+                    vec![layer_nodes[i + 1].clone()],
+                    vec![layer_structure[i + 1]],
+                )
+            };
+            left_structure.extend(right_structure);
+            left_nodes.extend(right_nodes);
+            let stub = Node::new_temp();
+            tree_map.push_front((left_nodes, left_structure));
+
+            stub
+        };
+        next_layer_nodes.push(parent_node.clone());
+        next_layer_structure.push(layer_structure[i] - 1);
+        // using 2 layer nodes
+        i += 2;
+    }
+    if height == 1 {
+        if next_layer_nodes[0].kind == NodeKind::Temp {
+            let (nodes, structure) = tree_map
+                .pop_front()
+                .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+            return SubTree::from_data(structure, nodes, hasher);
+        }
+        return SubTree::from_data(vec![0], next_layer_nodes, hasher);
+    }
+    calculate_subtree(
+        &next_layer_nodes,
+        &next_layer_structure,
+        height - 1,
+        tree_map,
+        hasher,
+    )
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum NodeKind {
-    Empty,
-    Leaf,
-    Stub,
-    Temp,
+fn calculate_query_hashes(info: QueryHashesInfo) {
+    if info.extra.height == 0 {
+        return;
+    }
+    let mut next_layer_nodes: Vec<Node> = vec![];
+    let mut next_layer_structure: Vec<u8> = vec![];
+    let mut next_target_id = info.extra.target_id;
+    let mut i = 0;
+    while i < info.layer_nodes.len() {
+        if info.layer_structure[i] != info.extra.height {
+            next_layer_nodes.push(info.layer_nodes[i].clone());
+            next_layer_structure.push(info.layer_structure[i]);
+            i += 1;
+            continue;
+        }
+        let mut parent_node =
+            Node::new_branch(&info.layer_nodes[i].hash, &info.layer_nodes[i + 1].hash);
+        parent_node.index = info.extra.max_index + i;
+        next_layer_nodes.push(parent_node.clone());
+        next_layer_structure.push(info.layer_structure[i] - 1);
+        if next_target_id == info.layer_nodes[i].index {
+            info.ancestor_hashes.push_front(parent_node.hash.clone());
+            next_target_id = parent_node.index;
+            if info.layer_nodes[i + 1].kind == NodeKind::Empty {
+                info.binary_bitmap.push(false);
+            } else {
+                info.binary_bitmap.push(true);
+                info.sibling_hashes
+                    .push_front(info.layer_nodes[i + 1].hash.clone());
+            }
+        } else if next_target_id == info.layer_nodes[i + 1].index {
+            info.ancestor_hashes.push_front(parent_node.hash.clone());
+            next_target_id = parent_node.index;
+            if info.layer_nodes[i].kind == NodeKind::Empty {
+                info.binary_bitmap.push(false);
+            } else {
+                info.binary_bitmap.push(true);
+                info.sibling_hashes
+                    .push_front(info.layer_nodes[i].hash.clone());
+            }
+        }
+        i += 2;
+    }
+    let new_extra = QueryHashesExtraInfo::new(
+        info.extra.height - 1,
+        next_target_id,
+        info.extra.max_index + i + 1,
+    );
+    let new_info = QueryHashesInfo::new(
+        &next_layer_nodes,
+        &next_layer_structure,
+        info.sibling_hashes,
+        info.ancestor_hashes,
+        info.binary_bitmap,
+        new_extra,
+    );
+    calculate_query_hashes(new_info)
 }
 
-#[derive(Clone, Debug)]
-struct Node {
-    kind: NodeKind,
-    key: Vec<u8>,
-    data: Vec<u8>,
-    hash: Vec<u8>,
-    index: usize,
+fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<QueryProofWithProof>) {
+    if queries.is_empty() {
+        queries.push_back(q);
+        return;
+    }
+
+    let index = utils::binary_search(queries.make_contiguous(), |val| {
+        (q.height() == val.height() && utils::compare(&q.key, &val.key) == cmp::Ordering::Less)
+            || q.height() > val.height()
+    });
+
+    if index == queries.len() as i32 {
+        queries.push_back(q);
+        return;
+    }
+
+    let original = &queries[index as usize];
+    if !utils::arr_eq_bool(&q.binary_path(), &original.binary_path()) {
+        queries.insert(index as usize, q);
+    }
 }
 
-#[derive(Clone, Debug)]
-struct QueryProofWithProof {
-    key: Vec<u8>,
-    value: Vec<u8>,
-    binary_bitmap: Vec<bool>,
-    bitmap: Vec<u8>,
-    ancestor_hashes: Vec<Vec<u8>>,
-    sibling_hashes: Vec<Vec<u8>>,
-    hash: Vec<u8>,
+fn calculate_sibling_hashes(
+    query_with_proofs: &mut VecDeque<QueryProofWithProof>,
+    ancestor_hashes: &Vec<Vec<u8>>,
+    sibling_hashes: &mut Vec<Vec<u8>>,
+) {
+    if query_with_proofs.is_empty() {
+        return;
+    }
+    while !query_with_proofs.is_empty() {
+        let mut query = query_with_proofs.pop_front().unwrap();
+        if query.height() == 0 {
+            continue;
+        }
+        if query.binary_bitmap[0] {
+            let node_hash = query.sibling_hashes.pop().unwrap();
+            if !utils::bytes_in(ancestor_hashes, &node_hash)
+                && !utils::bytes_in(sibling_hashes, &node_hash)
+            {
+                sibling_hashes.push(node_hash.clone());
+            }
+        }
+        query.slice_bitmap();
+        insert_and_filter_queries(query, query_with_proofs);
+    }
+}
+
+impl std::convert::From<&SMTError> for SMTError {
+    fn from(err: &SMTError) -> Self {
+        SMTError::Unknown(err.to_string())
+    }
+}
+
+impl rocksdb::WriteBatchIterator for UpdateData {
+    /// Called with a key and value that were `put` into the batch.
+    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+        self.data.insert(key_hash(&key), value_hash(&value));
+    }
+    /// Called with a key that was `delete`d from the batch.
+    fn delete(&mut self, key: Box<[u8]>) {
+        self.data.insert(key_hash(&key), vec![]);
+    }
+}
+
+impl UpdateData {
+    pub fn new_from(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
+        Self { data }
+    }
+
+    pub fn new_with_hash(data: HashMap<Vec<u8>, Vec<u8>>) -> Self {
+        let mut new_data = HashMap::new();
+        for (k, v) in data {
+            if !v.is_empty() {
+                new_data.insert(key_hash(&k), value_hash(&v));
+            } else {
+                new_data.insert(key_hash(&k), vec![]);
+            }
+        }
+        Self { data: new_data }
+    }
+
+    pub fn entries(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        let mut kvpairs = vec![];
+        for (k, v) in self.data.iter() {
+            kvpairs.push(KVPair(k.clone(), v.clone()));
+        }
+        kvpairs.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut keys = vec![];
+        let mut values = vec![];
+        for kv in kvpairs {
+            keys.push(kv.0);
+            values.push(kv.1);
+        }
+        (keys, values)
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 impl QueryProofWithProof {
@@ -298,13 +570,6 @@ impl Node {
     }
 }
 
-#[derive(Clone, Debug)]
-struct SubTree {
-    structure: Vec<u8>,
-    nodes: Vec<Node>,
-    root: Vec<u8>,
-}
-
 impl SubTree {
     pub fn new(data: Vec<u8>, key_length: usize, hasher: Hasher) -> Result<Self, SMTError> {
         if data.is_empty() {
@@ -395,139 +660,6 @@ impl SubTree {
     }
 }
 
-type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
-
-pub struct SparseMerkleTree {
-    root: Vec<u8>,
-    key_length: usize,
-    subtree_height: usize,
-    max_number_of_nodes: usize,
-    hasher: Hasher,
-}
-
-pub trait DB {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error>;
-    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error>;
-    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error>;
-}
-
-fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8> {
-    if node_hashes.len() == 1 {
-        return node_hashes[0].clone();
-    }
-    let mut next_hashes = vec![];
-    let mut next_structure = vec![];
-    let mut i = 0;
-
-    while i < node_hashes.len() {
-        if structure[i] == height as u8 {
-            let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
-            let hash = branch_hash(branch.as_slice());
-            next_hashes.push(hash);
-            next_structure.push(structure[i] - 1);
-            i += 1;
-        } else {
-            next_hashes.push(node_hashes[i].clone());
-            next_structure.push(structure[i]);
-        }
-        i += 1;
-    }
-
-    if height == 1 {
-        return next_hashes[0].clone();
-    }
-
-    tree_hasher(&next_hashes, &next_structure, height - 1)
-}
-
-fn calculate_subtree(
-    layer_nodes: &Vec<Node>,
-    layer_structure: &[u8],
-    height: u8,
-    tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
-    hasher: Hasher,
-) -> Result<SubTree, SMTError> {
-    if height == 0 {
-        return SubTree::from_data(vec![0], layer_nodes.clone(), hasher);
-    }
-    let mut next_layer_nodes: Vec<Node> = vec![];
-    let mut next_layer_structure: Vec<u8> = vec![];
-    let mut i = 0;
-    while i < layer_nodes.len() {
-        if layer_structure[i] != height {
-            next_layer_nodes.push(layer_nodes[i].clone());
-            next_layer_structure.push(layer_structure[i]);
-            i += 1;
-            continue;
-        }
-        let parent_node = if layer_nodes[i].kind == NodeKind::Empty
-            && layer_nodes[i + 1].kind == NodeKind::Empty
-        {
-            layer_nodes[i].clone()
-        } else if layer_nodes[i].kind == NodeKind::Empty
-            && layer_nodes[i + 1].kind == NodeKind::Leaf
-        {
-            layer_nodes[i + 1].clone()
-        } else if layer_nodes[i].kind == NodeKind::Leaf
-            && layer_nodes[i + 1].kind == NodeKind::Empty
-        {
-            layer_nodes[i].clone()
-        } else {
-            let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_back().ok_or_else(|| {
-                    SMTError::Unknown(String::from("Subtree must exist for stub"))
-                })?;
-                (nodes.clone(), structure.clone())
-            } else {
-                (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
-            };
-            let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_back().ok_or_else(|| {
-                    SMTError::Unknown(String::from("Subtree must exist for stub"))
-                })?;
-                (nodes.clone(), structure.clone())
-            } else {
-                (
-                    vec![layer_nodes[i + 1].clone()],
-                    vec![layer_structure[i + 1]],
-                )
-            };
-            left_structure.extend(right_structure);
-            left_nodes.extend(right_nodes);
-            let stub = Node::new_temp();
-            tree_map.push_front((left_nodes, left_structure));
-
-            stub
-        };
-        next_layer_nodes.push(parent_node.clone());
-        next_layer_structure.push(layer_structure[i] - 1);
-        // using 2 layer nodes
-        i += 2;
-    }
-    if height == 1 {
-        if next_layer_nodes[0].kind == NodeKind::Temp {
-            let (nodes, structure) = tree_map
-                .pop_front()
-                .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
-            return SubTree::from_data(structure, nodes, hasher);
-        }
-        return SubTree::from_data(vec![0], next_layer_nodes, hasher);
-    }
-    calculate_subtree(
-        &next_layer_nodes,
-        &next_layer_structure,
-        height - 1,
-        tree_map,
-        hasher,
-    )
-}
-
-struct QueryHashesExtraInfo {
-    height: u8,
-    target_id: usize,
-    max_index: usize,
-}
-
 impl QueryHashesExtraInfo {
     fn new(height: u8, target_id: usize, max_index: usize) -> Self {
         Self {
@@ -536,15 +668,6 @@ impl QueryHashesExtraInfo {
             max_index,
         }
     }
-}
-
-struct QueryHashesInfo<'a> {
-    layer_nodes: &'a Vec<Node>,
-    layer_structure: &'a [u8],
-    sibling_hashes: &'a mut VecDeque<Vec<u8>>,
-    ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
-    binary_bitmap: &'a mut Vec<bool>,
-    extra: QueryHashesExtraInfo,
 }
 
 impl<'a> QueryHashesInfo<'a> {
@@ -565,123 +688,6 @@ impl<'a> QueryHashesInfo<'a> {
             extra,
         }
     }
-}
-
-fn calculate_query_hashes(info: QueryHashesInfo) {
-    if info.extra.height == 0 {
-        return;
-    }
-    let mut next_layer_nodes: Vec<Node> = vec![];
-    let mut next_layer_structure: Vec<u8> = vec![];
-    let mut next_target_id = info.extra.target_id;
-    let mut i = 0;
-    while i < info.layer_nodes.len() {
-        if info.layer_structure[i] != info.extra.height {
-            next_layer_nodes.push(info.layer_nodes[i].clone());
-            next_layer_structure.push(info.layer_structure[i]);
-            i += 1;
-            continue;
-        }
-        let mut parent_node =
-            Node::new_branch(&info.layer_nodes[i].hash, &info.layer_nodes[i + 1].hash);
-        parent_node.index = info.extra.max_index + i;
-        next_layer_nodes.push(parent_node.clone());
-        next_layer_structure.push(info.layer_structure[i] - 1);
-        if next_target_id == info.layer_nodes[i].index {
-            info.ancestor_hashes.push_front(parent_node.hash.clone());
-            next_target_id = parent_node.index;
-            if info.layer_nodes[i + 1].kind == NodeKind::Empty {
-                info.binary_bitmap.push(false);
-            } else {
-                info.binary_bitmap.push(true);
-                info.sibling_hashes
-                    .push_front(info.layer_nodes[i + 1].hash.clone());
-            }
-        } else if next_target_id == info.layer_nodes[i + 1].index {
-            info.ancestor_hashes.push_front(parent_node.hash.clone());
-            next_target_id = parent_node.index;
-            if info.layer_nodes[i].kind == NodeKind::Empty {
-                info.binary_bitmap.push(false);
-            } else {
-                info.binary_bitmap.push(true);
-                info.sibling_hashes
-                    .push_front(info.layer_nodes[i].hash.clone());
-            }
-        }
-        i += 2;
-    }
-    let new_extra = QueryHashesExtraInfo::new(
-        info.extra.height - 1,
-        next_target_id,
-        info.extra.max_index + i + 1,
-    );
-    let new_info = QueryHashesInfo::new(
-        &next_layer_nodes,
-        &next_layer_structure,
-        info.sibling_hashes,
-        info.ancestor_hashes,
-        info.binary_bitmap,
-        new_extra,
-    );
-    calculate_query_hashes(new_info)
-}
-
-fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<QueryProofWithProof>) {
-    if queries.is_empty() {
-        queries.push_back(q);
-        return;
-    }
-
-    let index = utils::binary_search(queries.make_contiguous(), |val| {
-        (q.height() == val.height() && utils::compare(&q.key, &val.key) == cmp::Ordering::Less)
-            || q.height() > val.height()
-    });
-
-    if index == queries.len() as i32 {
-        queries.push_back(q);
-        return;
-    }
-
-    let original = &queries[index as usize];
-    if !utils::arr_eq_bool(&q.binary_path(), &original.binary_path()) {
-        queries.insert(index as usize, q);
-    }
-}
-
-fn calculate_sibling_hashes(
-    query_with_proofs: &mut VecDeque<QueryProofWithProof>,
-    ancestor_hashes: &Vec<Vec<u8>>,
-    sibling_hashes: &mut Vec<Vec<u8>>,
-) {
-    if query_with_proofs.is_empty() {
-        return;
-    }
-    while !query_with_proofs.is_empty() {
-        let mut query = query_with_proofs.pop_front().unwrap();
-        if query.height() == 0 {
-            continue;
-        }
-        if query.binary_bitmap[0] {
-            let node_hash = query.sibling_hashes.pop().unwrap();
-            if !utils::bytes_in(ancestor_hashes, &node_hash)
-                && !utils::bytes_in(sibling_hashes, &node_hash)
-            {
-                sibling_hashes.push(node_hash.clone());
-            }
-        }
-        query.slice_bitmap();
-        insert_and_filter_queries(query, query_with_proofs);
-    }
-}
-
-struct UpdateNodeInfo<'a> {
-    key_bins: &'a [Vec<Vec<u8>>],
-    value_bins: &'a [Vec<Vec<u8>>],
-    length_bins: &'a [u32],
-    current_node: Node,
-    length_base: u32,
-    height: u32,
-    h: u8,
 }
 
 impl<'a> UpdateNodeInfo<'a> {
@@ -1220,14 +1226,7 @@ impl SparseMerkleTree {
     }
 }
 
-pub struct InMemorySMT {
-    db: smt_db::InMemorySmtDB,
-    key_length: usize,
-}
-
 impl Finalize for InMemorySMT {}
-
-type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 
 impl InMemorySMT {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {

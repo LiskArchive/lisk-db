@@ -3,10 +3,28 @@ use neon::types::buffer::TypedArray;
 
 use crate::consts;
 
+pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
+
+// Messages sent on the database channel
+pub enum DbMessage {
+    // Callback to be executed
+    Callback(DbCallback),
+    // Indicates that the thread should be stopped and connection closed
+    Close,
+}
+
 #[derive(Debug)]
 pub struct DatabaseOptions {
     pub readonly: bool,
     pub key_length: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct IterationOption {
+    pub limit: i64,
+    pub reverse: bool,
+    pub gte: Option<Vec<u8>>,
+    pub lte: Option<Vec<u8>>,
 }
 
 impl DatabaseOptions {
@@ -46,24 +64,6 @@ impl DatabaseOptions {
             key_length,
         })
     }
-}
-
-pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
-
-// Messages sent on the database channel
-pub enum DbMessage {
-    // Callback to be executed
-    Callback(DbCallback),
-    // Indicates that the thread should be stopped and connection closed
-    Close,
-}
-
-#[derive(Clone, Debug)]
-pub struct IterationOption {
-    pub limit: i64,
-    pub reverse: bool,
-    pub gte: Option<Vec<u8>>,
-    pub lte: Option<Vec<u8>>,
 }
 
 impl IterationOption {

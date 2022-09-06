@@ -15,6 +15,8 @@ use crate::smt_db;
 use crate::state_writer;
 use crate::utils;
 
+type SharedStateDB = JsBox<RefCell<StateDB>>;
+
 #[derive(Error, Debug)]
 pub enum DataStoreError {
     #[error("unknown data store error `{0}`")]
@@ -26,11 +28,12 @@ pub enum DataStoreError {
 #[derive(Clone, Debug)]
 struct KVPair(Vec<u8>, Vec<u8>);
 
-impl Finalize for StateDB {}
-pub struct StateDB {
-    tx: mpsc::Sender<options::DbMessage>,
+struct CommitData {
+    height: u32,
+    prev_root: Vec<u8>,
     readonly: bool,
-    key_length: usize,
+    expected: Vec<u8>,
+    check_expected: bool,
 }
 
 struct CommitResultInfo<'a> {
@@ -39,6 +42,24 @@ struct CommitResultInfo<'a> {
     height: u32,
     readonly: bool,
     check_expected: bool,
+}
+
+pub struct StateDB {
+    tx: mpsc::Sender<options::DbMessage>,
+    readonly: bool,
+    key_length: usize,
+}
+
+impl CommitData {
+    fn new(h: u32, prev_root: Vec<u8>, r: bool, expected: Vec<u8>, check_expected: bool) -> Self {
+        Self {
+            height: h,
+            prev_root,
+            readonly: r,
+            expected,
+            check_expected,
+        }
+    }
 }
 
 impl<'a> CommitResultInfo<'a> {
@@ -59,25 +80,7 @@ impl<'a> CommitResultInfo<'a> {
     }
 }
 
-struct CommitData {
-    height: u32,
-    prev_root: Vec<u8>,
-    readonly: bool,
-    expected: Vec<u8>,
-    check_expected: bool,
-}
-
-impl CommitData {
-    fn new(h: u32, prev_root: Vec<u8>, r: bool, expected: Vec<u8>, check_expected: bool) -> Self {
-        Self {
-            height: h,
-            prev_root,
-            readonly: r,
-            expected,
-            check_expected,
-        }
-    }
-}
+impl Finalize for StateDB {}
 
 impl StateDB {
     fn new<'a, C>(
@@ -412,8 +415,6 @@ impl StateDB {
         .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 }
-
-type SharedStateDB = JsBox<RefCell<StateDB>>;
 
 impl StateDB {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {

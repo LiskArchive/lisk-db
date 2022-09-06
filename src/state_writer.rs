@@ -6,11 +6,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
-
 use crate::batch;
 use crate::diff;
 use crate::utils;
+
+pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
+
+trait Batch {
+    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>);
+    fn delete(&mut self, key: Box<[u8]>);
+}
 
 #[derive(Error, Debug)]
 pub enum StateWriterError {
@@ -19,11 +24,20 @@ pub enum StateWriterError {
 }
 
 #[derive(Clone, Debug)]
+struct KVPair(Vec<u8>, Vec<u8>);
+
+#[derive(Clone, Debug)]
 pub struct StateCache {
     init: Option<Vec<u8>>,
     value: Vec<u8>,
     dirty: bool,
     deleted: bool,
+}
+
+pub struct StateWriter {
+    counter: u32,
+    pub backup: HashMap<u32, HashMap<Vec<u8>, StateCache>>,
+    pub cache: HashMap<Vec<u8>, StateCache>,
 }
 
 impl StateCache {
@@ -45,20 +59,6 @@ impl StateCache {
             deleted: false,
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct KVPair(Vec<u8>, Vec<u8>);
-
-trait Batch {
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>);
-    fn delete(&mut self, key: Box<[u8]>);
-}
-
-pub struct StateWriter {
-    counter: u32,
-    pub backup: HashMap<u32, HashMap<Vec<u8>, StateCache>>,
-    pub cache: HashMap<Vec<u8>, StateCache>,
 }
 
 impl Finalize for StateWriter {}
