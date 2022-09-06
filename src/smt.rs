@@ -397,7 +397,7 @@ impl SubTree {
 
 type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
 
-pub struct StateMerkleTree {
+pub struct SparseMerkleTree {
     root: Vec<u8>,
     key_length: usize,
     subtree_height: usize,
@@ -706,7 +706,7 @@ impl<'a> UpdateNodeInfo<'a> {
     }
 }
 
-impl StateMerkleTree {
+impl SparseMerkleTree {
     pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
         let max_number_of_nodes = 1 << subtree_height;
         let r = if root.is_empty() {
@@ -827,7 +827,7 @@ impl StateMerkleTree {
 
         Ok(utils::is_bytes_equal(
             root,
-            &StateMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
+            &SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
         ))
     }
 
@@ -1273,7 +1273,7 @@ impl InMemorySMT {
             let mut inner_smt = in_memory_smt.lock().unwrap();
             let key_length = inner_smt.key_length;
 
-            let mut tree = StateMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
+            let mut tree = SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
 
             let result = tree.commit(&mut inner_smt.db, &mut update_data);
 
@@ -1321,7 +1321,7 @@ impl InMemorySMT {
         thread::spawn(move || {
             let mut inner_smt = in_memory_smt.lock().unwrap();
             let mut tree =
-                StateMerkleTree::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
 
             let result = tree.prove(&mut inner_smt.db, data);
 
@@ -1420,7 +1420,7 @@ impl InMemorySMT {
 
         thread::spawn(move || {
             let result =
-                StateMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
+                SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn test_empty_tree() {
-        let mut tree = StateMerkleTree::new(vec![], 32, 8);
+        let mut tree = SparseMerkleTree::new(vec![], 32, 8);
         let mut data = UpdateData {
             data: HashMap::new(),
         };
@@ -1502,7 +1502,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = StateMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1534,7 +1534,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = StateMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1574,7 +1574,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = StateMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1622,7 +1622,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = StateMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1809,7 +1809,7 @@ mod tests {
         ];
 
         for (keys, values, root, query_keys, sibling_hashes, queries) in test_data {
-            let mut tree = StateMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1844,7 +1844,7 @@ mod tests {
                 sibling_hashes
             );
             assert_eq!(
-                StateMerkleTree::verify(
+                SparseMerkleTree::verify(
                     &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
                     &proof,
                     &result,
@@ -2059,7 +2059,7 @@ mod tests {
         )];
 
         for (keys, values, root, query_keys, sibling_hashes, queries) in test_data {
-            let mut tree = StateMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -2094,7 +2094,7 @@ mod tests {
                 sibling_hashes
             );
             assert_eq!(
-                StateMerkleTree::verify(
+                SparseMerkleTree::verify(
                     &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
                     &proof,
                     &result,

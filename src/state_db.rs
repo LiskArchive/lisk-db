@@ -203,7 +203,7 @@ impl StateDB {
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
         let mut data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SmtDB::new(conn);
-        let mut tree = smt::StateMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
+        let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
         let prev_root = tree
             .commit(&mut smtdb, &mut data)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
@@ -299,7 +299,7 @@ impl StateDB {
             let mut data = smt::UpdateData::new_with_hash(w.get_updated());
             let mut smtdb = smt_db::SmtDB::new(conn);
             let mut tree =
-                smt::StateMerkleTree::new(d.prev_root, key_length, consts::SUBTREE_SIZE);
+                smt::SparseMerkleTree::new(d.prev_root, key_length, consts::SUBTREE_SIZE);
             let root = tree.commit(&mut smtdb, &mut data);
             let result_info =
                 CommitResultInfo::new(root, &d.expected, d.height, d.readonly, d.check_expected);
@@ -331,7 +331,7 @@ impl StateDB {
     ) -> Result<(), DataStoreError> {
         let key_length = self.key_length;
         self.send(move |conn, channel| {
-            let mut tree = smt::StateMerkleTree::new(root, key_length, consts::SUBTREE_SIZE);
+            let mut tree = smt::SparseMerkleTree::new(root, key_length, consts::SUBTREE_SIZE);
             let mut smtdb = smt_db::SmtDB::new(conn);
             let result = tree.prove(&mut smtdb, queries);
 
@@ -682,7 +682,7 @@ impl StateDB {
 
         thread::spawn(move || {
             let result =
-                smt::StateMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_lengh);
+                smt::SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_lengh);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
