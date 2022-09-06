@@ -626,7 +626,7 @@ impl StateDB {
     pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
-        let key_lengh = db.key_length;
+        let key_length = db.key_length;
         // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
@@ -682,7 +682,7 @@ impl StateDB {
 
         thread::spawn(move || {
             let result =
-                smt::SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_lengh);
+                smt::SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);

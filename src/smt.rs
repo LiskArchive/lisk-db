@@ -522,13 +522,13 @@ fn calculate_subtree(
     )
 }
 
-struct QueryHashesExraInfo {
+struct QueryHashesExtraInfo {
     height: u8,
     target_id: usize,
     max_index: usize,
 }
 
-impl QueryHashesExraInfo {
+impl QueryHashesExtraInfo {
     fn new(height: u8, target_id: usize, max_index: usize) -> Self {
         Self {
             height,
@@ -538,25 +538,25 @@ impl QueryHashesExraInfo {
     }
 }
 
-struct QueryHasheshInfo<'a> {
+struct QueryHashesInfo<'a> {
     layer_nodes: &'a Vec<Node>,
     layer_structure: &'a [u8],
     sibling_hashes: &'a mut VecDeque<Vec<u8>>,
     ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
     binary_bitmap: &'a mut Vec<bool>,
-    extra: QueryHashesExraInfo,
+    extra: QueryHashesExtraInfo,
 }
 
-impl<'a> QueryHasheshInfo<'a> {
+impl<'a> QueryHashesInfo<'a> {
     fn new(
         layer_nodes: &'a Vec<Node>,
         layer_structure: &'a [u8],
         sibling_hashes: &'a mut VecDeque<Vec<u8>>,
         ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
         binary_bitmap: &'a mut Vec<bool>,
-        extra: QueryHashesExraInfo,
+        extra: QueryHashesExtraInfo,
     ) -> Self {
-        QueryHasheshInfo {
+        QueryHashesInfo {
             layer_nodes,
             layer_structure,
             sibling_hashes,
@@ -567,7 +567,7 @@ impl<'a> QueryHasheshInfo<'a> {
     }
 }
 
-fn calculate_query_hashes(info: QueryHasheshInfo) {
+fn calculate_query_hashes(info: QueryHashesInfo) {
     if info.extra.height == 0 {
         return;
     }
@@ -610,12 +610,12 @@ fn calculate_query_hashes(info: QueryHasheshInfo) {
         }
         i += 2;
     }
-    let new_extra = QueryHashesExraInfo::new(
+    let new_extra = QueryHashesExtraInfo::new(
         info.extra.height - 1,
         next_target_id,
         info.extra.max_index + i + 1,
     );
-    let new_info = QueryHasheshInfo::new(
+    let new_info = QueryHashesInfo::new(
         &next_layer_nodes,
         &next_layer_structure,
         info.sibling_hashes,
@@ -1121,12 +1121,12 @@ impl SparseMerkleTree {
             .max()
             .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
 
-        let extra = QueryHashesExraInfo::new(
+        let extra = QueryHashesExtraInfo::new(
             *max_structure,
             current_node.index,
             current_subtree.nodes.len(),
         );
-        let info = QueryHasheshInfo::new(
+        let info = QueryHashesInfo::new(
             &current_subtree.nodes,
             &current_subtree.structure,
             &mut sibling_hashes,
