@@ -378,17 +378,17 @@ mod tests {
 
         let (value, deleted, exists) = writer.get(&[0, 0, 2]);
         assert_eq!(value, &[1, 2, 3]);
-        assert_eq!(deleted, false);
-        assert_eq!(exists, true);
+        assert!(!deleted);
+        assert!(exists);
 
         let (value, deleted, exists) = writer.get(&[0, 0, 3]);
         assert_eq!(value, &[1, 2, 4]);
-        assert_eq!(deleted, false);
-        assert_eq!(exists, true);
+        assert!(!deleted);
+        assert!(exists);
 
         let (value, deleted, exists) = writer.get(&[0, 0, 1]);
         assert_eq!(value, &[]);
-        assert_eq!(deleted, false);
-        assert_eq!(exists, false)
+        assert!(!deleted);
+        assert!(!exists)
     }
 }

@@ -1839,20 +1839,17 @@ mod tests {
                 proof
                     .sibling_hashes
                     .iter()
-                    .map(|v| hex::encode(v))
+                    .map(hex::encode)
                     .collect::<Vec<String>>(),
                 sibling_hashes
             );
-            assert_eq!(
-                SparseMerkleTree::verify(
-                    &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
-                    &proof,
-                    &result,
-                    32
-                )
-                .unwrap(),
-                true
-            );
+            assert!(SparseMerkleTree::verify(
+                &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                &proof,
+                &result,
+                32
+            )
+            .unwrap());
         }
     }
 
@@ -2089,20 +2086,17 @@ mod tests {
                 proof
                     .sibling_hashes
                     .iter()
-                    .map(|v| hex::encode(v))
+                    .map(hex::encode)
                     .collect::<Vec<String>>(),
                 sibling_hashes
             );
-            assert_eq!(
-                SparseMerkleTree::verify(
-                    &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
-                    &proof,
-                    &result,
-                    32
-                )
-                .unwrap(),
-                true
-            );
+            assert!(SparseMerkleTree::verify(
+                &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                &proof,
+                &result,
+                32
+            )
+            .unwrap());
         }
     }
 }
