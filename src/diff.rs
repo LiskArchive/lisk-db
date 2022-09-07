@@ -9,6 +9,13 @@ pub struct KeyValue {
     value: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+pub struct Diff {
+    created: Vec<Vec<u8>>,
+    updated: Vec<KeyValue>,
+    deleted: Vec<KeyValue>,
+}
+
 impl KeyValue {
     pub fn new(key: Vec<u8>, value: Vec<u8>) -> Self {
         Self { key, value }
@@ -27,13 +34,6 @@ impl KeyValue {
         writer.write_bytes(2, &self.value);
         writer.result()
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Diff {
-    created: Vec<Vec<u8>>,
-    updated: Vec<KeyValue>,
-    deleted: Vec<KeyValue>,
 }
 
 impl Diff {

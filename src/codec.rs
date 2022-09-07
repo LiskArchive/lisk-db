@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+const MAX_VARINT_LEN: usize = 10;
+
 #[derive(Error, Debug)]
 pub enum CodecError {
     #[error("Invalid bytes length")]
@@ -12,7 +14,16 @@ pub enum CodecError {
     InvalidWireType,
 }
 
-const MAX_VARINT_LEN: usize = 10;
+pub struct Reader {
+    index: usize,
+    end: usize,
+    data: Vec<u8>,
+}
+
+pub struct Writer {
+    result: Vec<u8>,
+    size: usize,
+}
 
 fn write_varint(value: u32) -> Vec<u8> {
     let mut value = value;
@@ -26,15 +37,6 @@ fn write_varint(value: u32) -> Vec<u8> {
     result[index] = value as u8;
 
     result[0..index + 1].to_vec()
-}
-
-fn read_key(val: u32) -> Result<(u32, u32), CodecError> {
-    let wire_type = val & 7;
-    if wire_type != 0 && wire_type != 2 {
-        return Err(CodecError::InvalidWireType);
-    }
-    let field_number = val >> 3;
-    Ok((field_number, wire_type))
 }
 
 fn read_varint(data: &[u8], offset: usize) -> Result<(u32, usize), CodecError> {
@@ -60,10 +62,13 @@ fn read_varint(data: &[u8], offset: usize) -> Result<(u32, usize), CodecError> {
     Err(CodecError::NoTermination)
 }
 
-pub struct Reader {
-    index: usize,
-    end: usize,
-    data: Vec<u8>,
+fn read_key(val: u32) -> Result<(u32, u32), CodecError> {
+    let wire_type = val & 7;
+    if wire_type != 0 && wire_type != 2 {
+        return Err(CodecError::InvalidWireType);
+    }
+    let field_number = val >> 3;
+    Ok((field_number, wire_type))
 }
 
 impl Reader {
@@ -123,11 +128,6 @@ impl Reader {
         self.index += size;
         Ok(true)
     }
-}
-
-pub struct Writer {
-    result: Vec<u8>,
-    size: usize,
 }
 
 impl Writer {

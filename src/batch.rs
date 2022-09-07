@@ -5,11 +5,40 @@ use std::sync::{Arc, Mutex};
 
 pub type SendableWriteBatch = RefCell<Arc<Mutex<WriteBatch>>>;
 
+pub trait BatchWriter {
+    fn put(&mut self, key: &[u8], value: &[u8]);
+    fn delete(&mut self, key: &[u8]);
+}
+
 pub struct WriteBatch {
     pub batch: rocksdb::WriteBatch,
 }
 
+pub struct PrefixWriteBatch<'a> {
+    pub batch: rocksdb::WriteBatch,
+    prefix: Option<&'a [u8]>,
+}
+
 impl Finalize for WriteBatch {}
+
+impl Clone for WriteBatch {
+    fn clone(&self) -> Self {
+        let mut cloned = WriteBatch::new();
+        self.batch.iterate(&mut cloned);
+        cloned
+    }
+}
+
+impl rocksdb::WriteBatchIterator for WriteBatch {
+    /// Called with a key and value that were `put` into the batch.
+    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+        self.batch.put(key, value);
+    }
+    /// Called with a key that was `delete`d from the batch.
+    fn delete(&mut self, key: Box<[u8]>) {
+        self.batch.delete(key);
+    }
+}
 
 impl WriteBatch {
     pub fn new() -> Self {
@@ -59,56 +88,6 @@ impl WriteBatch {
     }
 }
 
-impl rocksdb::WriteBatchIterator for WriteBatch {
-    /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
-        self.batch.put(key, value);
-    }
-    /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
-        self.batch.delete(key);
-    }
-}
-
-impl Clone for WriteBatch {
-    fn clone(&self) -> Self {
-        let mut cloned = WriteBatch::new();
-        self.batch.iterate(&mut cloned);
-        cloned
-    }
-}
-
-pub struct PrefixWriteBatch<'a> {
-    pub batch: rocksdb::WriteBatch,
-    prefix: Option<&'a [u8]>,
-}
-
-pub trait BatchWriter {
-    fn put(&mut self, key: &[u8], value: &[u8]);
-    fn delete(&mut self, key: &[u8]);
-}
-
-impl<'a> PrefixWriteBatch<'a> {
-    pub fn new() -> Self {
-        PrefixWriteBatch {
-            batch: rocksdb::WriteBatch::default(),
-            prefix: None,
-        }
-    }
-
-    pub fn set_prefix(&mut self, prefix: &'a &[u8]) {
-        self.prefix = Some(prefix);
-    }
-
-    pub fn put(&mut self, key: &[u8], value: &[u8]) {
-        self.batch.put([self.prefix.unwrap(), key].concat(), value);
-    }
-
-    pub fn delete(&mut self, key: &[u8]) {
-        self.batch.delete([self.prefix.unwrap(), key].concat());
-    }
-}
-
 impl<'a> BatchWriter for PrefixWriteBatch<'a> {
     fn put(&mut self, key: &[u8], value: &[u8]) {
         self.batch.put([self.prefix.unwrap(), key].concat(), value);
@@ -129,5 +108,26 @@ impl<'a> rocksdb::WriteBatchIterator for PrefixWriteBatch<'a> {
     fn delete(&mut self, key: Box<[u8]>) {
         self.batch
             .delete([self.prefix.unwrap(), key.as_ref()].concat());
+    }
+}
+
+impl<'a> PrefixWriteBatch<'a> {
+    pub fn new() -> Self {
+        PrefixWriteBatch {
+            batch: rocksdb::WriteBatch::default(),
+            prefix: None,
+        }
+    }
+
+    pub fn set_prefix(&mut self, prefix: &'a &[u8]) {
+        self.prefix = Some(prefix);
+    }
+
+    pub fn put(&mut self, key: &[u8], value: &[u8]) {
+        self.batch.put([self.prefix.unwrap(), key].concat(), value);
+    }
+
+    pub fn delete(&mut self, key: &[u8]) {
+        self.batch.delete([self.prefix.unwrap(), key].concat());
     }
 }

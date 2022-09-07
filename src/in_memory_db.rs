@@ -8,8 +8,19 @@ use crate::batch;
 use crate::options;
 use crate::utils;
 
+type SharedStateDB = JsBox<RefCell<Database>>;
+
 #[derive(Clone, Debug)]
 struct KVPair(Vec<u8>, Vec<u8>);
+
+#[derive(Clone, Debug)]
+pub struct CacheData {
+    data: HashMap<Vec<u8>, Vec<u8>>,
+}
+
+pub struct Database {
+    cache: CacheData,
+}
 
 fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
     if !reverse {
@@ -19,15 +30,18 @@ fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
     pairs.sort_by(|a, b| b.0.cmp(&a.0));
 }
 
-impl Finalize for Database {}
-pub struct Database {
-    cache: CacheData,
+impl rocksdb::WriteBatchIterator for CacheData {
+    /// Called with a key and value that were `put` into the batch.
+    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
+        self.data.insert(key.to_vec(), value.to_vec());
+    }
+    /// Called with a key that was `delete`d from the batch.
+    fn delete(&mut self, key: Box<[u8]>) {
+        self.data.remove(&key.to_vec());
+    }
 }
 
-#[derive(Clone, Debug)]
-pub struct CacheData {
-    data: HashMap<Vec<u8>, Vec<u8>>,
-}
+impl Finalize for Database {}
 
 impl Database {
     pub fn new() -> Result<Self, rocksdb::Error> {
@@ -75,8 +89,6 @@ impl Database {
         Self { cache: new_cache }
     }
 }
-
-type SharedStateDB = JsBox<RefCell<Database>>;
 
 impl Database {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
@@ -217,16 +229,5 @@ impl Database {
         let ref_db = RefCell::new(cloned);
 
         return Ok(ctx.boxed(ref_db));
-    }
-}
-
-impl rocksdb::WriteBatchIterator for CacheData {
-    /// Called with a key and value that were `put` into the batch.
-    fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
-        self.data.insert(key.to_vec(), value.to_vec());
-    }
-    /// Called with a key that was `delete`d from the batch.
-    fn delete(&mut self, key: Box<[u8]>) {
-        self.data.remove(&key.to_vec());
     }
 }

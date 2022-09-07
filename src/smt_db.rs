@@ -8,13 +8,8 @@ pub struct SmtDB<'a> {
     pub batch: rocksdb::WriteBatch,
 }
 
-impl<'a> SmtDB<'a> {
-    pub fn new(db: &'a rocksdb::DB) -> Self {
-        Self {
-            db,
-            batch: rocksdb::WriteBatch::default(),
-        }
-    }
+pub struct InMemorySmtDB {
+    cache: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl smt::DB for SmtDB<'_> {
@@ -34,14 +29,11 @@ impl smt::DB for SmtDB<'_> {
     }
 }
 
-pub struct InMemorySmtDB {
-    cache: HashMap<Vec<u8>, Vec<u8>>,
-}
-
-impl InMemorySmtDB {
-    pub fn new() -> Self {
+impl<'a> SmtDB<'a> {
+    pub fn new(db: &'a rocksdb::DB) -> Self {
         Self {
-            cache: HashMap::new(),
+            db,
+            batch: rocksdb::WriteBatch::default(),
         }
     }
 }
@@ -63,5 +55,13 @@ impl smt::DB for InMemorySmtDB {
     fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error> {
         self.cache.remove(&key);
         Ok(())
+    }
+}
+
+impl InMemorySmtDB {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
     }
 }
