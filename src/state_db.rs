@@ -33,6 +33,52 @@ pub struct StateDB {
     key_length: usize,
 }
 
+struct CommitResultInfo<'a> {
+    next_root: Result<Vec<u8>, smt::SMTError>,
+    expected: &'a [u8],
+    height: u32,
+    readonly: bool,
+    check_expected: bool,
+}
+
+impl<'a> CommitResultInfo<'a> {
+    fn new(
+        next_root: Result<Vec<u8>, smt::SMTError>,
+        expected: &'a [u8],
+        height: u32,
+        readonly: bool,
+        check_expected: bool,
+    ) -> Self {
+        Self {
+            next_root,
+            expected,
+            height,
+            readonly,
+            check_expected,
+        }
+    }
+}
+
+struct CommitData {
+    height: u32,
+    prev_root: Vec<u8>,
+    readonly: bool,
+    expected: Vec<u8>,
+    check_expected: bool,
+}
+
+impl CommitData {
+    fn new(h: u32, prev_root: Vec<u8>, r: bool, expected: Vec<u8>, check_expected: bool) -> Self {
+        Self {
+            height: h,
+            prev_root,
+            readonly: r,
+            expected,
+            check_expected,
+        }
+    }
+}
+
 impl StateDB {
     fn new<'a, C>(
         ctx: &mut C,
@@ -68,11 +114,11 @@ impl StateDB {
             }
         });
 
-        return Ok(Self {
+        Ok(Self {
             tx,
             readonly: opts.readonly,
             key_length: opts.key_length,
-        });
+        })
     }
 
     // Idiomatic rust would take an owned `self` to prevent use after close
@@ -102,7 +148,7 @@ impl StateDB {
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Ok(None) => vec![ctx.error("No data")?.upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -110,7 +156,7 @@ impl StateDB {
                 Ok(())
             });
         })
-        .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
+        .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
     fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
@@ -118,7 +164,7 @@ impl StateDB {
             let key_with_prefix = [consts::PREFIX_STATE, key.as_slice()].concat();
             let exist = conn.key_may_exist(&key_with_prefix);
             let result = if exist {
-                conn.get(&key_with_prefix).and_then(|res| Ok(res.is_some()))
+                conn.get(&key_with_prefix).map(|res| res.is_some())
             } else {
                 Ok(false)
             };
@@ -131,7 +177,7 @@ impl StateDB {
                         let converted = ctx.boolean(val);
                         vec![ctx.null().upcast(), converted.upcast()]
                     },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -139,7 +185,7 @@ impl StateDB {
                 Ok(())
             });
         })
-        .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
+        .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
     fn get_revert_result(
@@ -150,17 +196,17 @@ impl StateDB {
     ) -> Result<Vec<u8>, DataStoreError> {
         let diff_bytes = conn
             .get(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat())
-            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?
+            .map_err(|err| DataStoreError::Unknown(err.to_string()))?
             .ok_or(DataStoreError::DiffNotFound(height))?;
 
         let d = diff::Diff::decode(diff_bytes)
-            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
+            .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
         let mut data = smt::UpdateData::new_with_hash(d.revert_update());
-        let mut smtdb = smt_db::SMTDB::new(conn);
-        let mut tree = smt::SMT::new(state_root, key_length, consts::SUBTREE_SIZE);
+        let mut smtdb = smt_db::SmtDB::new(conn);
+        let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
         let prev_root = tree
             .commit(&mut smtdb, &mut data)
-            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
+            .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
 
         let mut write_batch = batch::PrefixWriteBatch::new();
         // Insert state batch with diff
@@ -174,7 +220,7 @@ impl StateDB {
         smtdb.batch.iterate(&mut write_batch);
         // insert diff
         conn.write(write_batch.batch)
-            .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))?;
+            .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
 
         Ok(prev_root)
     }
@@ -208,24 +254,18 @@ impl StateDB {
 
     fn handle_commit_result(
         conn: &rocksdb::DB,
-        smtdb: &smt_db::SMTDB,
+        smtdb: &smt_db::SmtDB,
         writer: MutexGuard<state_writer::StateWriter>,
-        height: u32,
-        readonly: bool,
-        next_root: Result<Vec<u8>, smt::SMTError>,
-        check_expected: bool,
-        expected: &Vec<u8>,
+        info: CommitResultInfo,
     ) -> Result<Vec<u8>, smt::SMTError> {
-        if next_root.is_err() {
-            return next_root;
-        }
-        let root = next_root.unwrap();
-        if check_expected && utils::compare(&expected, &root) != cmp::Ordering::Equal {
+        info.next_root.as_ref()?;
+        let root = info.next_root.unwrap();
+        if info.check_expected && utils::compare(info.expected, &root) != cmp::Ordering::Equal {
             return Err(smt::SMTError::InvalidRoot(String::from(
                 "Not matching with expected",
             )));
         }
-        if readonly {
+        if info.readonly {
             return Ok(root);
         }
         // Create global batch
@@ -234,7 +274,7 @@ impl StateDB {
         write_batch.set_prefix(&consts::PREFIX_STATE);
         let diff = writer.commit(&mut write_batch);
         write_batch.set_prefix(&consts::PREFIX_DIFF);
-        write_batch.put(height.to_be_bytes().as_slice(), diff.encode().as_ref());
+        write_batch.put(info.height.to_be_bytes().as_slice(), diff.encode().as_ref());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -250,30 +290,20 @@ impl StateDB {
     fn commit(
         &mut self,
         writer: Arc<Mutex<state_writer::StateWriter>>,
-        height: u32,
-        prev_root: Vec<u8>,
-        readonly: bool,
-        expected: Vec<u8>,
-        check_expected: bool,
+        d: CommitData,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         let key_length = self.key_length;
         self.send(move |conn, channel| {
             let w = writer.lock().unwrap();
             let mut data = smt::UpdateData::new_with_hash(w.get_updated());
-            let mut smtdb = smt_db::SMTDB::new(conn);
-            let mut tree = smt::SMT::new(prev_root, key_length, consts::SUBTREE_SIZE);
+            let mut smtdb = smt_db::SmtDB::new(conn);
+            let mut tree =
+                smt::SparseMerkleTree::new(d.prev_root, key_length, consts::SUBTREE_SIZE);
             let root = tree.commit(&mut smtdb, &mut data);
-            let result = StateDB::handle_commit_result(
-                conn,
-                &smtdb,
-                w,
-                height,
-                readonly,
-                root,
-                check_expected,
-                &expected,
-            );
+            let result_info =
+                CommitResultInfo::new(root, &d.expected, d.height, d.readonly, d.check_expected);
+            let result = StateDB::handle_commit_result(conn, &smtdb, w, result_info);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
@@ -301,8 +331,8 @@ impl StateDB {
     ) -> Result<(), DataStoreError> {
         let key_length = self.key_length;
         self.send(move |conn, channel| {
-            let mut tree = smt::SMT::new(root, key_length, consts::SUBTREE_SIZE);
-            let mut smtdb = smt_db::SMTDB::new(conn);
+            let mut tree = smt::SparseMerkleTree::new(root, key_length, consts::SUBTREE_SIZE);
+            let mut smtdb = smt_db::SmtDB::new(conn);
             let result = tree.prove(&mut smtdb, queries);
 
             channel.send(move |mut ctx| {
@@ -338,7 +368,7 @@ impl StateDB {
                 Ok(())
             });
         })
-        .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
+        .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
     fn clean_diff_until(&self, height: u32, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
@@ -372,14 +402,14 @@ impl StateDB {
                     Ok(_) => {
                         vec![ctx.null().upcast()]
                     },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())
             });
         })
-        .or_else(|err| Err(DataStoreError::Unknown(err.to_string())))
+        .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 }
 
@@ -390,8 +420,7 @@ impl StateDB {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
         let db_opts = options::DatabaseOptions::new(&mut ctx, options)?;
-        let db = StateDB::new(&mut ctx, path, db_opts)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
+        let db = StateDB::new(&mut ctx, path, db_opts).or_else(|err| ctx.throw_error(&err))?;
         let ref_db = RefCell::new(db);
 
         return Ok(ctx.boxed(ref_db));
@@ -468,45 +497,40 @@ impl StateDB {
                 } else {
                     iter = conn.iterator(rocksdb::IteratorMode::Start);
                 }
+            } else if options.reverse {
+                let lte = options
+                    .lte
+                    .clone()
+                    .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
+                iter = conn.iterator(rocksdb::IteratorMode::From(
+                    &[consts::PREFIX_STATE, &lte].concat(),
+                    rocksdb::Direction::Reverse,
+                ));
             } else {
-                if options.reverse {
-                    let lte = options
-                        .lte
-                        .clone()
-                        .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
-                    iter = conn.iterator(rocksdb::IteratorMode::From(
-                        &[consts::PREFIX_STATE, &lte].concat(),
-                        rocksdb::Direction::Reverse,
-                    ));
-                } else {
-                    let gte = options
-                        .gte
-                        .clone()
-                        .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
-                    iter = conn.iterator(rocksdb::IteratorMode::From(
-                        &[consts::PREFIX_STATE, &gte].concat(),
-                        rocksdb::Direction::Forward,
-                    ));
-                }
+                let gte = options
+                    .gte
+                    .clone()
+                    .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+                iter = conn.iterator(rocksdb::IteratorMode::From(
+                    &[consts::PREFIX_STATE, &gte].concat(),
+                    rocksdb::Direction::Forward,
+                ));
             }
-            let mut counter = 0;
-            for (key, val) in iter {
-                if options.limit != -1 && counter >= options.limit {
+            for (counter, (key, val)) in iter.enumerate() {
+                if options.limit != -1 && counter as i64 >= options.limit {
                     break;
                 }
                 if options.reverse {
                     if let Some(gte) = &options.gte {
-                        let prefixed_gte = &[consts::PREFIX_STATE, &gte].concat();
-                        if utils::compare(&key, &prefixed_gte) == cmp::Ordering::Less {
+                        let prefixed_gte = &[consts::PREFIX_STATE, gte].concat();
+                        if utils::compare(&key, prefixed_gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
-                } else {
-                    if let Some(lte) = &options.lte {
-                        let prefixed_lte = &[consts::PREFIX_STATE, &lte].concat();
-                        if utils::compare(&key, &prefixed_lte) == cmp::Ordering::Greater {
-                            break;
-                        }
+                } else if let Some(lte) = &options.lte {
+                    let prefixed_lte = &[consts::PREFIX_STATE, lte].concat();
+                    if utils::compare(&key, prefixed_lte) == cmp::Ordering::Greater {
+                        break;
                     }
                 }
                 let c = a_cb_on_data.clone();
@@ -523,7 +547,6 @@ impl StateDB {
                     cb.call(&mut ctx, this, args)?;
                     Ok(())
                 });
-                counter += 1;
             }
             channel.send(move |mut ctx| {
                 let cb_2 = cb_done.into_inner(&mut ctx);
@@ -568,10 +591,9 @@ impl StateDB {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
         let writer = writer.borrow().clone();
-        db.commit(
-            writer, height, prev_root, readonly, expected, check_root, cb,
-        )
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
+        let commit_data = CommitData::new(height, prev_root, readonly, expected, check_root);
+        db.commit(writer, commit_data, cb)
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
     }
@@ -604,7 +626,7 @@ impl StateDB {
     pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
-        let key_lengh = db.key_length;
+        let key_length = db.key_length;
         // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
@@ -659,7 +681,8 @@ impl StateDB {
         let channel = ctx.channel();
 
         thread::spawn(move || {
-            let result = smt::SMT::verify(&parsed_query_keys, &proof, &state_root, key_lengh);
+            let result =
+                smt::SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);

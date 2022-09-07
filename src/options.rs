@@ -28,7 +28,7 @@ impl DatabaseOptions {
             .get_opt::<JsBoolean, _, _>(ctx, "readonly")?
             .map(|val| {
                 val.downcast::<JsBoolean, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx)))
+                    .map(|val| val.value(ctx))
                     .unwrap_or(false)
             })
             .unwrap_or(false);
@@ -36,7 +36,7 @@ impl DatabaseOptions {
             .get_opt::<JsNumber, _, _>(ctx, "keyLength")?
             .map(|val| {
                 val.downcast::<JsNumber, _>(ctx)
-                    .and_then(|val| Ok(val.value(ctx) as usize))
+                    .map(|val| val.value(ctx) as usize)
                     .unwrap_or(consts::KEY_LENGTH)
             })
             .unwrap_or(consts::KEY_LENGTH);
@@ -88,18 +88,12 @@ impl IterationOption {
 
         let gte = input
             .get_opt::<JsTypedArray<u8>, _, _>(ctx, "gte")
-            .map(|val| match val {
-                Some(v) => Some(v.as_slice(ctx).to_vec()),
-                None => None,
-            })
+            .map(|val| val.map(|v| v.as_slice(ctx).to_vec()))
             .unwrap_or(None);
 
         let lte = input
             .get_opt::<JsTypedArray<u8>, _, _>(ctx, "lte")
-            .map(|val| match val {
-                Some(v) => Some(v.as_slice(ctx).to_vec()),
-                None => None,
-            })
+            .map(|val| val.map(|v| v.as_slice(ctx).to_vec()))
             .unwrap_or(None);
 
         Self {

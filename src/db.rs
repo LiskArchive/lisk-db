@@ -9,7 +9,7 @@ use crate::batch;
 use crate::options;
 use crate::utils;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     message: String,
 }
@@ -55,7 +55,7 @@ impl Database {
             }
         });
 
-        return Ok(Self { tx });
+        Ok(Self { tx })
     }
 
     // Idiomatic rust would take an owned `self` to prevent use after close
@@ -89,7 +89,7 @@ impl Database {
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Ok(None) => vec![ctx.error("No data")?.upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -107,7 +107,7 @@ impl Database {
         self.send(move |conn, channel| {
             let exist = conn.key_may_exist(&key);
             let result = if exist {
-                conn.get(&key).and_then(|res| Ok(res.is_some()))
+                conn.get(&key).map(|res| res.is_some())
             } else {
                 Ok(false)
             };
@@ -120,7 +120,7 @@ impl Database {
                         let converted = ctx.boolean(val);
                         vec![ctx.null().upcast(), converted.upcast()]
                     },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -136,8 +136,7 @@ impl Database {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
         let db_opts = options::DatabaseOptions::new(&mut ctx, options)?;
-        let db = Database::new(&mut ctx, path, db_opts)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
+        let db = Database::new(&mut ctx, path, db_opts).or_else(|err| ctx.throw_error(&err))?;
 
         return Ok(ctx.boxed(db));
     }
@@ -162,7 +161,7 @@ impl Database {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -230,7 +229,7 @@ impl Database {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -259,7 +258,7 @@ impl Database {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -293,7 +292,7 @@ impl Database {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
                 };
 
                 callback.call(&mut ctx, this, args)?;
@@ -327,43 +326,38 @@ impl Database {
                 } else {
                     iter = conn.iterator(rocksdb::IteratorMode::Start);
                 }
+            } else if options.reverse {
+                let lte = options
+                    .lte
+                    .clone()
+                    .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
+                iter = conn.iterator(rocksdb::IteratorMode::From(
+                    &lte,
+                    rocksdb::Direction::Reverse,
+                ));
             } else {
-                if options.reverse {
-                    let lte = options
-                        .lte
-                        .clone()
-                        .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
-                    iter = conn.iterator(rocksdb::IteratorMode::From(
-                        &lte,
-                        rocksdb::Direction::Reverse,
-                    ));
-                } else {
-                    let gte = options
-                        .gte
-                        .clone()
-                        .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
-                    iter = conn.iterator(rocksdb::IteratorMode::From(
-                        &gte,
-                        rocksdb::Direction::Forward,
-                    ));
-                }
+                let gte = options
+                    .gte
+                    .clone()
+                    .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+                iter = conn.iterator(rocksdb::IteratorMode::From(
+                    &gte,
+                    rocksdb::Direction::Forward,
+                ));
             }
-            let mut counter = 0;
-            for (key, val) in iter {
-                if options.limit != -1 && counter >= options.limit {
+            for (counter, (key, val)) in iter.enumerate() {
+                if options.limit != -1 && counter as i64 >= options.limit {
                     break;
                 }
                 if options.reverse {
                     if let Some(gte) = &options.gte {
-                        if utils::compare(&key, &gte) == cmp::Ordering::Less {
+                        if utils::compare(&key, gte) == cmp::Ordering::Less {
                             break;
                         }
                     }
-                } else {
-                    if let Some(lte) = &options.lte {
-                        if utils::compare(&key, &lte) == cmp::Ordering::Greater {
-                            break;
-                        }
+                } else if let Some(lte) = &options.lte {
+                    if utils::compare(&key, lte) == cmp::Ordering::Greater {
+                        break;
                     }
                 }
                 let c = a_cb_on_data.clone();
@@ -379,7 +373,6 @@ impl Database {
                     cb.call(&mut ctx, this, args)?;
                     Ok(())
                 });
-                counter += 1;
             }
             channel.send(move |mut ctx| {
                 let cb_2 = cb_done.into_inner(&mut ctx);

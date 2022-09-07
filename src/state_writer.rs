@@ -57,7 +57,7 @@ trait Batch {
 
 pub struct StateWriter {
     counter: u32,
-    pub backup: HashMap<u32, Box<HashMap<Vec<u8>, StateCache>>>,
+    pub backup: HashMap<u32, HashMap<Vec<u8>, StateCache>>,
     pub cache: HashMap<Vec<u8>, StateCache>,
 }
 
@@ -143,8 +143,7 @@ impl StateWriter {
     }
 
     fn snapshot(&mut self) -> u32 {
-        let cloned = Box::new(self.cache.clone());
-        self.backup.insert(self.counter, cloned);
+        self.backup.insert(self.counter, self.cache.clone());
         let index = self.counter;
         self.counter += 1;
         index
@@ -379,17 +378,17 @@ mod tests {
 
         let (value, deleted, exists) = writer.get(&[0, 0, 2]);
         assert_eq!(value, &[1, 2, 3]);
-        assert_eq!(deleted, false);
-        assert_eq!(exists, true);
+        assert!(!deleted);
+        assert!(exists);
 
         let (value, deleted, exists) = writer.get(&[0, 0, 3]);
         assert_eq!(value, &[1, 2, 4]);
-        assert_eq!(deleted, false);
-        assert_eq!(exists, true);
+        assert!(!deleted);
+        assert!(exists);
 
         let (value, deleted, exists) = writer.get(&[0, 0, 1]);
         assert_eq!(value, &[]);
-        assert_eq!(deleted, false);
-        assert_eq!(exists, false)
+        assert!(!deleted);
+        assert!(!exists)
     }
 }
