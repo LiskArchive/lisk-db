@@ -478,6 +478,55 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    fn iteration_mode<'a>(
+        options: &options::IterationOption,
+        opt: &'a mut Vec<u8>,
+    ) -> rocksdb::IteratorMode<'a> {
+        let no_range = options.gte.is_none() && options.lte.is_none();
+        if no_range {
+            if options.reverse {
+                rocksdb::IteratorMode::End
+            } else {
+                rocksdb::IteratorMode::Start
+            }
+        } else if options.reverse {
+            let lte = options
+                .lte
+                .clone()
+                .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
+            *opt = [consts::PREFIX_STATE, lte.as_slice()].concat();
+            rocksdb::IteratorMode::From(opt, rocksdb::Direction::Reverse)
+        } else {
+            let gte = options
+                .gte
+                .clone()
+                .unwrap_or_else(|| vec![255; options.lte.clone().unwrap().len()]);
+            *opt = [consts::PREFIX_STATE, gte.as_slice()].concat();
+            rocksdb::IteratorMode::From(opt, rocksdb::Direction::Forward)
+        }
+    }
+
+    fn is_breakable(options: &options::IterationOption, key: &[u8], counter: i64) -> bool {
+        if options.limit != -1 && counter >= options.limit {
+            return true;
+        }
+        if options.reverse {
+            if let Some(gte) = &options.gte {
+                let prefixed_gte = &[consts::PREFIX_STATE, gte].concat();
+                if utils::compare(key, prefixed_gte) == cmp::Ordering::Less {
+                    return true;
+                }
+            }
+        } else if let Some(lte) = &options.lte {
+            let prefixed_lte = &[consts::PREFIX_STATE, lte].concat();
+            if utils::compare(key, prefixed_lte) == cmp::Ordering::Greater {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
         let options = options::IterationOption::new(&mut ctx, option_inputs);
@@ -490,49 +539,10 @@ impl StateDB {
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
         db.send(move |conn, channel| {
-            let no_range = options.gte.is_none() && options.lte.is_none();
-            let iter;
-            if no_range {
-                if options.reverse {
-                    iter = conn.iterator(rocksdb::IteratorMode::End);
-                } else {
-                    iter = conn.iterator(rocksdb::IteratorMode::Start);
-                }
-            } else if options.reverse {
-                let lte = options
-                    .lte
-                    .clone()
-                    .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
-                iter = conn.iterator(rocksdb::IteratorMode::From(
-                    &[consts::PREFIX_STATE, &lte].concat(),
-                    rocksdb::Direction::Reverse,
-                ));
-            } else {
-                let gte = options
-                    .gte
-                    .clone()
-                    .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
-                iter = conn.iterator(rocksdb::IteratorMode::From(
-                    &[consts::PREFIX_STATE, &gte].concat(),
-                    rocksdb::Direction::Forward,
-                ));
-            }
+            let iter = conn.iterator(Self::iteration_mode(&options, &mut vec![]));
             for (counter, (key, val)) in iter.enumerate() {
-                if options.limit != -1 && counter as i64 >= options.limit {
+                if Self::is_breakable(&options, &key, counter as i64) {
                     break;
-                }
-                if options.reverse {
-                    if let Some(gte) = &options.gte {
-                        let prefixed_gte = &[consts::PREFIX_STATE, gte].concat();
-                        if utils::compare(&key, prefixed_gte) == cmp::Ordering::Less {
-                            break;
-                        }
-                    }
-                } else if let Some(lte) = &options.lte {
-                    let prefixed_lte = &[consts::PREFIX_STATE, lte].concat();
-                    if utils::compare(&key, prefixed_lte) == cmp::Ordering::Greater {
-                        break;
-                    }
                 }
                 let c = a_cb_on_data.clone();
                 channel.send(move |mut ctx| {
