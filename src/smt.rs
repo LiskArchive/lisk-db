@@ -1,15 +1,8 @@
-use neon::prelude::*;
-use neon::types::buffer::TypedArray;
 use sha2::{Digest, Sha256};
-use std::cell::RefCell;
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
-use std::thread;
 use thiserror::Error;
 
-use crate::consts;
-use crate::smt_db;
 use crate::utils;
 
 const PREFIX_INT_LEAF_HASH: u8 = 0;
@@ -22,7 +15,6 @@ static PREFIX_BRANCH_HASH: &[u8] = &[1];
 static PREFIX_EMPTY: &[u8] = &[2];
 
 type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
-type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 
 trait SortDescending {
     fn sort_descending(&mut self);
@@ -132,11 +124,6 @@ pub struct SparseMerkleTree {
     subtree_height: usize,
     max_number_of_nodes: usize,
     hasher: Hasher,
-}
-
-pub struct InMemorySMT {
-    db: smt_db::InMemorySmtDB,
-    key_length: usize,
 }
 
 fn key_hash(key: &[u8]) -> Vec<u8> {
@@ -1229,220 +1216,6 @@ impl SparseMerkleTree {
         }
 
         vec![]
-    }
-}
-
-impl Finalize for InMemorySMT {}
-
-impl InMemorySMT {
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
-        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
-        let tree = InMemorySMT {
-            db: smt_db::InMemorySmtDB::new(),
-            key_length,
-        };
-
-        let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
-        return Ok(ctx.boxed(ref_tree));
-    }
-
-    pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let in_memory_smt = ctx
-            .this()
-            .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
-        let in_memory_smt = in_memory_smt.borrow().clone();
-
-        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-
-        let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut data: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
-        for key in input.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
-                .as_slice(&ctx)
-                .to_vec();
-            let value = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
-                .as_slice(&ctx)
-                .to_vec();
-            data.insert(key, value);
-        }
-
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-
-        let channel = ctx.channel();
-
-        thread::spawn(move || {
-            let mut update_data = UpdateData::new_from(data);
-            let mut inner_smt = in_memory_smt.lock().unwrap();
-            let key_length = inner_smt.key_length;
-
-            let mut tree = SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
-
-            let result = tree.commit(&mut inner_smt.db, &mut update_data);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val.to_vec());
-                        vec![ctx.null().upcast(), buffer.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            })
-        });
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_prove(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let in_memory_smt = ctx
-            .this()
-            .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
-        let in_memory_smt = in_memory_smt.borrow().clone();
-
-        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-
-        let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut data: Vec<Vec<u8>> = vec![];
-        for key in input.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            data.push(key);
-        }
-
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-
-        let channel = ctx.channel();
-
-        thread::spawn(move || {
-            let mut inner_smt = in_memory_smt.lock().unwrap();
-            let mut tree =
-                SparseMerkleTree::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
-
-            let result = tree.prove(&mut inner_smt.db, data);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let obj: Handle<JsObject> = ctx.empty_object();
-                        let sibling_hashes = ctx.empty_array();
-                        for (i, h) in val.sibling_hashes.iter().enumerate() {
-                            let val_res = JsBuffer::external(&mut ctx, h.to_vec());
-                            sibling_hashes.set(&mut ctx, i as u32, val_res)?;
-                        }
-                        obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
-                        let queries = ctx.empty_array();
-                        obj.set(&mut ctx, "queries", queries)?;
-                        for (i, v) in val.queries.iter().enumerate() {
-                            let obj = ctx.empty_object();
-                            let key = JsBuffer::external(&mut ctx, v.key.to_vec());
-                            obj.set(&mut ctx, "key", key)?;
-                            let value = JsBuffer::external(&mut ctx, v.value.to_vec());
-                            obj.set(&mut ctx, "value", value)?;
-                            let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
-                            obj.set(&mut ctx, "bitmap", bitmap)?;
-
-                            queries.set(&mut ctx, i as u32, obj)?;
-                        }
-                        vec![ctx.null().upcast(), obj.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            })
-        });
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof, key_length: usize
-        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-
-        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
-        for key in query_keys.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            parsed_query_keys.push(key);
-        }
-        let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof
-            .get::<JsArray, _, _>(&mut ctx, "siblingHashes")?
-            .to_vec(&mut ctx)?;
-        for raw_sibling_hash in raw_sibling_hashes.iter() {
-            let sibling_hash = raw_sibling_hash
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            sibling_hashes.push(sibling_hash);
-        }
-        let mut queries: Vec<QueryProof> = vec![];
-        let raw_queries = raw_proof
-            .get::<JsArray, _, _>(&mut ctx, "queries")?
-            .to_vec(&mut ctx)?;
-        for key in raw_queries.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
-                .as_slice(&ctx)
-                .to_vec();
-            let value = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
-                .as_slice(&ctx)
-                .to_vec();
-            let bitmap = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
-                .as_slice(&ctx)
-                .to_vec();
-            queries.push(QueryProof { key, value, bitmap });
-        }
-        let proof = Proof {
-            queries,
-            sibling_hashes,
-        };
-
-        let key_length = ctx.argument::<JsNumber>(3)?.value(&mut ctx) as usize;
-        let cb = ctx.argument::<JsFunction>(4)?.root(&mut ctx);
-
-        let channel = ctx.channel();
-
-        thread::spawn(move || {
-            let result =
-                SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        vec![ctx.null().upcast(), JsBoolean::new(&mut ctx, val).upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            })
-        });
-
-        Ok(ctx.undefined())
     }
 }
 
