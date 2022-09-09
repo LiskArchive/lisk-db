@@ -404,7 +404,7 @@ fn calculate_sibling_hashes(
     }
     while !query_with_proofs.is_empty() {
         let mut query = query_with_proofs.pop_front().unwrap();
-        if query.height() == 0 {
+        if query.is_empty_height() {
             continue;
         }
         if query.binary_bitmap[0] {
@@ -479,8 +479,8 @@ impl UpdateData {
         (keys, values)
     }
 
-    pub fn len(&self) -> usize {
-        self.data.len()
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 
@@ -509,6 +509,10 @@ impl QueryProofWithProof {
     }
     fn height(&self) -> usize {
         self.binary_bitmap.len()
+    }
+
+    fn is_empty_height(&self) -> bool {
+        self.binary_bitmap.is_empty()
     }
 
     fn slice_bitmap(&mut self) {
@@ -787,7 +791,7 @@ impl SparseMerkleTree {
         db: &mut impl DB,
         data: &mut UpdateData,
     ) -> Result<Vec<u8>, SMTError> {
-        if data.len() == 0 {
+        if data.is_empty() {
             return Ok(self.root.clone());
         }
         let (update_keys, update_values) = data.entries();
@@ -1359,7 +1363,7 @@ impl SparseMerkleTree {
 
         while !sorted_queries.is_empty() {
             let query = &sorted_queries.pop_front().unwrap();
-            if query.height() == 0 {
+            if query.is_empty_height() {
                 return query.hash.clone();
             }
 
