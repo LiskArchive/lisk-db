@@ -24,6 +24,10 @@ static PREFIX_EMPTY: &[u8] = &[2];
 type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
 type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 
+trait SortDescending {
+    fn sort_descending(&mut self);
+}
+
 pub trait DB {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error>;
     fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error>;
@@ -389,6 +393,16 @@ fn calculate_sibling_hashes(
         }
         query.slice_bitmap();
         insert_and_filter_queries(query, query_with_proofs);
+    }
+}
+
+impl SortDescending for [QueryProofWithProof] {
+    fn sort_descending(&mut self) {
+        self.sort_by(|a, b| match a.height().cmp(&b.height()) {
+            cmp::Ordering::Greater => cmp::Ordering::Less,
+            cmp::Ordering::Less => cmp::Ordering::Greater,
+            _ => utils::compare(&a.key, &b.key),
+        });
     }
 }
 
@@ -769,11 +783,7 @@ impl SparseMerkleTree {
             });
         }
 
-        query_with_proofs.sort_by(|a, b| match a.height().cmp(&b.height()) {
-            cmp::Ordering::Greater => cmp::Ordering::Less,
-            cmp::Ordering::Less => cmp::Ordering::Greater,
-            _ => utils::compare(&a.key, &b.key),
-        });
+        query_with_proofs.sort_descending();
 
         let mut sibling_hashes = vec![];
         let mut query_with_proofs = VecDeque::from(query_with_proofs);
@@ -1183,11 +1193,7 @@ impl SparseMerkleTree {
     }
 
     fn calculate_root(sibling_hashes: &[Vec<u8>], queries: &mut [QueryProofWithProof]) -> Vec<u8> {
-        queries.sort_by(|a, b| match a.height().cmp(&b.height()) {
-            cmp::Ordering::Greater => cmp::Ordering::Less,
-            cmp::Ordering::Less => cmp::Ordering::Greater,
-            _ => utils::compare(&a.key, &b.key),
-        });
+        queries.sort_descending();
 
         let mut sorted_queries = VecDeque::from(queries.to_vec());
         let mut next_sibling_hash = 0;
