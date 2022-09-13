@@ -3,7 +3,7 @@ use crate::options;
 use sha2::{Digest, Sha256};
 use std::cmp;
 
-pub fn iteration_mode<'a>(
+pub fn get_iteration_mode<'a>(
     options: &options::IterationOption,
     opt: &'a mut Vec<u8>,
     has_prefix: bool,
@@ -40,7 +40,7 @@ pub fn iteration_mode<'a>(
     }
 }
 
-pub fn is_breakable(
+pub fn is_key_out_of_range(
     options: &options::IterationOption,
     key: &[u8],
     counter: i64,

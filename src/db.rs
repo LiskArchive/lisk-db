@@ -317,9 +317,9 @@ impl Database {
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
         db.send(move |conn, channel| {
-            let iter = conn.iterator(utils::iteration_mode(&options, &mut vec![], false));
+            let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], false));
             for (counter, (key, val)) in iter.enumerate() {
-                if utils::is_breakable(&options, &key, counter as i64, false) {
+                if utils::is_key_out_of_range(&options, &key, counter as i64, false) {
                     break;
                 }
                 let c = a_cb_on_data.clone();

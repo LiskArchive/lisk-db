@@ -404,7 +404,7 @@ fn calculate_sibling_hashes(
     }
     while !query_with_proofs.is_empty() {
         let mut query = query_with_proofs.pop_front().unwrap();
-        if query.is_empty_height() {
+        if query.is_zero_height() {
             continue;
         }
         if query.binary_bitmap[0] {
@@ -511,7 +511,7 @@ impl QueryProofWithProof {
         self.binary_bitmap.len()
     }
 
-    fn is_empty_height(&self) -> bool {
+    fn is_zero_height(&self) -> bool {
         self.binary_bitmap.is_empty()
     }
 
@@ -816,7 +816,7 @@ impl SparseMerkleTree {
         filter_map
     }
 
-    fn are_keys_verified(proof: &Proof, query_keys: &[Vec<u8>], key_length: usize) -> bool {
+    fn verify_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: usize) -> bool {
         for (i, key) in query_keys.iter().enumerate() {
             if key.len() != key_length {
                 return false;
@@ -979,7 +979,7 @@ impl SparseMerkleTree {
         Ok(new_subtree)
     }
 
-    fn try_to_update_one(&self, info: &UpdateNodeInfo) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+    fn update_one_node(&self, info: &UpdateNodeInfo) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
         let idx = info
             .length_bins
             .iter()
@@ -1078,7 +1078,7 @@ impl SparseMerkleTree {
             return Ok((vec![info.current_node], vec![info.h]));
         }
         if total_data == 1 {
-            let (n, v) = self.try_to_update_one(&info)?;
+            let (n, v) = self.update_one_node(&info)?;
             if !n.is_empty() && !v.is_empty() {
                 return Ok((n, v));
             }
@@ -1154,7 +1154,7 @@ impl SparseMerkleTree {
         Ok((current_node.unwrap(), h as usize))
     }
 
-    fn generate_result(
+    fn calc_query_proof_from_result(
         &mut self,
         db: &mut impl DB,
         d: &GenerateResultData,
@@ -1206,7 +1206,7 @@ impl SparseMerkleTree {
         ))
     }
 
-    fn calc_extra_info(
+    fn clac_query_hashes_extra_info(
         &self,
         current_subtree: &mut SubTree,
         current_node: &Node,
@@ -1247,7 +1247,7 @@ impl SparseMerkleTree {
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
         let mut binary_bitmap: Vec<bool> = vec![];
-        let extra = self.calc_extra_info(current_subtree, &current_node)?;
+        let extra = self.clac_query_hashes_extra_info(current_subtree, &current_node)?;
         let info = QueryHashesInfo::new(
             &current_subtree.nodes,
             &current_subtree.structure,
@@ -1270,7 +1270,7 @@ impl SparseMerkleTree {
             height,
             query_height,
         };
-        self.generate_result(db, &data)
+        self.calc_query_proof_from_result(db, &data)
     }
 
     fn calculate_root(sibling_hashes: &[Vec<u8>], queries: &mut [QueryProofWithProof]) -> Vec<u8> {
@@ -1281,7 +1281,7 @@ impl SparseMerkleTree {
 
         while !sorted_queries.is_empty() {
             let query = &sorted_queries.pop_front().unwrap();
-            if query.is_empty_height() {
+            if query.is_zero_height() {
                 return query.hash.clone();
             }
 
@@ -1379,7 +1379,7 @@ impl SparseMerkleTree {
             return Ok(false);
         }
 
-        if !Self::are_keys_verified(proof, query_keys, key_length) {
+        if !Self::verify_keys(proof, query_keys, key_length) {
             return Ok(false);
         }
         let filter_map = Self::filter_map(proof);
