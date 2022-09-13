@@ -417,6 +417,61 @@ impl StateDB {
 }
 
 impl StateDB {
+    fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
+        let raw_proof = ctx.argument::<JsObject>(2)?;
+        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
+        let raw_sibling_hashes = raw_proof
+            .get::<JsArray, _, _>(ctx, "siblingHashes")?
+            .to_vec(ctx)?;
+        for key in raw_sibling_hashes.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                .as_slice(ctx)
+                .to_vec();
+            sibling_hashes.push(key);
+        }
+
+        let mut queries: Vec<smt::QueryProof> = vec![];
+        let raw_queries = raw_proof
+            .get::<JsArray, _, _>(ctx, "queries")?
+            .to_vec(ctx)?;
+        for key in raw_queries.iter() {
+            let obj = key.downcast_or_throw::<JsObject, _>(ctx)?;
+            let key = obj
+                .get::<JsTypedArray<u8>, _, _>(ctx, "key")?
+                .as_slice(ctx)
+                .to_vec();
+            let value = obj
+                .get::<JsTypedArray<u8>, _, _>(ctx, "value")?
+                .as_slice(ctx)
+                .to_vec();
+            let bitmap = obj
+                .get::<JsTypedArray<u8>, _, _>(ctx, "bitmap")?
+                .as_slice(ctx)
+                .to_vec();
+            queries.push(smt::QueryProof { key, value, bitmap });
+        }
+
+        Ok(smt::Proof {
+            queries,
+            sibling_hashes,
+        })
+    }
+
+    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<Vec<Vec<u8>>> {
+        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
+        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
+        for key in query_keys.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                .as_slice(ctx)
+                .to_vec();
+            parsed_query_keys.push(key);
+        }
+
+        Ok(parsed_query_keys)
+    }
+
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
@@ -583,61 +638,6 @@ impl StateDB {
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
-    }
-
-    fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
-        let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof
-            .get::<JsArray, _, _>(ctx, "siblingHashes")?
-            .to_vec(ctx)?;
-        for key in raw_sibling_hashes.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
-                .as_slice(ctx)
-                .to_vec();
-            sibling_hashes.push(key);
-        }
-
-        let mut queries: Vec<smt::QueryProof> = vec![];
-        let raw_queries = raw_proof
-            .get::<JsArray, _, _>(ctx, "queries")?
-            .to_vec(ctx)?;
-        for key in raw_queries.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(ctx, "key")?
-                .as_slice(ctx)
-                .to_vec();
-            let value = obj
-                .get::<JsTypedArray<u8>, _, _>(ctx, "value")?
-                .as_slice(ctx)
-                .to_vec();
-            let bitmap = obj
-                .get::<JsTypedArray<u8>, _, _>(ctx, "bitmap")?
-                .as_slice(ctx)
-                .to_vec();
-            queries.push(smt::QueryProof { key, value, bitmap });
-        }
-
-        Ok(smt::Proof {
-            queries,
-            sibling_hashes,
-        })
-    }
-
-    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<Vec<Vec<u8>>> {
-        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
-        for key in query_keys.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
-                .as_slice(ctx)
-                .to_vec();
-            parsed_query_keys.push(key);
-        }
-
-        Ok(parsed_query_keys)
     }
 
     pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {

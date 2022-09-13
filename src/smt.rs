@@ -770,37 +770,6 @@ impl<'a> UpdateNodeInfo<'a> {
 }
 
 impl SparseMerkleTree {
-    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
-        let max_number_of_nodes = 1 << subtree_height;
-        let r = if root.is_empty() {
-            utils::empty_hash()
-        } else {
-            root
-        };
-        Self {
-            root: r,
-            key_length,
-            hasher: tree_hasher,
-            subtree_height,
-            max_number_of_nodes,
-        }
-    }
-
-    pub fn commit(
-        &mut self,
-        db: &mut impl DB,
-        data: &mut UpdateData,
-    ) -> Result<Vec<u8>, SMTError> {
-        if data.is_empty() {
-            return Ok(self.root.clone());
-        }
-        let (update_keys, update_values) = data.entries();
-        let root = self.get_subtree(db, &self.root)?;
-        let new_root = self.update_subtree(db, update_keys, update_values, &root, 0)?;
-        self.root = new_root.root;
-        Ok(self.root.clone())
-    }
-
     fn proof_queries(&self, query_with_proofs: &[QueryProofWithProof]) -> Vec<QueryProof> {
         let mut proof_queries = vec![];
         for query in query_with_proofs {
@@ -830,32 +799,6 @@ impl SparseMerkleTree {
         }
 
         Ok((query_with_proofs, ancestor_hashes))
-    }
-
-    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
-        if queries.is_empty() {
-            return Ok(Proof {
-                queries: vec![],
-                sibling_hashes: vec![],
-            });
-        }
-        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, &queries)?;
-        let proof_queries = self.proof_queries(&query_with_proofs);
-
-        query_with_proofs.sort_descending();
-
-        let mut sibling_hashes = vec![];
-        let mut query_with_proofs = VecDeque::from(query_with_proofs);
-        calculate_sibling_hashes(
-            &mut query_with_proofs,
-            &ancestor_hashes,
-            &mut sibling_hashes,
-        );
-
-        Ok(Proof {
-            queries: proof_queries,
-            sibling_hashes,
-        })
     }
 
     fn filter_map(proof: &Proof) -> HashMap<Vec<bool>, QueryProofWithProof> {
@@ -892,31 +835,6 @@ impl SparseMerkleTree {
         }
 
         true
-    }
-
-    pub fn verify(
-        query_keys: &Vec<Vec<u8>>,
-        proof: &Proof,
-        root: &[u8],
-        key_length: usize,
-    ) -> Result<bool, SMTError> {
-        if query_keys.len() != proof.queries.len() {
-            return Ok(false);
-        }
-
-        if !Self::are_keys_verified(proof, query_keys, key_length) {
-            return Ok(false);
-        }
-        let filter_map = Self::filter_map(proof);
-        let mut filtered_proof = filter_map
-            .values()
-            .cloned()
-            .collect::<Vec<QueryProofWithProof>>();
-
-        Ok(utils::is_bytes_equal(
-            root,
-            &SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
-        ))
     }
 
     fn get_subtree(&self, db: &impl DB, node_hash: &Vec<u8>) -> Result<SubTree, SMTError> {
@@ -1392,6 +1310,88 @@ impl SparseMerkleTree {
         }
 
         vec![]
+    }
+
+    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
+        let max_number_of_nodes = 1 << subtree_height;
+        let r = if root.is_empty() {
+            utils::empty_hash()
+        } else {
+            root
+        };
+        Self {
+            root: r,
+            key_length,
+            hasher: tree_hasher,
+            subtree_height,
+            max_number_of_nodes,
+        }
+    }
+
+    pub fn commit(
+        &mut self,
+        db: &mut impl DB,
+        data: &mut UpdateData,
+    ) -> Result<Vec<u8>, SMTError> {
+        if data.is_empty() {
+            return Ok(self.root.clone());
+        }
+        let (update_keys, update_values) = data.entries();
+        let root = self.get_subtree(db, &self.root)?;
+        let new_root = self.update_subtree(db, update_keys, update_values, &root, 0)?;
+        self.root = new_root.root;
+        Ok(self.root.clone())
+    }
+
+    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+        if queries.is_empty() {
+            return Ok(Proof {
+                queries: vec![],
+                sibling_hashes: vec![],
+            });
+        }
+        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, &queries)?;
+        let proof_queries = self.proof_queries(&query_with_proofs);
+
+        query_with_proofs.sort_descending();
+
+        let mut sibling_hashes = vec![];
+        let mut query_with_proofs = VecDeque::from(query_with_proofs);
+        calculate_sibling_hashes(
+            &mut query_with_proofs,
+            &ancestor_hashes,
+            &mut sibling_hashes,
+        );
+
+        Ok(Proof {
+            queries: proof_queries,
+            sibling_hashes,
+        })
+    }
+
+    pub fn verify(
+        query_keys: &Vec<Vec<u8>>,
+        proof: &Proof,
+        root: &[u8],
+        key_length: usize,
+    ) -> Result<bool, SMTError> {
+        if query_keys.len() != proof.queries.len() {
+            return Ok(false);
+        }
+
+        if !Self::are_keys_verified(proof, query_keys, key_length) {
+            return Ok(false);
+        }
+        let filter_map = Self::filter_map(proof);
+        let mut filtered_proof = filter_map
+            .values()
+            .cloned()
+            .collect::<Vec<QueryProofWithProof>>();
+
+        Ok(utils::is_bytes_equal(
+            root,
+            &SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
+        ))
     }
 }
 
