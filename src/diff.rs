@@ -22,7 +22,7 @@ impl KeyValue {
     }
 
     pub fn decode(val: Vec<u8>) -> Result<Self, codec::CodecError> {
-        let mut reader = codec::Reader::new(val);
+        let mut reader = codec::Reader::new(&val);
         let key = reader.read_bytes(1)?;
         let value = reader.read_bytes(2)?;
         Ok(Self { key, value })
@@ -46,7 +46,7 @@ impl Diff {
     }
 
     pub fn decode(val: Vec<u8>) -> Result<Self, codec::CodecError> {
-        let mut reader = codec::Reader::new(val);
+        let mut reader = codec::Reader::new(&val);
         let created = reader.read_bytes_slice(1)?;
         let updated_bytes = reader.read_bytes_slice(2)?;
         let mut updated = vec![];
