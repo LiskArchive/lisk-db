@@ -1,11 +1,11 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::cmp;
 use std::collections::HashMap;
 
 use crate::batch;
-use crate::options;
+use crate::options::IterationOption;
 use crate::utils;
 
 type SharedStateDB = JsBox<RefCell<Database>>;
@@ -28,6 +28,34 @@ fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
         return;
     }
     pairs.sort_by(|a, b| b.0.cmp(&a.0));
+}
+
+fn get_key_value_pairs(db: RefMut<Database>, options: IterationOption) -> Vec<KVPair> {
+    let no_range = options.gte.is_none() && options.lte.is_none();
+    let cached = if no_range {
+        db.cache_all()
+    } else {
+        let gte = options
+            .gte
+            .clone()
+            .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+        let lte = options.lte.clone().unwrap_or_else(|| vec![255; gte.len()]);
+        db.cache_range(&gte, &lte)
+    };
+
+    let mut results = vec![];
+    let mut exist_map = HashMap::new();
+    for kv in cached {
+        exist_map.insert(kv.0.clone(), true);
+        results.push(kv);
+    }
+
+    sort_kv_pair(&mut results, options.reverse);
+    if options.limit != -1 && results.len() > options.limit as usize {
+        results = results[..options.limit as usize].to_vec();
+    }
+
+    results
 }
 
 impl rocksdb::WriteBatchIterator for CacheData {
@@ -152,41 +180,17 @@ impl Database {
 
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
-        let options = options::IterationOption::new(&mut ctx, option_inputs);
+        let options = IterationOption::new(&mut ctx, option_inputs);
         let callback = ctx.argument::<JsFunction>(1)?;
-        // Get the `this` value as a `JsBox<Database>`
 
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
-
         let db = db.borrow_mut();
 
-        let no_range = options.gte.is_none() && options.lte.is_none();
-        let cached = if no_range {
-            db.cache_all()
-        } else {
-            let gte = options
-                .gte
-                .clone()
-                .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
-            let lte = options.lte.clone().unwrap_or_else(|| vec![255; gte.len()]);
-            db.cache_range(&gte, &lte)
-        };
-
-        let mut results = vec![];
-        let mut exist_map = HashMap::new();
-        for kv in cached {
-            exist_map.insert(kv.0.clone(), true);
-            results.push(kv);
-        }
-
-        sort_kv_pair(&mut results, options.reverse);
-        if options.limit != -1 && results.len() > options.limit as usize {
-            results = results[..options.limit as usize].to_vec();
-        }
+        let kv_pairs = get_key_value_pairs(db, options);
 
         let this = ctx.undefined();
-        let arr = JsArray::new(&mut ctx, results.len() as u32);
-        for (i, kv) in results.iter().enumerate() {
+        let arr = JsArray::new(&mut ctx, kv_pairs.len() as u32);
+        for (i, kv) in kv_pairs.iter().enumerate() {
             let obj = ctx.empty_object();
             let key = JsBuffer::external(&mut ctx, kv.0.clone());
             let value = JsBuffer::external(&mut ctx, kv.1.clone());

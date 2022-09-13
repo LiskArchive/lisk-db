@@ -1,4 +1,3 @@
-use std::cmp;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
@@ -318,47 +317,10 @@ impl Database {
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
         db.send(move |conn, channel| {
-            let no_range = options.gte.is_none() && options.lte.is_none();
-            let iter;
-            if no_range {
-                if options.reverse {
-                    iter = conn.iterator(rocksdb::IteratorMode::End);
-                } else {
-                    iter = conn.iterator(rocksdb::IteratorMode::Start);
-                }
-            } else if options.reverse {
-                let lte = options
-                    .lte
-                    .clone()
-                    .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
-                iter = conn.iterator(rocksdb::IteratorMode::From(
-                    &lte,
-                    rocksdb::Direction::Reverse,
-                ));
-            } else {
-                let gte = options
-                    .gte
-                    .clone()
-                    .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
-                iter = conn.iterator(rocksdb::IteratorMode::From(
-                    &gte,
-                    rocksdb::Direction::Forward,
-                ));
-            }
+            let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], false));
             for (counter, (key, val)) in iter.enumerate() {
-                if options.limit != -1 && counter as i64 >= options.limit {
+                if utils::is_key_out_of_range(&options, &key, counter as i64, false) {
                     break;
-                }
-                if options.reverse {
-                    if let Some(gte) = &options.gte {
-                        if utils::compare(&key, gte) == cmp::Ordering::Less {
-                            break;
-                        }
-                    }
-                } else if let Some(lte) = &options.lte {
-                    if utils::compare(&key, lte) == cmp::Ordering::Greater {
-                        break;
-                    }
                 }
                 let c = a_cb_on_data.clone();
                 channel.send(move |mut ctx| {

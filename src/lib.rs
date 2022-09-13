@@ -6,6 +6,7 @@ mod consts;
 mod db;
 mod diff;
 mod in_memory_db;
+mod in_memory_smt;
 mod options;
 mod smt;
 mod smt_db;
@@ -81,10 +82,16 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("in_memory_db_write", in_memory_db::Database::js_write)?;
     cx.export_function("in_memory_db_iterate", in_memory_db::Database::js_iterate)?;
 
-    cx.export_function("in_memory_smt_new", smt::InMemorySMT::js_new)?;
-    cx.export_function("in_memory_smt_update", smt::InMemorySMT::js_update)?;
-    cx.export_function("in_memory_smt_prove", smt::InMemorySMT::js_prove)?;
-    cx.export_function("in_memory_smt_verify", smt::InMemorySMT::js_verify)?;
+    cx.export_function("in_memory_smt_new", in_memory_smt::InMemorySMT::js_new)?;
+    cx.export_function(
+        "in_memory_smt_update",
+        in_memory_smt::InMemorySMT::js_update,
+    )?;
+    cx.export_function("in_memory_smt_prove", in_memory_smt::InMemorySMT::js_prove)?;
+    cx.export_function(
+        "in_memory_smt_verify",
+        in_memory_smt::InMemorySMT::js_verify,
+    )?;
 
     Ok(())
 }

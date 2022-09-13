@@ -1,5 +1,78 @@
+use crate::consts;
+use crate::options;
 use sha2::{Digest, Sha256};
 use std::cmp;
+
+pub fn get_iteration_mode<'a>(
+    options: &options::IterationOption,
+    opt: &'a mut Vec<u8>,
+    has_prefix: bool,
+) -> rocksdb::IteratorMode<'a> {
+    let no_range = options.gte.is_none() && options.lte.is_none();
+    if no_range {
+        if options.reverse {
+            rocksdb::IteratorMode::End
+        } else {
+            rocksdb::IteratorMode::Start
+        }
+    } else if options.reverse {
+        let lte = options
+            .lte
+            .clone()
+            .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
+        *opt = if has_prefix {
+            [consts::PREFIX_STATE, lte.as_slice()].concat()
+        } else {
+            lte
+        };
+        rocksdb::IteratorMode::From(opt, rocksdb::Direction::Reverse)
+    } else {
+        let gte = options
+            .gte
+            .clone()
+            .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+        *opt = if has_prefix {
+            [consts::PREFIX_STATE, gte.as_slice()].concat()
+        } else {
+            gte
+        };
+        rocksdb::IteratorMode::From(opt, rocksdb::Direction::Forward)
+    }
+}
+
+pub fn is_key_out_of_range(
+    options: &options::IterationOption,
+    key: &[u8],
+    counter: i64,
+    has_prefix: bool,
+) -> bool {
+    if options.limit != -1 && counter >= options.limit {
+        return true;
+    }
+    if options.reverse {
+        if let Some(gte) = &options.gte {
+            let cmp = if has_prefix {
+                [consts::PREFIX_STATE, gte].concat()
+            } else {
+                gte.to_vec()
+            };
+            if compare(key, &cmp) == cmp::Ordering::Less {
+                return true;
+            }
+        }
+    } else if let Some(lte) = &options.lte {
+        let cmp = if has_prefix {
+            [consts::PREFIX_STATE, lte].concat()
+        } else {
+            lte.to_vec()
+        };
+        if compare(key, &cmp) == cmp::Ordering::Greater {
+            return true;
+        }
+    }
+
+    false
+}
 
 fn find_longer<'a>(a: &'a [bool], b: &'a [bool]) -> (&'a [bool], &'a [bool]) {
     match a.len().cmp(&b.len()) {

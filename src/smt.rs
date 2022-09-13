@@ -1,15 +1,8 @@
-use neon::prelude::*;
-use neon::types::buffer::TypedArray;
 use sha2::{Digest, Sha256};
-use std::cell::RefCell;
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
-use std::thread;
 use thiserror::Error;
 
-use crate::consts;
-use crate::smt_db;
 use crate::utils;
 
 const PREFIX_INT_LEAF_HASH: u8 = 0;
@@ -22,7 +15,6 @@ static PREFIX_BRANCH_HASH: &[u8] = &[1];
 static PREFIX_EMPTY: &[u8] = &[2];
 
 type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
-type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 
 trait SortDescending {
     fn sort_descending(&mut self);
@@ -107,15 +99,32 @@ struct QueryHashesExtraInfo {
     max_index: usize,
 }
 
+struct GenerateResultData<'a> {
+    query_key: &'a [u8],
+    current_node: &'a Node,
+    ref_mut_vecs: QueryHashesRefMut<'a>,
+    height: usize,
+    query_height: usize,
+}
+
+struct QueryHashesRefMut<'a> {
+    ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
+    sibling_hashes: &'a mut VecDeque<Vec<u8>>,
+    binary_bitmap: &'a mut Vec<bool>,
+}
+
 struct QueryHashesInfo<'a> {
     layer_nodes: &'a Vec<Node>,
     layer_structure: &'a [u8],
-    sibling_hashes: &'a mut VecDeque<Vec<u8>>,
-    ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
-    binary_bitmap: &'a mut Vec<bool>,
+    ref_mut_vecs: QueryHashesRefMut<'a>,
     extra: QueryHashesExtraInfo,
 }
 
+struct NextQueryHashesInfo {
+    layer_nodes: Vec<Node>,
+    layer_structure: Vec<u8>,
+    target_id: usize,
+}
 struct UpdateNodeInfo<'a> {
     key_bins: &'a [Vec<Vec<u8>>],
     value_bins: &'a [Vec<Vec<u8>>],
@@ -126,17 +135,23 @@ struct UpdateNodeInfo<'a> {
     h: u8,
 }
 
+struct Bins {
+    keys: Vec<Vec<Vec<u8>>>,
+    values: Vec<Vec<Vec<u8>>>,
+}
+
+struct UpdatedInfo {
+    nodes: Vec<Node>,
+    structures: Vec<u8>,
+    bin_offset: usize,
+}
+
 pub struct SparseMerkleTree {
     root: Vec<u8>,
     key_length: usize,
     subtree_height: usize,
     max_number_of_nodes: usize,
     hasher: Hasher,
-}
-
-pub struct InMemorySMT {
-    db: smt_db::InMemorySmtDB,
-    key_length: usize,
 }
 
 fn key_hash(key: &[u8]) -> Vec<u8> {
@@ -207,6 +222,47 @@ fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> V
     tree_hasher(&next_hashes, &next_structure, height - 1)
 }
 
+fn parent_node(
+    layer_nodes: &[Node],
+    layer_structure: &[u8],
+    tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
+    i: usize,
+) -> Result<Node, SMTError> {
+    if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Empty {
+        Ok(layer_nodes[i].clone())
+    } else if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Leaf {
+        Ok(layer_nodes[i + 1].clone())
+    } else if layer_nodes[i].kind == NodeKind::Leaf && layer_nodes[i + 1].kind == NodeKind::Empty {
+        Ok(layer_nodes[i].clone())
+    } else {
+        let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
+            let (nodes, structure) = tree_map
+                .pop_back()
+                .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+            (nodes, structure)
+        } else {
+            (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
+        };
+        let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
+            let (nodes, structure) = tree_map
+                .pop_back()
+                .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
+            (nodes, structure)
+        } else {
+            (
+                vec![layer_nodes[i + 1].clone()],
+                vec![layer_structure[i + 1]],
+            )
+        };
+        left_structure.extend(right_structure);
+        left_nodes.extend(right_nodes);
+        let stub = Node::new_temp();
+        tree_map.push_front((left_nodes, left_structure));
+
+        Ok(stub)
+    }
+}
+
 fn calculate_subtree(
     layer_nodes: &Vec<Node>,
     layer_structure: &[u8],
@@ -227,46 +283,9 @@ fn calculate_subtree(
             i += 1;
             continue;
         }
-        let parent_node = if layer_nodes[i].kind == NodeKind::Empty
-            && layer_nodes[i + 1].kind == NodeKind::Empty
-        {
-            layer_nodes[i].clone()
-        } else if layer_nodes[i].kind == NodeKind::Empty
-            && layer_nodes[i + 1].kind == NodeKind::Leaf
-        {
-            layer_nodes[i + 1].clone()
-        } else if layer_nodes[i].kind == NodeKind::Leaf
-            && layer_nodes[i + 1].kind == NodeKind::Empty
-        {
-            layer_nodes[i].clone()
-        } else {
-            let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_back().ok_or_else(|| {
-                    SMTError::Unknown(String::from("Subtree must exist for stub"))
-                })?;
-                (nodes.clone(), structure.clone())
-            } else {
-                (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
-            };
-            let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
-                let (nodes, structure) = tree_map.pop_back().ok_or_else(|| {
-                    SMTError::Unknown(String::from("Subtree must exist for stub"))
-                })?;
-                (nodes.clone(), structure.clone())
-            } else {
-                (
-                    vec![layer_nodes[i + 1].clone()],
-                    vec![layer_structure[i + 1]],
-                )
-            };
-            left_structure.extend(right_structure);
-            left_nodes.extend(right_nodes);
-            let stub = Node::new_temp();
-            tree_map.push_front((left_nodes, left_structure));
 
-            stub
-        };
-        next_layer_nodes.push(parent_node.clone());
+        let parent = parent_node(layer_nodes, layer_structure, tree_map, i)?;
+        next_layer_nodes.push(parent);
         next_layer_structure.push(layer_structure[i] - 1);
         // using 2 layer nodes
         i += 2;
@@ -289,60 +308,65 @@ fn calculate_subtree(
     )
 }
 
-fn calculate_query_hashes(info: QueryHashesInfo) {
+fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
+    let mut parent_node =
+        Node::new_branch(&info.layer_nodes[i].hash, &info.layer_nodes[i + 1].hash);
+    parent_node.index = info.extra.max_index + i;
+    next_info.layer_nodes.push(parent_node.clone());
+    next_info.layer_structure.push(info.layer_structure[i] - 1);
+    if next_info.target_id == info.layer_nodes[i].index {
+        info.ref_mut_vecs
+            .ancestor_hashes
+            .push_front(parent_node.hash.clone());
+        next_info.target_id = parent_node.index;
+        if info.layer_nodes[i + 1].kind == NodeKind::Empty {
+            info.ref_mut_vecs.binary_bitmap.push(false);
+        } else {
+            info.ref_mut_vecs.binary_bitmap.push(true);
+            info.ref_mut_vecs
+                .sibling_hashes
+                .push_front(info.layer_nodes[i + 1].hash.clone());
+        }
+    } else if next_info.target_id == info.layer_nodes[i + 1].index {
+        info.ref_mut_vecs
+            .ancestor_hashes
+            .push_front(parent_node.hash.clone());
+        next_info.target_id = parent_node.index;
+        if info.layer_nodes[i].kind == NodeKind::Empty {
+            info.ref_mut_vecs.binary_bitmap.push(false);
+        } else {
+            info.ref_mut_vecs.binary_bitmap.push(true);
+            info.ref_mut_vecs
+                .sibling_hashes
+                .push_front(info.layer_nodes[i].hash.clone());
+        }
+    }
+}
+
+fn calculate_query_hashes(mut info: QueryHashesInfo) {
     if info.extra.height == 0 {
         return;
     }
-    let mut next_layer_nodes: Vec<Node> = vec![];
-    let mut next_layer_structure: Vec<u8> = vec![];
-    let mut next_target_id = info.extra.target_id;
+    let mut next_info = NextQueryHashesInfo::new(info.extra.target_id);
     let mut i = 0;
     while i < info.layer_nodes.len() {
         if info.layer_structure[i] != info.extra.height {
-            next_layer_nodes.push(info.layer_nodes[i].clone());
-            next_layer_structure.push(info.layer_structure[i]);
+            next_info.push(info.layer_nodes[i].clone(), info.layer_structure[i]);
             i += 1;
             continue;
         }
-        let mut parent_node =
-            Node::new_branch(&info.layer_nodes[i].hash, &info.layer_nodes[i + 1].hash);
-        parent_node.index = info.extra.max_index + i;
-        next_layer_nodes.push(parent_node.clone());
-        next_layer_structure.push(info.layer_structure[i] - 1);
-        if next_target_id == info.layer_nodes[i].index {
-            info.ancestor_hashes.push_front(parent_node.hash.clone());
-            next_target_id = parent_node.index;
-            if info.layer_nodes[i + 1].kind == NodeKind::Empty {
-                info.binary_bitmap.push(false);
-            } else {
-                info.binary_bitmap.push(true);
-                info.sibling_hashes
-                    .push_front(info.layer_nodes[i + 1].hash.clone());
-            }
-        } else if next_target_id == info.layer_nodes[i + 1].index {
-            info.ancestor_hashes.push_front(parent_node.hash.clone());
-            next_target_id = parent_node.index;
-            if info.layer_nodes[i].kind == NodeKind::Empty {
-                info.binary_bitmap.push(false);
-            } else {
-                info.binary_bitmap.push(true);
-                info.sibling_hashes
-                    .push_front(info.layer_nodes[i].hash.clone());
-            }
-        }
+        calc_next_info(&mut info, &mut next_info, i);
         i += 2;
     }
     let new_extra = QueryHashesExtraInfo::new(
         info.extra.height - 1,
-        next_target_id,
+        next_info.target_id,
         info.extra.max_index + i + 1,
     );
     let new_info = QueryHashesInfo::new(
-        &next_layer_nodes,
-        &next_layer_structure,
-        info.sibling_hashes,
-        info.ancestor_hashes,
-        info.binary_bitmap,
+        &next_info.layer_nodes,
+        &next_info.layer_structure,
+        info.ref_mut_vecs,
         new_extra,
     );
     calculate_query_hashes(new_info)
@@ -380,7 +404,7 @@ fn calculate_sibling_hashes(
     }
     while !query_with_proofs.is_empty() {
         let mut query = query_with_proofs.pop_front().unwrap();
-        if query.height() == 0 {
+        if query.is_zero_height() {
             continue;
         }
         if query.binary_bitmap[0] {
@@ -455,8 +479,8 @@ impl UpdateData {
         (keys, values)
     }
 
-    pub fn len(&self) -> usize {
-        self.data.len()
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 
@@ -485,6 +509,10 @@ impl QueryProofWithProof {
     }
     fn height(&self) -> usize {
         self.binary_bitmap.len()
+    }
+
+    fn is_zero_height(&self) -> bool {
+        self.binary_bitmap.is_empty()
     }
 
     fn slice_bitmap(&mut self) {
@@ -688,19 +716,34 @@ impl<'a> QueryHashesInfo<'a> {
     fn new(
         layer_nodes: &'a Vec<Node>,
         layer_structure: &'a [u8],
-        sibling_hashes: &'a mut VecDeque<Vec<u8>>,
-        ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
-        binary_bitmap: &'a mut Vec<bool>,
+        vecs: QueryHashesRefMut<'a>,
         extra: QueryHashesExtraInfo,
     ) -> Self {
         QueryHashesInfo {
             layer_nodes,
             layer_structure,
-            sibling_hashes,
-            ancestor_hashes,
-            binary_bitmap,
+            ref_mut_vecs: QueryHashesRefMut {
+                sibling_hashes: vecs.sibling_hashes,
+                ancestor_hashes: vecs.ancestor_hashes,
+                binary_bitmap: vecs.binary_bitmap,
+            },
             extra,
         }
+    }
+}
+
+impl NextQueryHashesInfo {
+    fn new(target_id: usize) -> Self {
+        NextQueryHashesInfo {
+            layer_nodes: vec![],
+            layer_structure: vec![],
+            target_id,
+        }
+    }
+
+    fn push(&mut self, old_layer_nodes: Node, old_layer_structure: u8) {
+        self.layer_nodes.push(old_layer_nodes);
+        self.layer_structure.push(old_layer_structure);
     }
 }
 
@@ -727,55 +770,9 @@ impl<'a> UpdateNodeInfo<'a> {
 }
 
 impl SparseMerkleTree {
-    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
-        let max_number_of_nodes = 1 << subtree_height;
-        let r = if root.is_empty() {
-            utils::empty_hash()
-        } else {
-            root
-        };
-        Self {
-            root: r,
-            key_length,
-            hasher: tree_hasher,
-            subtree_height,
-            max_number_of_nodes,
-        }
-    }
-
-    pub fn commit(
-        &mut self,
-        db: &mut impl DB,
-        data: &mut UpdateData,
-    ) -> Result<Vec<u8>, SMTError> {
-        if data.len() == 0 {
-            return Ok(self.root.clone());
-        }
-        let (update_keys, update_values) = data.entries();
-        let root = self.get_subtree(db, &self.root)?;
-        let new_root = self.update_subtree(db, update_keys, update_values, &root, 0)?;
-        self.root = new_root.root;
-        Ok(self.root.clone())
-    }
-
-    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
-        if queries.is_empty() {
-            return Ok(Proof {
-                queries: vec![],
-                sibling_hashes: vec![],
-            });
-        }
-        let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
-        let root = self.get_subtree(db, &self.root)?;
-        let mut ancestor_hashes = vec![];
-        for query in queries {
-            let query_proof = self.generate_query_proof(db, &mut root.clone(), query, 0)?;
-            query_with_proofs.push(query_proof.clone());
-            ancestor_hashes.extend(query_proof.ancestor_hashes);
-        }
+    fn proof_queries(&self, query_with_proofs: &[QueryProofWithProof]) -> Vec<QueryProof> {
         let mut proof_queries = vec![];
-
-        for query in query_with_proofs.clone() {
+        for query in query_with_proofs {
             proof_queries.push(QueryProof {
                 key: query.key.clone(),
                 value: query.value.clone(),
@@ -783,48 +780,28 @@ impl SparseMerkleTree {
             });
         }
 
-        query_with_proofs.sort_descending();
-
-        let mut sibling_hashes = vec![];
-        let mut query_with_proofs = VecDeque::from(query_with_proofs);
-        calculate_sibling_hashes(
-            &mut query_with_proofs,
-            &ancestor_hashes,
-            &mut sibling_hashes,
-        );
-
-        Ok(Proof {
-            queries: proof_queries,
-            sibling_hashes,
-        })
+        proof_queries
     }
 
-    pub fn verify(
-        query_keys: &Vec<Vec<u8>>,
-        proof: &Proof,
-        root: &[u8],
-        key_length: usize,
-    ) -> Result<bool, SMTError> {
-        if query_keys.len() != proof.queries.len() {
-            return Ok(false);
-        }
-        for (i, key) in query_keys.iter().enumerate() {
-            if key.len() != key_length {
-                return Ok(false);
-            }
-            let query = &proof.queries[i];
-            if utils::is_bytes_equal(key, &query.key) {
-                continue;
-            }
-            let key_binary = utils::bytes_to_bools(key);
-            let query_key_binary = utils::bytes_to_bools(&query.key);
-            let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
-            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            if binary_bitmap.len() > common_prefix.len() {
-                return Ok(false);
-            }
+    fn sibling_data(
+        &mut self,
+        db: &mut impl DB,
+        queries: &[Vec<u8>],
+    ) -> Result<(Vec<QueryProofWithProof>, Vec<Vec<u8>>), SMTError> {
+        let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
+        let root = self.get_subtree(db, &self.root)?;
+        let mut ancestor_hashes = vec![];
+        for query in queries {
+            let query_proof =
+                self.generate_query_proof(db, &mut root.clone(), query.to_vec(), 0)?;
+            query_with_proofs.push(query_proof.clone());
+            ancestor_hashes.extend(query_proof.ancestor_hashes);
         }
 
+        Ok((query_with_proofs, ancestor_hashes))
+    }
+
+    fn filter_map(proof: &Proof) -> HashMap<Vec<bool>, QueryProofWithProof> {
         let mut filter_map: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
         for query in &proof.queries {
             let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
@@ -836,15 +813,28 @@ impl SparseMerkleTree {
             );
         }
 
-        let mut filtered_proof = filter_map
-            .values()
-            .cloned()
-            .collect::<Vec<QueryProofWithProof>>();
+        filter_map
+    }
 
-        Ok(utils::is_bytes_equal(
-            root,
-            &SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
-        ))
+    fn verify_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: usize) -> bool {
+        for (i, key) in query_keys.iter().enumerate() {
+            if key.len() != key_length {
+                return false;
+            }
+            let query = &proof.queries[i];
+            if utils::is_bytes_equal(key, &query.key) {
+                continue;
+            }
+            let key_binary = utils::bytes_to_bools(key);
+            let query_key_binary = utils::bytes_to_bools(&query.key);
+            let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
+            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+            if binary_bitmap.len() > common_prefix.len() {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn get_subtree(&self, db: &impl DB, node_hash: &Vec<u8>) -> Result<SubTree, SMTError> {
@@ -864,25 +854,19 @@ impl SparseMerkleTree {
         SubTree::new(value, self.key_length, self.hasher)
     }
 
-    fn update_subtree(
+    fn calc_bins(
         &mut self,
-        db: &mut impl DB,
-        key_bin: Vec<Vec<u8>>,
-        value_bin: Vec<Vec<u8>>,
-        current_subtree: &SubTree,
+        key_bin: &[Vec<u8>],
+        value_bin: &[Vec<u8>],
         height: u32,
-    ) -> Result<SubTree, SMTError> {
-        if key_bin.is_empty() {
-            return Ok(current_subtree.clone());
-        }
-        let mut bin_keys = vec![];
-        let mut bin_values = vec![];
+    ) -> Result<Bins, SMTError> {
+        let mut keys = vec![];
+        let mut values = vec![];
 
         for _ in 0..self.max_number_of_nodes {
-            bin_keys.push(vec![]);
-            bin_values.push(vec![]);
+            keys.push(vec![]);
+            values.push(vec![]);
         }
-
         let b = (height / 8) as usize;
         for i in 0..key_bin.len() {
             let k = key_bin[i].clone();
@@ -897,21 +881,32 @@ impl SparseMerkleTree {
             } else {
                 k[b]
             };
-            bin_keys[bin_idx as usize].push(k);
-            bin_values[bin_idx as usize].push(v);
+            keys[bin_idx as usize].push(k);
+            values[bin_idx as usize].push(v);
         }
 
-        let mut new_nodes: Vec<Node> = vec![];
-        let mut new_structures: Vec<u8> = vec![];
+        Ok(Bins { keys, values })
+    }
 
+    fn calc_updated_info(
+        &mut self,
+        db: &mut impl DB,
+        current_subtree: &SubTree,
+        key_bin: &[Vec<u8>],
+        value_bin: &[Vec<u8>],
+        height: u32,
+    ) -> Result<UpdatedInfo, SMTError> {
+        let bins = self.calc_bins(key_bin, value_bin, height)?;
+        let mut nodes: Vec<Node> = vec![];
+        let mut structures: Vec<u8> = vec![];
         let mut bin_offset = 0;
         for i in 0..current_subtree.nodes.len() {
             let h = current_subtree.structure[i];
             let current_node = current_subtree.nodes[i].clone();
             let new_offset = 1 << (self.subtree_height - h as usize);
 
-            let slice_keys = bin_keys[bin_offset..bin_offset + new_offset].to_vec();
-            let slice_values = bin_values[bin_offset..bin_offset + new_offset].to_vec();
+            let slice_keys = bins.keys[bin_offset..bin_offset + new_offset].to_vec();
+            let slice_values = bins.values[bin_offset..bin_offset + new_offset].to_vec();
             let mut sum = 0;
             let base_length: Vec<u32> = slice_keys
                 .iter()
@@ -930,29 +925,49 @@ impl SparseMerkleTree {
                 height,
                 h,
             );
-            let (nodes, heights) = self.update_node(db, info)?;
+            let (updated_nodes, heights) = self.update_node(db, info)?;
 
-            new_nodes.extend(nodes);
-            new_structures.extend(heights);
+            nodes.extend(updated_nodes);
+            structures.extend(heights);
             bin_offset += new_offset;
         }
 
-        if bin_offset != self.max_number_of_nodes {
+        Ok(UpdatedInfo {
+            nodes,
+            structures,
+            bin_offset,
+        })
+    }
+
+    fn update_subtree(
+        &mut self,
+        db: &mut impl DB,
+        key_bin: Vec<Vec<u8>>,
+        value_bin: Vec<Vec<u8>>,
+        current_subtree: &SubTree,
+        height: u32,
+    ) -> Result<SubTree, SMTError> {
+        if key_bin.is_empty() {
+            return Ok(current_subtree.clone());
+        }
+        let updated = self.calc_updated_info(db, current_subtree, &key_bin, &value_bin, height)?;
+        if updated.bin_offset != self.max_number_of_nodes {
             return Err(SMTError::Unknown(format!(
                 "bin_offset {} expected {}",
-                bin_offset, self.max_number_of_nodes
+                updated.bin_offset, self.max_number_of_nodes
             )));
         }
         // Go through nodes again and push up empty nodes
-        let max_structure = new_structures
+        let max_structure = updated
+            .structures
             .iter()
             .max()
             .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
         let mut tree_map = VecDeque::new();
 
         let new_subtree = calculate_subtree(
-            &new_nodes,
-            &new_structures,
+            &updated.nodes,
+            &updated.structures,
             *max_structure,
             &mut tree_map,
             self.hasher,
@@ -962,6 +977,95 @@ impl SparseMerkleTree {
             .map_err(|err| SMTError::Unknown(err.to_string()))?;
 
         Ok(new_subtree)
+    }
+
+    fn update_one_node(&self, info: &UpdateNodeInfo) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+        let idx = info
+            .length_bins
+            .iter()
+            .position(|&r| r == info.length_base + 1)
+            .ok_or_else(|| SMTError::Unknown(String::from("Invalid index")))?;
+
+        if info.current_node.kind == NodeKind::Empty {
+            if !info.value_bins[idx][0].is_empty() {
+                let new_leaf = Node::new_leaf(
+                    info.key_bins[idx][0].as_slice(),
+                    info.value_bins[idx][0].as_slice(),
+                );
+                return Ok((vec![new_leaf], vec![info.h]));
+            }
+            return Ok((vec![info.current_node.clone()], vec![info.h]));
+        }
+
+        if info.current_node.kind == NodeKind::Leaf
+            && utils::is_bytes_equal(&info.current_node.key, &info.key_bins[idx][0])
+        {
+            if !info.value_bins[idx][0].is_empty() {
+                let new_leaf = Node::new_leaf(
+                    info.key_bins[idx][0].as_slice(),
+                    info.value_bins[idx][0].as_slice(),
+                );
+                return Ok((vec![new_leaf], vec![info.h]));
+            }
+            return Ok((vec![Node::new_empty()], vec![info.h]));
+        }
+
+        Ok((vec![], vec![]))
+    }
+
+    fn update_same_height(
+        &mut self,
+        db: &mut impl DB,
+        info: &UpdateNodeInfo,
+    ) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+        let btm_subtree = match info.current_node.kind {
+            NodeKind::Stub => {
+                let subtree = self.get_subtree(db, &info.current_node.hash)?;
+                db.del(info.current_node.hash.clone())
+                    .map_err(|err| SMTError::Unknown(err.to_string()))?;
+                subtree
+            },
+            NodeKind::Empty => self.get_subtree(db, &info.current_node.hash)?,
+            NodeKind::Leaf => {
+                SubTree::from_data(vec![0], vec![info.current_node.clone()], self.hasher)?
+            },
+            _ => {
+                return Err(SMTError::Unknown(String::from("invalid node type")));
+            },
+        };
+        if info.key_bins.len() != 1 || info.value_bins.len() != 1 {
+            return Err(SMTError::Unknown(String::from("invalid key/value length")));
+        }
+        let new_subtree = self.update_subtree(
+            db,
+            info.key_bins[0].clone(),
+            info.value_bins[0].clone(),
+            &btm_subtree,
+            info.height + info.h as u32,
+        )?;
+        if new_subtree.nodes.len() == 1 {
+            return Ok((vec![new_subtree.nodes[0].clone()], vec![info.h]));
+        }
+        let new_branch = Node::new_stub(new_subtree.root.as_slice());
+
+        Ok((vec![new_branch], vec![info.h]))
+    }
+
+    fn left_right_nodes(&self, info: &UpdateNodeInfo) -> Result<(Node, Node), SMTError> {
+        match info.current_node.kind {
+            NodeKind::Empty => Ok((Node::new_empty(), Node::new_empty())),
+            NodeKind::Leaf => {
+                if utils::is_bit_set(
+                    info.current_node.key.as_slice(),
+                    (info.height + info.h as u32) as usize,
+                ) {
+                    Ok((Node::new_empty(), info.current_node.clone()))
+                } else {
+                    Ok((info.current_node.clone(), Node::new_empty()))
+                }
+            },
+            _ => Err(SMTError::Unknown(String::from("Invalid node kind"))),
+        }
     }
 
     fn update_node(
@@ -974,87 +1078,17 @@ impl SparseMerkleTree {
             return Ok((vec![info.current_node], vec![info.h]));
         }
         if total_data == 1 {
-            let idx = info
-                .length_bins
-                .iter()
-                .position(|&r| r == info.length_base + 1)
-                .ok_or_else(|| SMTError::Unknown(String::from("Invalid index")))?;
-
-            if info.current_node.kind == NodeKind::Empty {
-                if !info.value_bins[idx][0].is_empty() {
-                    let new_leaf = Node::new_leaf(
-                        info.key_bins[idx][0].as_slice(),
-                        info.value_bins[idx][0].as_slice(),
-                    );
-                    return Ok((vec![new_leaf], vec![info.h]));
-                }
-                return Ok((vec![info.current_node], vec![info.h]));
-            }
-
-            if info.current_node.kind == NodeKind::Leaf
-                && utils::is_bytes_equal(&info.current_node.key, &info.key_bins[idx][0])
-            {
-                if !info.value_bins[idx][0].is_empty() {
-                    let new_leaf = Node::new_leaf(
-                        info.key_bins[idx][0].as_slice(),
-                        info.value_bins[idx][0].as_slice(),
-                    );
-                    return Ok((vec![new_leaf], vec![info.h]));
-                }
-                return Ok((vec![Node::new_empty()], vec![info.h]));
+            let (n, v) = self.update_one_node(&info)?;
+            if !n.is_empty() && !v.is_empty() {
+                return Ok((n, v));
             }
         }
 
         if info.h == self.subtree_height as u8 {
-            let btm_subtree = match info.current_node.kind {
-                NodeKind::Stub => {
-                    let subtree = self.get_subtree(db, &info.current_node.hash)?;
-                    db.del(info.current_node.hash)
-                        .map_err(|err| SMTError::Unknown(err.to_string()))?;
-                    subtree
-                },
-                NodeKind::Empty => self.get_subtree(db, &info.current_node.hash)?,
-                NodeKind::Leaf => {
-                    SubTree::from_data(vec![0], vec![info.current_node], self.hasher)?
-                },
-                _ => {
-                    return Err(SMTError::Unknown(String::from("invalid node type")));
-                },
-            };
-            if info.key_bins.len() != 1 || info.value_bins.len() != 1 {
-                return Err(SMTError::Unknown(String::from("invalid key/value length")));
-            }
-            let new_subtree = self.update_subtree(
-                db,
-                info.key_bins[0].clone(),
-                info.value_bins[0].clone(),
-                &btm_subtree,
-                info.height + info.h as u32,
-            )?;
-            if new_subtree.nodes.len() == 1 {
-                return Ok((vec![new_subtree.nodes[0].clone()], vec![info.h]));
-            }
-            let new_branch = Node::new_stub(new_subtree.root.as_slice());
-
-            return Ok((vec![new_branch], vec![info.h]));
+            return self.update_same_height(db, &info);
         }
 
-        let (left_node, right_node) = match info.current_node.kind {
-            NodeKind::Empty => (Node::new_empty(), Node::new_empty()),
-            NodeKind::Leaf => {
-                if utils::is_bit_set(
-                    info.current_node.key.as_slice(),
-                    (info.height + info.h as u32) as usize,
-                ) {
-                    (Node::new_empty(), info.current_node)
-                } else {
-                    (info.current_node, Node::new_empty())
-                }
-            },
-            _ => {
-                return Err(SMTError::Unknown(String::from("Invalid node kind")));
-            },
-        };
+        let (left_node, right_node) = self.left_right_nodes(&info)?;
         let idx = info.key_bins.len() / 2;
         let left_info = UpdateNodeInfo::new(
             &info.key_bins[0..idx],
@@ -1083,6 +1117,113 @@ impl SparseMerkleTree {
         Ok((left_nodes, left_heights))
     }
 
+    fn find_index(&mut self, query_key: &[u8], height: usize) -> Result<u8, SMTError> {
+        let b = height / 8;
+        if self.subtree_height == 4 {
+            match height % 8 {
+                0 => Ok(query_key[b] >> 4),
+                4 => Ok(query_key[b] & 15),
+                _ => Err(SMTError::Unknown(String::from("Invalid bin index"))),
+            }
+        // when subtree_height is 8
+        } else {
+            Ok(query_key[b])
+        }
+    }
+
+    fn find_current_node(
+        &mut self,
+        current_subtree: &SubTree,
+        query_key: &[u8],
+        height: usize,
+    ) -> Result<(Node, usize), SMTError> {
+        let mut bin_offset = 0;
+        let mut current_node: Option<Node> = None;
+        let bin_idx = self.find_index(query_key, height)?;
+        let mut h = 0;
+        for i in 0..current_subtree.nodes.len() {
+            h = current_subtree.structure[i];
+            current_node = Some(current_subtree.nodes[i].clone());
+            let new_offset = 1 << (self.subtree_height - h as usize);
+            if bin_offset <= bin_idx && bin_idx < bin_offset + new_offset {
+                break;
+            }
+            bin_offset += new_offset
+        }
+
+        Ok((current_node.unwrap(), h as usize))
+    }
+
+    fn calc_query_proof_from_result(
+        &mut self,
+        db: &mut impl DB,
+        d: &GenerateResultData,
+    ) -> Result<QueryProofWithProof, SMTError> {
+        let mut ancestor_hashes = d.ref_mut_vecs.ancestor_hashes.clone();
+        let sibling_hashes = Vec::from(d.ref_mut_vecs.sibling_hashes.clone());
+        let binary_bitmap = d.ref_mut_vecs.binary_bitmap.clone();
+        if d.current_node.kind == NodeKind::Empty {
+            return Ok(QueryProofWithProof::new(
+                d.query_key,
+                &vec![],
+                d.ref_mut_vecs.binary_bitmap,
+                &Vec::from(ancestor_hashes),
+                &(sibling_hashes),
+            ));
+        }
+
+        if d.current_node.kind == NodeKind::Leaf {
+            ancestor_hashes.push_back(d.current_node.hash.clone());
+            return Ok(QueryProofWithProof::new(
+                &d.current_node.key,
+                // 0 index is the leaf prefix
+                &d.current_node.data[PREFIX_LEAF_HASH.len() + HASH_SIZE..].to_vec(),
+                &binary_bitmap,
+                &Vec::from(ancestor_hashes),
+                &sibling_hashes,
+            ));
+        }
+
+        let mut lower_subtree = self.get_subtree(db, &d.current_node.hash)?;
+        let lower_query_proof = self.generate_query_proof(
+            db,
+            &mut lower_subtree,
+            d.query_key.to_vec(),
+            d.height + d.query_height,
+        )?;
+
+        let combined_binary_bitmap = [lower_query_proof.binary_bitmap, binary_bitmap].concat();
+        Ok(QueryProofWithProof::new(
+            &lower_query_proof.key,
+            &lower_query_proof.value,
+            &combined_binary_bitmap,
+            &[
+                Vec::from(ancestor_hashes),
+                lower_query_proof.ancestor_hashes,
+            ]
+            .concat(),
+            &[sibling_hashes, lower_query_proof.sibling_hashes].concat(),
+        ))
+    }
+
+    fn clac_query_hashes_extra_info(
+        &self,
+        current_subtree: &mut SubTree,
+        current_node: &Node,
+    ) -> Result<QueryHashesExtraInfo, SMTError> {
+        let max_structure = current_subtree
+            .structure
+            .iter()
+            .max()
+            .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
+
+        Ok(QueryHashesExtraInfo::new(
+            *max_structure,
+            current_node.index,
+            current_subtree.nodes.len(),
+        ))
+    }
+
     fn generate_query_proof(
         &mut self,
         db: &mut impl DB,
@@ -1096,100 +1237,40 @@ impl SparseMerkleTree {
             )));
         }
 
-        let b = height / 8;
-        let bin_idx = if self.subtree_height == 4 {
-            match height % 8 {
-                0 => Ok(query_key[b] >> 4),
-                4 => Ok(query_key[b] & 15),
-                _ => Err(SMTError::Unknown(String::from("Invalid bin index"))),
-            }?
-        // when subtree_height is 8
-        } else {
-            query_key[b]
-        };
-
         for (i, node) in current_subtree.nodes.iter_mut().enumerate() {
             node.index = i;
         }
 
-        let mut bin_offset = 0;
-        let mut current_node: Option<Node> = None;
-        let mut h = 0;
-        for i in 0..current_subtree.nodes.len() {
-            h = current_subtree.structure[i];
-            current_node = Some(current_subtree.nodes[i].clone());
-            let new_offset = 1 << (self.subtree_height - h as usize);
-            if bin_offset <= bin_idx && bin_idx < bin_offset + new_offset {
-                break;
-            }
-            bin_offset += new_offset
-        }
-        let query_height = h as usize;
+        let (current_node, query_height) =
+            self.find_current_node(current_subtree, &query_key, height)?;
 
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
         let mut binary_bitmap: Vec<bool> = vec![];
-        let current_node = current_node.unwrap();
-
-        let max_structure = current_subtree
-            .structure
-            .iter()
-            .max()
-            .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
-
-        let extra = QueryHashesExtraInfo::new(
-            *max_structure,
-            current_node.index,
-            current_subtree.nodes.len(),
-        );
+        let extra = self.clac_query_hashes_extra_info(current_subtree, &current_node)?;
         let info = QueryHashesInfo::new(
             &current_subtree.nodes,
             &current_subtree.structure,
-            &mut sibling_hashes,
-            &mut ancestor_hashes,
-            &mut binary_bitmap,
+            QueryHashesRefMut {
+                ancestor_hashes: &mut ancestor_hashes,
+                sibling_hashes: &mut sibling_hashes,
+                binary_bitmap: &mut binary_bitmap,
+            },
             extra,
         );
         calculate_query_hashes(info);
-
-        if current_node.kind == NodeKind::Empty {
-            return Ok(QueryProofWithProof::new(
-                &query_key,
-                &vec![],
-                &binary_bitmap,
-                &Vec::from(ancestor_hashes),
-                &Vec::from(sibling_hashes),
-            ));
-        }
-
-        if current_node.kind == NodeKind::Leaf {
-            ancestor_hashes.push_back(current_node.hash);
-            return Ok(QueryProofWithProof::new(
-                &current_node.key,
-                // 0 index is the leaf prefix
-                &current_node.data[PREFIX_LEAF_HASH.len() + HASH_SIZE..].to_vec(),
-                &binary_bitmap.clone(),
-                &Vec::from(ancestor_hashes),
-                &Vec::from(sibling_hashes),
-            ));
-        }
-
-        let mut lower_subtree = self.get_subtree(db, &current_node.hash)?;
-        let lower_query_proof =
-            self.generate_query_proof(db, &mut lower_subtree, query_key, height + query_height)?;
-
-        let combined_binary_bitmap = [lower_query_proof.binary_bitmap, binary_bitmap].concat();
-        Ok(QueryProofWithProof::new(
-            &lower_query_proof.key,
-            &lower_query_proof.value,
-            &combined_binary_bitmap,
-            &[
-                Vec::from(ancestor_hashes),
-                lower_query_proof.ancestor_hashes,
-            ]
-            .concat(),
-            &[Vec::from(sibling_hashes), lower_query_proof.sibling_hashes].concat(),
-        ))
+        let data = GenerateResultData {
+            query_key: &query_key,
+            current_node: &current_node,
+            ref_mut_vecs: QueryHashesRefMut {
+                ancestor_hashes: &mut ancestor_hashes,
+                sibling_hashes: &mut sibling_hashes,
+                binary_bitmap: &mut binary_bitmap,
+            },
+            height,
+            query_height,
+        };
+        self.calc_query_proof_from_result(db, &data)
     }
 
     fn calculate_root(sibling_hashes: &[Vec<u8>], queries: &mut [QueryProofWithProof]) -> Vec<u8> {
@@ -1200,7 +1281,7 @@ impl SparseMerkleTree {
 
         while !sorted_queries.is_empty() {
             let query = &sorted_queries.pop_front().unwrap();
-            if query.height() == 0 {
+            if query.is_zero_height() {
                 return query.hash.clone();
             }
 
@@ -1230,219 +1311,87 @@ impl SparseMerkleTree {
 
         vec![]
     }
-}
 
-impl Finalize for InMemorySMT {}
-
-impl InMemorySMT {
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
-        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
-        let tree = InMemorySMT {
-            db: smt_db::InMemorySmtDB::new(),
+    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
+        let max_number_of_nodes = 1 << subtree_height;
+        let r = if root.is_empty() {
+            utils::empty_hash()
+        } else {
+            root
+        };
+        Self {
+            root: r,
             key_length,
-        };
-
-        let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
-        return Ok(ctx.boxed(ref_tree));
+            hasher: tree_hasher,
+            subtree_height,
+            max_number_of_nodes,
+        }
     }
 
-    pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let in_memory_smt = ctx
-            .this()
-            .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
-        let in_memory_smt = in_memory_smt.borrow().clone();
-
-        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-
-        let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut data: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
-        for key in input.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
-                .as_slice(&ctx)
-                .to_vec();
-            let value = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
-                .as_slice(&ctx)
-                .to_vec();
-            data.insert(key, value);
+    pub fn commit(
+        &mut self,
+        db: &mut impl DB,
+        data: &mut UpdateData,
+    ) -> Result<Vec<u8>, SMTError> {
+        if data.is_empty() {
+            return Ok(self.root.clone());
         }
-
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-
-        let channel = ctx.channel();
-
-        thread::spawn(move || {
-            let mut update_data = UpdateData::new_from(data);
-            let mut inner_smt = in_memory_smt.lock().unwrap();
-            let key_length = inner_smt.key_length;
-
-            let mut tree = SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
-
-            let result = tree.commit(&mut inner_smt.db, &mut update_data);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val.to_vec());
-                        vec![ctx.null().upcast(), buffer.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            })
-        });
-
-        Ok(ctx.undefined())
+        let (update_keys, update_values) = data.entries();
+        let root = self.get_subtree(db, &self.root)?;
+        let new_root = self.update_subtree(db, update_keys, update_values, &root, 0)?;
+        self.root = new_root.root;
+        Ok(self.root.clone())
     }
 
-    pub fn js_prove(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let in_memory_smt = ctx
-            .this()
-            .downcast_or_throw::<SharedInMemorySMT, _>(&mut ctx)?;
-        let in_memory_smt = in_memory_smt.borrow().clone();
-
-        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-
-        let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut data: Vec<Vec<u8>> = vec![];
-        for key in input.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            data.push(key);
+    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+        if queries.is_empty() {
+            return Ok(Proof {
+                queries: vec![],
+                sibling_hashes: vec![],
+            });
         }
+        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, &queries)?;
+        let proof_queries = self.proof_queries(&query_with_proofs);
 
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        query_with_proofs.sort_descending();
 
-        let channel = ctx.channel();
+        let mut sibling_hashes = vec![];
+        let mut query_with_proofs = VecDeque::from(query_with_proofs);
+        calculate_sibling_hashes(
+            &mut query_with_proofs,
+            &ancestor_hashes,
+            &mut sibling_hashes,
+        );
 
-        thread::spawn(move || {
-            let mut inner_smt = in_memory_smt.lock().unwrap();
-            let mut tree =
-                SparseMerkleTree::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
-
-            let result = tree.prove(&mut inner_smt.db, data);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let obj: Handle<JsObject> = ctx.empty_object();
-                        let sibling_hashes = ctx.empty_array();
-                        for (i, h) in val.sibling_hashes.iter().enumerate() {
-                            let val_res = JsBuffer::external(&mut ctx, h.to_vec());
-                            sibling_hashes.set(&mut ctx, i as u32, val_res)?;
-                        }
-                        obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
-                        let queries = ctx.empty_array();
-                        obj.set(&mut ctx, "queries", queries)?;
-                        for (i, v) in val.queries.iter().enumerate() {
-                            let obj = ctx.empty_object();
-                            let key = JsBuffer::external(&mut ctx, v.key.to_vec());
-                            obj.set(&mut ctx, "key", key)?;
-                            let value = JsBuffer::external(&mut ctx, v.value.to_vec());
-                            obj.set(&mut ctx, "value", value)?;
-                            let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
-                            obj.set(&mut ctx, "bitmap", bitmap)?;
-
-                            queries.set(&mut ctx, i as u32, obj)?;
-                        }
-                        vec![ctx.null().upcast(), obj.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            })
-        });
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof, key_length: usize
-        let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-
-        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
-        for key in query_keys.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            parsed_query_keys.push(key);
-        }
-        let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof
-            .get::<JsArray, _, _>(&mut ctx, "siblingHashes")?
-            .to_vec(&mut ctx)?;
-        for raw_sibling_hash in raw_sibling_hashes.iter() {
-            let sibling_hash = raw_sibling_hash
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            sibling_hashes.push(sibling_hash);
-        }
-        let mut queries: Vec<QueryProof> = vec![];
-        let raw_queries = raw_proof
-            .get::<JsArray, _, _>(&mut ctx, "queries")?
-            .to_vec(&mut ctx)?;
-        for key in raw_queries.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
-                .as_slice(&ctx)
-                .to_vec();
-            let value = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
-                .as_slice(&ctx)
-                .to_vec();
-            let bitmap = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
-                .as_slice(&ctx)
-                .to_vec();
-            queries.push(QueryProof { key, value, bitmap });
-        }
-        let proof = Proof {
-            queries,
+        Ok(Proof {
+            queries: proof_queries,
             sibling_hashes,
-        };
+        })
+    }
 
-        let key_length = ctx.argument::<JsNumber>(3)?.value(&mut ctx) as usize;
-        let cb = ctx.argument::<JsFunction>(4)?.root(&mut ctx);
+    pub fn verify(
+        query_keys: &Vec<Vec<u8>>,
+        proof: &Proof,
+        root: &[u8],
+        key_length: usize,
+    ) -> Result<bool, SMTError> {
+        if query_keys.len() != proof.queries.len() {
+            return Ok(false);
+        }
 
-        let channel = ctx.channel();
+        if !Self::verify_keys(proof, query_keys, key_length) {
+            return Ok(false);
+        }
+        let filter_map = Self::filter_map(proof);
+        let mut filtered_proof = filter_map
+            .values()
+            .cloned()
+            .collect::<Vec<QueryProofWithProof>>();
 
-        thread::spawn(move || {
-            let result =
-                SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        vec![ctx.null().upcast(), JsBoolean::new(&mut ctx, val).upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            })
-        });
-
-        Ok(ctx.undefined())
+        Ok(utils::is_bytes_equal(
+            root,
+            &SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
+        ))
     }
 }
 

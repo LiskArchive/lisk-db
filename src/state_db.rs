@@ -417,6 +417,61 @@ impl StateDB {
 }
 
 impl StateDB {
+    fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
+        let raw_proof = ctx.argument::<JsObject>(2)?;
+        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
+        let raw_sibling_hashes = raw_proof
+            .get::<JsArray, _, _>(ctx, "siblingHashes")?
+            .to_vec(ctx)?;
+        for key in raw_sibling_hashes.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                .as_slice(ctx)
+                .to_vec();
+            sibling_hashes.push(key);
+        }
+
+        let mut queries: Vec<smt::QueryProof> = vec![];
+        let raw_queries = raw_proof
+            .get::<JsArray, _, _>(ctx, "queries")?
+            .to_vec(ctx)?;
+        for key in raw_queries.iter() {
+            let obj = key.downcast_or_throw::<JsObject, _>(ctx)?;
+            let key = obj
+                .get::<JsTypedArray<u8>, _, _>(ctx, "key")?
+                .as_slice(ctx)
+                .to_vec();
+            let value = obj
+                .get::<JsTypedArray<u8>, _, _>(ctx, "value")?
+                .as_slice(ctx)
+                .to_vec();
+            let bitmap = obj
+                .get::<JsTypedArray<u8>, _, _>(ctx, "bitmap")?
+                .as_slice(ctx)
+                .to_vec();
+            queries.push(smt::QueryProof { key, value, bitmap });
+        }
+
+        Ok(smt::Proof {
+            queries,
+            sibling_hashes,
+        })
+    }
+
+    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<Vec<Vec<u8>>> {
+        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
+        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
+        for key in query_keys.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                .as_slice(ctx)
+                .to_vec();
+            parsed_query_keys.push(key);
+        }
+
+        Ok(parsed_query_keys)
+    }
+
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
@@ -490,49 +545,10 @@ impl StateDB {
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
         db.send(move |conn, channel| {
-            let no_range = options.gte.is_none() && options.lte.is_none();
-            let iter;
-            if no_range {
-                if options.reverse {
-                    iter = conn.iterator(rocksdb::IteratorMode::End);
-                } else {
-                    iter = conn.iterator(rocksdb::IteratorMode::Start);
-                }
-            } else if options.reverse {
-                let lte = options
-                    .lte
-                    .clone()
-                    .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
-                iter = conn.iterator(rocksdb::IteratorMode::From(
-                    &[consts::PREFIX_STATE, &lte].concat(),
-                    rocksdb::Direction::Reverse,
-                ));
-            } else {
-                let gte = options
-                    .gte
-                    .clone()
-                    .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
-                iter = conn.iterator(rocksdb::IteratorMode::From(
-                    &[consts::PREFIX_STATE, &gte].concat(),
-                    rocksdb::Direction::Forward,
-                ));
-            }
+            let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], true));
             for (counter, (key, val)) in iter.enumerate() {
-                if options.limit != -1 && counter as i64 >= options.limit {
+                if utils::is_key_out_of_range(&options, &key, counter as i64, true) {
                     break;
-                }
-                if options.reverse {
-                    if let Some(gte) = &options.gte {
-                        let prefixed_gte = &[consts::PREFIX_STATE, gte].concat();
-                        if utils::compare(&key, prefixed_gte) == cmp::Ordering::Less {
-                            break;
-                        }
-                    }
-                } else if let Some(lte) = &options.lte {
-                    let prefixed_lte = &[consts::PREFIX_STATE, lte].concat();
-                    if utils::compare(&key, prefixed_lte) == cmp::Ordering::Greater {
-                        break;
-                    }
                 }
                 let c = a_cb_on_data.clone();
                 channel.send(move |mut ctx| {
@@ -631,54 +647,9 @@ impl StateDB {
         // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
-        let query_keys = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
-        for key in query_keys.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            parsed_query_keys.push(key);
-        }
-        let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
-        let raw_sibling_hashes = raw_proof
-            .get::<JsArray, _, _>(&mut ctx, "siblingHashes")?
-            .to_vec(&mut ctx)?;
-        for key in raw_sibling_hashes.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?
-                .as_slice(&ctx)
-                .to_vec();
-            sibling_hashes.push(key);
-        }
-        let mut queries: Vec<smt::QueryProof> = vec![];
-        let raw_queries = raw_proof
-            .get::<JsArray, _, _>(&mut ctx, "queries")?
-            .to_vec(&mut ctx)?;
-        for key in raw_queries.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
-                .as_slice(&ctx)
-                .to_vec();
-            let value = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "value")?
-                .as_slice(&ctx)
-                .to_vec();
-            let bitmap = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "bitmap")?
-                .as_slice(&ctx)
-                .to_vec();
-            queries.push(smt::QueryProof { key, value, bitmap });
-        }
-        let proof = smt::Proof {
-            queries,
-            sibling_hashes,
-        };
-
+        let proof = Self::proof(&mut ctx)?;
+        let parsed_query_keys = Self::parse_query_keys(&mut ctx)?;
         let cb = ctx.argument::<JsFunction>(4)?.root(&mut ctx);
-
         let channel = ctx.channel();
 
         thread::spawn(move || {
