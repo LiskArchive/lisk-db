@@ -329,14 +329,15 @@ impl StateDB {
     fn prove(
         &self,
         root: Vec<u8>,
-        queries: Vec<Vec<u8>>,
+        queries: &[Vec<u8>],
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.key_length;
+        let queries = queries.to_vec();
         self.send(move |conn, channel| {
             let mut tree = smt::SparseMerkleTree::new(root, key_length, consts::SUBTREE_SIZE);
             let mut smtdb = smt_db::SmtDB::new(conn);
-            let result = tree.prove(&mut smtdb, queries);
+            let result = tree.prove(&mut smtdb, &queries);
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
@@ -634,7 +635,7 @@ impl StateDB {
 
         let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
 
-        db.prove(state_root, queries, cb)
+        db.prove(state_root, &queries, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())

@@ -1343,14 +1343,14 @@ impl SparseMerkleTree {
         Ok(self.root.clone())
     }
 
-    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+    pub fn prove(&mut self, db: &mut impl DB, queries: &[Vec<u8>]) -> Result<Proof, SMTError> {
         if queries.is_empty() {
             return Ok(Proof {
                 queries: vec![],
                 sibling_hashes: vec![],
             });
         }
-        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, &queries)?;
+        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, queries)?;
         let proof_queries = self.proof_queries(&query_with_proofs);
 
         query_with_proofs.sort_descending();
@@ -1781,7 +1781,10 @@ mod tests {
             let proof = tree
                 .prove(
                     &mut db,
-                    query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                    &query_keys
+                        .iter()
+                        .map(|k| hex::decode(k).unwrap())
+                        .collect::<Vec<Vec<u8>>>(),
                 )
                 .unwrap();
             for (i, query) in proof.queries.iter().enumerate() {
@@ -2028,7 +2031,10 @@ mod tests {
             let proof = tree
                 .prove(
                     &mut db,
-                    query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                    &query_keys
+                        .iter()
+                        .map(|k| hex::decode(k).unwrap())
+                        .collect::<Vec<Vec<u8>>>(),
                 )
                 .unwrap();
             for (i, query) in proof.queries.iter().enumerate() {
