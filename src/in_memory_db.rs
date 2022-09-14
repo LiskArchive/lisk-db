@@ -5,17 +5,16 @@ use std::cmp;
 use std::collections::HashMap;
 
 use crate::batch;
+use crate::db::Cache;
 use crate::options::IterationOption;
+use crate::smt::KVPair;
 use crate::utils;
 
 type SharedStateDB = JsBox<RefCell<Database>>;
 
 #[derive(Clone, Debug)]
-struct KVPair(Vec<u8>, Vec<u8>);
-
-#[derive(Clone, Debug)]
 pub struct CacheData {
-    data: HashMap<Vec<u8>, Vec<u8>>,
+    data: Cache,
 }
 
 pub struct Database {
@@ -24,10 +23,10 @@ pub struct Database {
 
 fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
     if !reverse {
-        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        pairs.sort_by(|a, b| a.key().cmp(b.key()));
         return;
     }
-    pairs.sort_by(|a, b| b.0.cmp(&a.0));
+    pairs.sort_by(|a, b| b.key().cmp(a.key()));
 }
 
 fn get_key_value_pairs(db: RefMut<Database>, options: IterationOption) -> Vec<KVPair> {
@@ -46,7 +45,7 @@ fn get_key_value_pairs(db: RefMut<Database>, options: IterationOption) -> Vec<KV
     let mut results = vec![];
     let mut exist_map = HashMap::new();
     for kv in cached {
-        exist_map.insert(kv.0.clone(), true);
+        exist_map.insert(kv.key_as_vec(), true);
         results.push(kv);
     }
 
@@ -74,9 +73,7 @@ impl Finalize for Database {}
 impl Database {
     pub fn new() -> Result<Self, rocksdb::Error> {
         Ok(Database {
-            cache: CacheData {
-                data: HashMap::new(),
-            },
+            cache: CacheData { data: Cache::new() },
         })
     }
 
@@ -88,7 +85,7 @@ impl Database {
                 utils::compare(k, start) != cmp::Ordering::Less
                     && utils::compare(k, end) != cmp::Ordering::Greater
             })
-            .map(|(k, v)| KVPair(k.clone(), v.clone()))
+            .map(|(k, v)| KVPair::new(k, v))
             .collect()
     }
 
@@ -96,7 +93,7 @@ impl Database {
         self.cache
             .data
             .iter()
-            .map(|(k, v)| KVPair(k.clone(), v.clone()))
+            .map(|(k, v)| KVPair::new(k, v))
             .collect()
     }
 
@@ -104,8 +101,10 @@ impl Database {
         self.cache.data.clear();
     }
 
-    fn set_kv(&mut self, key: &[u8], value: &[u8]) {
-        self.cache.data.insert(key.to_vec(), value.to_vec());
+    fn set_kv(&mut self, pair: &KVPair) {
+        self.cache
+            .data
+            .insert(pair.key_as_vec(), pair.value_as_vec());
     }
 
     fn del(&mut self, key: &[u8]) {
@@ -153,7 +152,7 @@ impl Database {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
 
-        db.set_kv(&key, &value);
+        db.set_kv(&KVPair::new(&key, &value));
 
         Ok(ctx.undefined())
     }
@@ -192,8 +191,8 @@ impl Database {
         let arr = JsArray::new(&mut ctx, kv_pairs.len() as u32);
         for (i, kv) in kv_pairs.iter().enumerate() {
             let obj = ctx.empty_object();
-            let key = JsBuffer::external(&mut ctx, kv.0.clone());
-            let value = JsBuffer::external(&mut ctx, kv.1.clone());
+            let key = JsBuffer::external(&mut ctx, kv.key_as_vec());
+            let value = JsBuffer::external(&mut ctx, kv.value_as_vec());
             obj.set(&mut ctx, "key", key)?;
             obj.set(&mut ctx, "value", value)?;
             arr.set(&mut ctx, i as u32, obj)?;

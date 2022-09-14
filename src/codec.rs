@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::smt::NestedVec;
+
 const MAX_VARINT_LEN: usize = 10;
 
 #[derive(Error, Debug)]
@@ -81,7 +83,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    pub fn read_bytes_slice(&mut self, field_number: u32) -> Result<Vec<Vec<u8>>, CodecError> {
+    pub fn read_bytes_slice(&mut self, field_number: u32) -> Result<NestedVec, CodecError> {
         let mut result = vec![];
         while self.index < self.end {
             let ok = self.check(field_number)?;

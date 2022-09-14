@@ -5,6 +5,8 @@ use crate::consts;
 
 pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
 
+pub type OptionVec = Option<Vec<u8>>;
+
 // Messages sent on the database channel
 pub enum DbMessage {
     // Callback to be executed
@@ -23,8 +25,8 @@ pub struct DatabaseOptions {
 pub struct IterationOption {
     pub limit: i64,
     pub reverse: bool,
-    pub gte: Option<Vec<u8>>,
-    pub lte: Option<Vec<u8>>,
+    pub gte: OptionVec,
+    pub lte: OptionVec,
 }
 
 impl DatabaseOptions {

@@ -3,10 +3,12 @@ use neon::types::buffer::TypedArray;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
+use crate::smt::KVPair;
+
 pub type SendableWriteBatch = RefCell<Arc<Mutex<WriteBatch>>>;
 
 pub trait BatchWriter {
-    fn put(&mut self, key: &[u8], value: &[u8]);
+    fn put(&mut self, pair: &KVPair);
     fn delete(&mut self, key: &[u8]);
 }
 
@@ -89,8 +91,9 @@ impl WriteBatch {
 }
 
 impl<'a> BatchWriter for PrefixWriteBatch<'a> {
-    fn put(&mut self, key: &[u8], value: &[u8]) {
-        self.batch.put([self.prefix.unwrap(), key].concat(), value);
+    fn put(&mut self, pair: &KVPair) {
+        self.batch
+            .put([self.prefix.unwrap(), pair.key()].concat(), pair.value());
     }
 
     fn delete(&mut self, key: &[u8]) {

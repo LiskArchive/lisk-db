@@ -25,23 +25,21 @@ pub enum DataStoreError {
     DiffNotFound(u32),
 }
 
-#[derive(Clone, Debug)]
-struct KVPair(Vec<u8>, Vec<u8>);
-
-struct CommitData {
+struct Commit {
     height: u32,
-    prev_root: Vec<u8>,
     readonly: bool,
-    expected: Vec<u8>,
     check_expected: bool,
+    expected: Vec<u8>,
 }
 
-struct CommitResultInfo<'a> {
+struct CommitData {
+    data: Commit,
+    prev_root: Vec<u8>,
+}
+
+struct CommitResultInfo {
     next_root: Result<Vec<u8>, smt::SMTError>,
-    expected: &'a [u8],
-    height: u32,
-    readonly: bool,
-    check_expected: bool,
+    data: Commit,
 }
 
 pub struct StateDB {
@@ -50,33 +48,33 @@ pub struct StateDB {
     key_length: usize,
 }
 
-impl CommitData {
-    fn new(h: u32, prev_root: &[u8], r: bool, expected: &[u8], check_expected: bool) -> Self {
+impl Commit {
+    fn new(expected: Vec<u8>, height: u32, readonly: bool, check_expected: bool) -> Self {
         Self {
-            height: h,
-            prev_root: prev_root.to_vec(),
-            readonly: r,
-            expected: expected.to_vec(),
+            height,
+            readonly,
             check_expected,
+            expected,
+        }
+    }
+
+    fn height_as_bytes(&self) -> [u8; 4] {
+        self.height.to_be_bytes()
+    }
+}
+
+impl CommitData {
+    fn new(data: Commit, prev_root: &[u8]) -> Self {
+        Self {
+            data,
+            prev_root: prev_root.to_vec(),
         }
     }
 }
 
-impl<'a> CommitResultInfo<'a> {
-    fn new(
-        next_root: Result<Vec<u8>, smt::SMTError>,
-        expected: &'a [u8],
-        height: u32,
-        readonly: bool,
-        check_expected: bool,
-    ) -> Self {
-        Self {
-            next_root,
-            expected,
-            height,
-            readonly,
-            check_expected,
-        }
+impl CommitResultInfo {
+    fn new(next_root: Result<Vec<u8>, smt::SMTError>, data: Commit) -> Self {
+        Self { data, next_root }
     }
 }
 
@@ -264,12 +262,14 @@ impl StateDB {
     ) -> Result<Vec<u8>, smt::SMTError> {
         info.next_root.as_ref()?;
         let root = info.next_root.unwrap();
-        if info.check_expected && utils::compare(info.expected, &root) != cmp::Ordering::Equal {
+        if info.data.check_expected
+            && utils::compare(&info.data.expected, &root) != cmp::Ordering::Equal
+        {
             return Err(smt::SMTError::InvalidRoot(String::from(
                 "Not matching with expected",
             )));
         }
-        if info.readonly {
+        if info.data.readonly {
             return Ok(root);
         }
         // Create global batch
@@ -278,7 +278,7 @@ impl StateDB {
         write_batch.set_prefix(&consts::PREFIX_STATE);
         let diff = writer.commit(&mut write_batch);
         write_batch.set_prefix(&consts::PREFIX_DIFF);
-        write_batch.put(info.height.to_be_bytes().as_slice(), diff.encode().as_ref());
+        write_batch.put(&info.data.height_as_bytes(), diff.encode().as_ref());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -305,8 +305,7 @@ impl StateDB {
             let mut tree =
                 smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_SIZE);
             let root = tree.commit(&mut smtdb, &mut data);
-            let result_info =
-                CommitResultInfo::new(root, &d.expected, d.height, d.readonly, d.check_expected);
+            let result_info = CommitResultInfo::new(root, d.data);
             let result = StateDB::handle_commit_result(conn, &smtdb, w, result_info);
 
             channel.send(move |mut ctx| {
@@ -330,7 +329,7 @@ impl StateDB {
     fn prove(
         &self,
         root: Vec<u8>,
-        queries: Vec<Vec<u8>>,
+        queries: smt::NestedVec,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.key_length;
@@ -354,9 +353,9 @@ impl StateDB {
                         let queries = ctx.empty_array();
                         for (i, v) in val.queries.iter().enumerate() {
                             let obj = ctx.empty_object();
-                            let key = JsBuffer::external(&mut ctx, v.key.to_vec());
+                            let key = JsBuffer::external(&mut ctx, v.key_as_vec());
                             obj.set(&mut ctx, "key", key)?;
-                            let value = JsBuffer::external(&mut ctx, v.value.to_vec());
+                            let value = JsBuffer::external(&mut ctx, v.value_as_vec());
                             obj.set(&mut ctx, "value", value)?;
                             let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
                             obj.set(&mut ctx, "bitmap", bitmap)?;
@@ -420,7 +419,7 @@ impl StateDB {
 impl StateDB {
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
+        let mut sibling_hashes: smt::NestedVec = vec![];
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(ctx, "siblingHashes")?
             .to_vec(ctx)?;
@@ -450,7 +449,10 @@ impl StateDB {
                 .get::<JsTypedArray<u8>, _, _>(ctx, "bitmap")?
                 .as_slice(ctx)
                 .to_vec();
-            queries.push(smt::QueryProof { key, value, bitmap });
+            queries.push(smt::QueryProof {
+                pair: smt::KVPair::new(&key, &value),
+                bitmap,
+            });
         }
 
         Ok(smt::Proof {
@@ -459,9 +461,9 @@ impl StateDB {
         })
     }
 
-    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<Vec<Vec<u8>>> {
+    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<smt::NestedVec> {
         let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
+        let mut parsed_query_keys: smt::NestedVec = vec![];
         for key in query_keys.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
@@ -609,7 +611,8 @@ impl StateDB {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
         let writer = writer.borrow().clone();
-        let commit_data = CommitData::new(height, &prev_root, readonly, &expected, check_root);
+        let commit = Commit::new(expected, height, readonly, check_root);
+        let commit_data = CommitData::new(commit, &prev_root);
         db.commit(writer, commit_data, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -623,7 +626,7 @@ impl StateDB {
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut queries: Vec<Vec<u8>> = vec![];
+        let mut queries: smt::NestedVec = vec![];
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj
@@ -645,7 +648,7 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
         let key_length = db.key_length;
-        // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof
+        // root: &Vec<u8>, query_keys: &smt::NestedVec, proof: &Proof
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let proof = Self::proof(&mut ctx)?;

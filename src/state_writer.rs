@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 use crate::batch;
+use crate::db::Cache;
 use crate::diff;
+use crate::options::OptionVec;
+use crate::smt::KVPair;
 use crate::utils;
 
 pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
@@ -24,11 +27,8 @@ pub enum StateWriterError {
 }
 
 #[derive(Clone, Debug)]
-struct KVPair(Vec<u8>, Vec<u8>);
-
-#[derive(Clone, Debug)]
 pub struct StateCache {
-    init: Option<Vec<u8>>,
+    init: OptionVec,
     value: Vec<u8>,
     dirty: bool,
     deleted: bool,
@@ -79,14 +79,14 @@ impl StateWriter {
         }
     }
 
-    pub fn cache_new(&mut self, key: &[u8], value: &[u8]) {
-        let cache = StateCache::new(value);
-        self.cache.insert(key.to_vec(), cache);
+    pub fn cache_new(&mut self, pair: &KVPair) {
+        let cache = StateCache::new(pair.value());
+        self.cache.insert(pair.key_as_vec(), cache);
     }
 
-    pub fn cache_existing(&mut self, key: &[u8], value: &[u8]) {
-        let cache = StateCache::new_existing(value);
-        self.cache.insert(key.to_vec(), cache);
+    pub fn cache_existing(&mut self, pair: &KVPair) {
+        let cache = StateCache::new_existing(pair.value());
+        self.cache.insert(pair.key_as_vec(), cache);
     }
 
     pub fn get(&self, key: &[u8]) -> (Vec<u8>, bool, bool) {
@@ -113,16 +113,16 @@ impl StateWriter {
                     && utils::compare(k, end) != cmp::Ordering::Greater
                     && !v.deleted
             })
-            .map(|(k, v)| KVPair(k.clone(), v.value.clone()))
+            .map(|(k, v)| KVPair::new(k, &v.value))
             .collect()
     }
 
-    pub fn update(&mut self, key: &[u8], value: &[u8]) -> Result<(), StateWriterError> {
+    pub fn update(&mut self, pair: &KVPair) -> Result<(), StateWriterError> {
         let mut cached = self
             .cache
-            .get_mut(key)
+            .get_mut(pair.key())
             .ok_or(StateWriterError::InvalidUsage)?;
-        cached.value = value.to_vec();
+        cached.value = pair.value_as_vec();
         cached.dirty = true;
         cached.deleted = false;
         Ok(())
@@ -158,8 +158,8 @@ impl StateWriter {
         Ok(())
     }
 
-    pub fn get_updated(&self) -> HashMap<Vec<u8>, Vec<u8>> {
-        let mut result = HashMap::new();
+    pub fn get_updated(&self) -> Cache {
+        let mut result = Cache::new();
         for (key, value) in self.cache.iter() {
             if value.init.is_none() || value.dirty {
                 result.insert(key.clone(), value.value.clone());
@@ -177,19 +177,20 @@ impl StateWriter {
         let mut updated = vec![];
         let mut deleted = vec![];
         for (key, value) in self.cache.iter() {
+            let kv = KVPair::new(key, &value.value);
             if value.init.is_none() {
                 created.push(key.to_vec());
-                batch.put(key, &value.value);
+                batch.put(&kv);
                 continue;
             }
             if value.deleted {
-                deleted.push(diff::KeyValue::new(key, &value.value));
+                deleted.push(KVPair::new(key, &value.value));
                 batch.delete(key);
                 continue;
             }
             if value.dirty {
-                updated.push(diff::KeyValue::new(key, &value.init.clone().unwrap()));
-                batch.put(key, &value.value);
+                updated.push(KVPair::new(key, &value.init.clone().unwrap()));
+                batch.put(&kv);
                 continue;
             }
         }
@@ -239,7 +240,7 @@ impl StateWriter {
         let mut inner_writer = writer.lock().unwrap();
 
         inner_writer
-            .update(&key, &value)
+            .update(&KVPair::new(&key, &value))
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -256,7 +257,7 @@ impl StateWriter {
         let writer = batch.borrow().clone();
         let mut inner_writer = writer.lock().unwrap();
 
-        inner_writer.cache_new(&key, &value);
+        inner_writer.cache_new(&KVPair::new(&key, &value));
 
         Ok(ctx.undefined())
     }
@@ -264,6 +265,7 @@ impl StateWriter {
     pub fn js_cache_existing(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
+        let pair = KVPair::new(&key, &value);
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -272,7 +274,7 @@ impl StateWriter {
         let writer = batch.borrow().clone();
         let mut inner_writer = writer.lock().unwrap();
 
-        inner_writer.cache_existing(&key, &value);
+        inner_writer.cache_existing(&pair);
 
         Ok(ctx.undefined())
     }
@@ -350,8 +352,8 @@ impl StateWriter {
         let arr = JsArray::new(&mut ctx, results.len() as u32);
         for (i, kv) in results.iter().enumerate() {
             let obj = ctx.empty_object();
-            let key = JsBuffer::external(&mut ctx, kv.0.clone());
-            let value = JsBuffer::external(&mut ctx, kv.1.clone());
+            let key = JsBuffer::external(&mut ctx, kv.key_as_vec());
+            let value = JsBuffer::external(&mut ctx, kv.value_as_vec());
             obj.set(&mut ctx, "key", key)?;
             obj.set(&mut ctx, "value", value)?;
             arr.set(&mut ctx, i as u32, obj)?;
@@ -369,8 +371,8 @@ mod tests {
     fn test_cache() {
         let mut writer = StateWriter::new();
 
-        writer.cache_new(&[0, 0, 2], &[1, 2, 3]);
-        writer.cache_existing(&[0, 0, 3], &[1, 2, 4]);
+        writer.cache_new(&KVPair::new(&[0, 0, 2], &[1, 2, 3]));
+        writer.cache_existing(&KVPair::new(&[0, 0, 3], &[1, 2, 4]));
 
         let (value, deleted, exists) = writer.get(&[0, 0, 2]);
         assert_eq!(value, &[1, 2, 3]);
