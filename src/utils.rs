@@ -176,7 +176,7 @@ pub fn strip_left_false(a: &[bool]) -> Vec<bool> {
     result
 }
 
-pub fn bytes_in(list: &Vec<Vec<u8>>, a: &[u8]) -> bool {
+pub fn bytes_in(list: &[Vec<u8>], a: &[u8]) -> bool {
     for v in list {
         if is_bytes_equal(v, a) {
             return true;
