@@ -51,12 +51,12 @@ pub struct StateDB {
 }
 
 impl CommitData {
-    fn new(h: u32, prev_root: Vec<u8>, r: bool, expected: Vec<u8>, check_expected: bool) -> Self {
+    fn new(h: u32, prev_root: &[u8], r: bool, expected: &[u8], check_expected: bool) -> Self {
         Self {
             height: h,
-            prev_root,
+            prev_root: prev_root.to_vec(),
             readonly: r,
-            expected,
+            expected: expected.to_vec(),
             check_expected,
         }
     }
@@ -140,7 +140,7 @@ impl StateDB {
 
     fn get_by_key(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
         self.send(move |conn, channel| {
-            let result = conn.get([consts::PREFIX_STATE, key.as_slice()].concat());
+            let result = conn.get([consts::PREFIX_STATE, &key].concat());
 
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
@@ -162,9 +162,10 @@ impl StateDB {
         .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
-    fn exists(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
+    fn exists(&self, key: &[u8], cb: Root<JsFunction>) -> Result<(), DataStoreError> {
+        let key = key.to_vec();
         self.send(move |conn, channel| {
-            let key_with_prefix = [consts::PREFIX_STATE, key.as_slice()].concat();
+            let key_with_prefix = [consts::PREFIX_STATE, &key].concat();
             let exist = conn.key_may_exist(&key_with_prefix);
             let result = if exist {
                 conn.get(&key_with_prefix).map(|res| res.is_some())
@@ -194,7 +195,7 @@ impl StateDB {
     fn get_revert_result(
         conn: &rocksdb::DB,
         height: u32,
-        state_root: Vec<u8>,
+        state_root: &[u8],
         key_length: usize,
     ) -> Result<Vec<u8>, DataStoreError> {
         let diff_bytes = conn
@@ -206,7 +207,7 @@ impl StateDB {
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
         let mut data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SmtDB::new(conn);
-        let mut tree = smt::SparseMerkleTree::new(&state_root, key_length, consts::SUBTREE_SIZE);
+        let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
         let prev_root = tree
             .commit(&mut smtdb, &mut data)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
@@ -236,7 +237,7 @@ impl StateDB {
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         let key_length = self.key_length;
         self.send(move |conn, channel| {
-            let result = StateDB::get_revert_result(conn, height, state_root, key_length);
+            let result = StateDB::get_revert_result(conn, height, &state_root, key_length);
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -329,11 +330,10 @@ impl StateDB {
     fn prove(
         &self,
         root: Vec<u8>,
-        queries: &[Vec<u8>],
+        queries: Vec<Vec<u8>>,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.key_length;
-        let queries = queries.to_vec();
         self.send(move |conn, channel| {
             let mut tree = smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_SIZE);
             let mut smtdb = smt_db::SmtDB::new(conn);
@@ -514,7 +514,7 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
-        db.exists(key, cb)
+        db.exists(&key, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -609,7 +609,7 @@ impl StateDB {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
         let writer = writer.borrow().clone();
-        let commit_data = CommitData::new(height, prev_root, readonly, expected, check_root);
+        let commit_data = CommitData::new(height, &prev_root, readonly, &expected, check_root);
         db.commit(writer, commit_data, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -635,7 +635,7 @@ impl StateDB {
 
         let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
 
-        db.prove(state_root, &queries, cb)
+        db.prove(state_root, queries, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
