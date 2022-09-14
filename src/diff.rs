@@ -17,12 +17,15 @@ pub struct Diff {
 }
 
 impl KeyValue {
-    pub fn new(key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self { key, value }
+    pub fn new(key: &[u8], value: &[u8]) -> Self {
+        Self {
+            key: key.to_vec(),
+            value: value.to_vec(),
+        }
     }
 
-    pub fn decode(val: Vec<u8>) -> Result<Self, codec::CodecError> {
-        let mut reader = codec::Reader::new(&val);
+    pub fn decode(val: &[u8]) -> Result<Self, codec::CodecError> {
+        let mut reader = codec::Reader::new(val);
         let key = reader.read_bytes(1)?;
         let value = reader.read_bytes(2)?;
         Ok(Self { key, value })
@@ -45,19 +48,19 @@ impl Diff {
         }
     }
 
-    pub fn decode(val: Vec<u8>) -> Result<Self, codec::CodecError> {
-        let mut reader = codec::Reader::new(&val);
+    pub fn decode(val: &[u8]) -> Result<Self, codec::CodecError> {
+        let mut reader = codec::Reader::new(val);
         let created = reader.read_bytes_slice(1)?;
         let updated_bytes = reader.read_bytes_slice(2)?;
         let mut updated = vec![];
         for value in updated_bytes.iter() {
-            let kv = KeyValue::decode(value.to_vec())?;
+            let kv = KeyValue::decode(value)?;
             updated.push(kv);
         }
         let deleted_bytes = reader.read_bytes_slice(3)?;
         let mut deleted = vec![];
         for value in deleted_bytes.iter() {
-            let kv = KeyValue::decode(value.to_vec())?;
+            let kv = KeyValue::decode(value)?;
             deleted.push(kv);
         }
         Ok(Self {

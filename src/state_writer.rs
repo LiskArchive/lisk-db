@@ -184,15 +184,12 @@ impl StateWriter {
                 continue;
             }
             if value.deleted {
-                deleted.push(diff::KeyValue::new(key.to_vec(), value.value.clone()));
+                deleted.push(diff::KeyValue::new(key, &value.value));
                 batch.delete(key);
                 continue;
             }
             if value.dirty {
-                updated.push(diff::KeyValue::new(
-                    key.to_vec(),
-                    value.init.clone().unwrap().to_vec(),
-                ));
+                updated.push(diff::KeyValue::new(key, &value.init.clone().unwrap()));
                 batch.put(key, &value.value);
                 continue;
             }

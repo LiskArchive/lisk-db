@@ -202,7 +202,7 @@ impl StateDB {
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
             .ok_or(DataStoreError::DiffNotFound(height))?;
 
-        let d = diff::Diff::decode(diff_bytes)
+        let d = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
         let mut data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SmtDB::new(conn);
