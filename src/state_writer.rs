@@ -41,20 +41,19 @@ pub struct StateWriter {
 }
 
 impl StateCache {
-    fn new(val: Vec<u8>) -> Self {
+    fn new(val: &[u8]) -> Self {
         Self {
             init: None,
-            value: val,
+            value: val.to_vec(),
             dirty: false,
             deleted: false,
         }
     }
 
-    fn new_existing(val: Vec<u8>) -> Self {
-        let init = val.clone();
+    fn new_existing(val: &[u8]) -> Self {
         Self {
-            init: Some(init),
-            value: val,
+            init: Some(val.to_vec()),
+            value: val.to_vec(),
             dirty: false,
             deleted: false,
         }
@@ -81,12 +80,12 @@ impl StateWriter {
     }
 
     pub fn cache_new(&mut self, key: &[u8], value: &[u8]) {
-        let cache = StateCache::new(value.to_vec());
+        let cache = StateCache::new(value);
         self.cache.insert(key.to_vec(), cache);
     }
 
     pub fn cache_existing(&mut self, key: &[u8], value: &[u8]) {
-        let cache = StateCache::new_existing(value.to_vec());
+        let cache = StateCache::new_existing(value);
         self.cache.insert(key.to_vec(), cache);
     }
 
@@ -184,15 +183,12 @@ impl StateWriter {
                 continue;
             }
             if value.deleted {
-                deleted.push(diff::KeyValue::new(key.to_vec(), value.value.clone()));
+                deleted.push(diff::KeyValue::new(key, &value.value));
                 batch.delete(key);
                 continue;
             }
             if value.dirty {
-                updated.push(diff::KeyValue::new(
-                    key.to_vec(),
-                    value.init.clone().unwrap().to_vec(),
-                ));
+                updated.push(diff::KeyValue::new(key, &value.init.clone().unwrap()));
                 batch.put(key, &value.value);
                 continue;
             }

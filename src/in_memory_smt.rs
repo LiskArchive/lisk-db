@@ -75,7 +75,7 @@ impl JsFunctionContext<'_> {
             let mut inner_smt = in_memory_smt.lock().unwrap();
 
             let mut tree =
-                SparseMerkleTree::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
 
             let result = tree.commit(&mut inner_smt.db, &mut update_data);
 
@@ -122,9 +122,9 @@ impl JsFunctionContext<'_> {
         thread::spawn(move || {
             let mut inner_smt = in_memory_smt.lock().unwrap();
             let mut tree =
-                SparseMerkleTree::new(state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
 
-            let result = tree.prove(&mut inner_smt.db, data);
+            let result = tree.prove(&mut inner_smt.db, &data);
 
             channel.send(move |mut ctx| {
                 let callback = callback.into_inner(&mut ctx);

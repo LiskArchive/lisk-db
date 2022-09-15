@@ -14,10 +14,10 @@ pub enum CodecError {
     InvalidWireType,
 }
 
-pub struct Reader {
+pub struct Reader<'a> {
     index: usize,
     end: usize,
-    data: Vec<u8>,
+    data: &'a [u8],
 }
 
 pub struct Writer {
@@ -71,8 +71,8 @@ fn read_key(val: u32) -> Result<(u32, u32), CodecError> {
     Ok((field_number, wire_type))
 }
 
-impl Reader {
-    pub fn new(data: Vec<u8>) -> Self {
+impl<'a> Reader<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
         let length = data.len();
         Self {
             data,
@@ -104,7 +104,7 @@ impl Reader {
     }
 
     fn read_only_bytes(&mut self) -> Result<Vec<u8>, CodecError> {
-        let (result, size) = read_varint(&self.data, self.index)?;
+        let (result, size) = read_varint(self.data, self.index)?;
         self.index += size;
         if result as usize > self.data.len() {
             return Err(CodecError::InvalidBytesLength);
@@ -120,7 +120,7 @@ impl Reader {
             return Ok(false);
         }
 
-        let (key, size) = read_varint(&self.data, self.index)?;
+        let (key, size) = read_varint(self.data, self.index)?;
         let (next_field_number, _) = read_key(key)?;
         if field_number != next_field_number {
             return Ok(false);
@@ -138,14 +138,14 @@ impl Writer {
         }
     }
 
-    pub fn write_bytes(&mut self, field_number: u32, value: &Vec<u8>) {
+    pub fn write_bytes(&mut self, field_number: u32, value: &[u8]) {
         self.write_key(2, field_number);
         self.write_varint(value.len() as u32);
         self.size += value.len();
         self.result.extend(value);
     }
 
-    pub fn write_bytes_slice(&mut self, field_number: u32, values: &Vec<Vec<u8>>) {
+    pub fn write_bytes_slice(&mut self, field_number: u32, values: &[Vec<u8>]) {
         if values.is_empty() {
             return;
         }

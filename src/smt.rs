@@ -14,16 +14,16 @@ static PREFIX_LEAF_HASH: &[u8] = &[0];
 static PREFIX_BRANCH_HASH: &[u8] = &[1];
 static PREFIX_EMPTY: &[u8] = &[2];
 
-type Hasher = fn(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8>;
+type Hasher = fn(node_hashes: &[Vec<u8>], structure: &[u8], height: usize) -> Vec<u8>;
 
 trait SortDescending {
     fn sort_descending(&mut self);
 }
 
 pub trait DB {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, rocksdb::Error>;
-    fn set(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), rocksdb::Error>;
-    fn del(&mut self, key: Vec<u8>) -> Result<(), rocksdb::Error>;
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, rocksdb::Error>;
+    fn set(&mut self, key: &[u8], value: &[u8]) -> Result<(), rocksdb::Error>;
+    fn del(&mut self, key: &[u8]) -> Result<(), rocksdb::Error>;
 }
 
 #[derive(Error, Debug)]
@@ -114,7 +114,7 @@ struct QueryHashesRefMut<'a> {
 }
 
 struct QueryHashesInfo<'a> {
-    layer_nodes: &'a Vec<Node>,
+    layer_nodes: &'a [Node],
     layer_structure: &'a [u8],
     ref_mut_vecs: QueryHashesRefMut<'a>,
     extra: QueryHashesExtraInfo,
@@ -155,19 +155,19 @@ pub struct SparseMerkleTree {
 }
 
 fn key_hash(key: &[u8]) -> Vec<u8> {
-    let prefix = key[..PREFIX_SIZE].to_vec();
-    let body = key[PREFIX_SIZE..].to_vec();
+    let prefix = &key[..PREFIX_SIZE];
+    let body = &key[PREFIX_SIZE..];
     let mut hasher = Sha256::new();
     hasher.update(body);
     let result = hasher.finalize();
-    return [prefix, result.as_slice().to_vec()].concat();
+    [prefix, result.as_slice()].concat()
 }
 
 fn value_hash(value: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(value);
     let result = hasher.finalize();
-    return result.as_slice().to_vec();
+    result.to_vec()
 }
 
 fn leaf_hash(key: &[u8], value: &[u8]) -> Vec<u8> {
@@ -176,7 +176,7 @@ fn leaf_hash(key: &[u8], value: &[u8]) -> Vec<u8> {
     hasher.update(key);
     hasher.update(value);
     let result = hasher.finalize();
-    return result.as_slice().to_vec();
+    result.to_vec()
 }
 
 fn branch_hash(node_hash: &[u8]) -> Vec<u8> {
@@ -184,16 +184,16 @@ fn branch_hash(node_hash: &[u8]) -> Vec<u8> {
     hasher.update(PREFIX_BRANCH_HASH);
     hasher.update(node_hash);
     let result = hasher.finalize();
-    return result.as_slice().to_vec();
+    result.to_vec()
 }
 
 fn empty_hash() -> Vec<u8> {
     let hasher = Sha256::new();
     let result = hasher.finalize();
-    return result.as_slice().to_vec();
+    result.to_vec()
 }
 
-fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> Vec<u8> {
+fn tree_hasher(node_hashes: &[Vec<u8>], structure: &[u8], height: usize) -> Vec<u8> {
     if node_hashes.len() == 1 {
         return node_hashes[0].clone();
     }
@@ -204,7 +204,7 @@ fn tree_hasher(node_hashes: &Vec<Vec<u8>>, structure: &[u8], height: usize) -> V
     while i < node_hashes.len() {
         if structure[i] == height as u8 {
             let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
-            let hash = branch_hash(branch.as_slice());
+            let hash = branch_hash(&branch);
             next_hashes.push(hash);
             next_structure.push(structure[i] - 1);
             i += 1;
@@ -264,14 +264,14 @@ fn parent_node(
 }
 
 fn calculate_subtree(
-    layer_nodes: &Vec<Node>,
+    layer_nodes: &[Node],
     layer_structure: &[u8],
     height: u8,
     tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
     hasher: Hasher,
 ) -> Result<SubTree, SMTError> {
     if height == 0 {
-        return SubTree::from_data(vec![0], layer_nodes.clone(), hasher);
+        return SubTree::from_data(&[0], layer_nodes, hasher);
     }
     let mut next_layer_nodes: Vec<Node> = vec![];
     let mut next_layer_structure: Vec<u8> = vec![];
@@ -295,9 +295,9 @@ fn calculate_subtree(
             let (nodes, structure) = tree_map
                 .pop_front()
                 .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
-            return SubTree::from_data(structure, nodes, hasher);
+            return SubTree::from_data(&structure, &nodes, hasher);
         }
-        return SubTree::from_data(vec![0], next_layer_nodes, hasher);
+        return SubTree::from_data(&[0], &next_layer_nodes, hasher);
     }
     calculate_subtree(
         &next_layer_nodes,
@@ -396,7 +396,7 @@ fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<Quer
 
 fn calculate_sibling_hashes(
     query_with_proofs: &mut VecDeque<QueryProofWithProof>,
-    ancestor_hashes: &Vec<Vec<u8>>,
+    ancestor_hashes: &[Vec<u8>],
     sibling_hashes: &mut Vec<Vec<u8>>,
 ) {
     if query_with_proofs.is_empty() {
@@ -487,7 +487,7 @@ impl UpdateData {
 impl QueryProofWithProof {
     fn new(
         key: &[u8],
-        value: &Vec<u8>,
+        value: &[u8],
         binary_bitmap: &[bool],
         ancestor_hashes: &[Vec<u8>],
         sibling_hashes: &[Vec<u8>],
@@ -499,7 +499,7 @@ impl QueryProofWithProof {
         };
         Self {
             key: key.to_vec(),
-            value: value.clone(),
+            value: value.to_vec(),
             binary_bitmap: binary_bitmap.to_vec(),
             bitmap: utils::bools_to_bytes(binary_bitmap),
             ancestor_hashes: ancestor_hashes.to_vec(),
@@ -613,34 +613,31 @@ impl Node {
 }
 
 impl SubTree {
-    pub fn new(data: Vec<u8>, key_length: usize, hasher: Hasher) -> Result<Self, SMTError> {
+    pub fn new(data: &[u8], key_length: usize, hasher: Hasher) -> Result<Self, SMTError> {
         if data.is_empty() {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
         }
         let node_length: usize = data[0] as usize + 1;
-        let structure = data[1..node_length + 1].to_vec();
-        let node_data = data[node_length + 1..].to_vec();
+        let structure = &data[1..node_length + 1];
+        let node_data = &data[node_length + 1..];
         let mut nodes = vec![];
         let mut idx = 0;
 
         while idx < node_data.len() {
             match node_data[idx] {
                 PREFIX_INT_LEAF_HASH => {
-                    let key = node_data
-                        [idx + PREFIX_LEAF_HASH.len()..idx + PREFIX_LEAF_HASH.len() + key_length]
-                        .to_vec();
-                    let value = node_data[idx + PREFIX_LEAF_HASH.len() + key_length
-                        ..idx + PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE]
-                        .to_vec();
-                    let node = Node::new_leaf(key.as_slice(), value.as_slice());
+                    let key = &node_data
+                        [idx + PREFIX_LEAF_HASH.len()..idx + PREFIX_LEAF_HASH.len() + key_length];
+                    let value = &node_data[idx + PREFIX_LEAF_HASH.len() + key_length
+                        ..idx + PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE];
+                    let node = Node::new_leaf(key, value);
                     nodes.push(node);
                     idx += PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE;
                 },
                 PREFIX_INT_BRANCH_HASH => {
-                    let node_hash = node_data[idx + PREFIX_BRANCH_HASH.len()
-                        ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE]
-                        .to_vec();
-                    nodes.push(Node::new_stub(node_hash.as_slice()));
+                    let node_hash = &node_data[idx + PREFIX_BRANCH_HASH.len()
+                        ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE];
+                    nodes.push(Node::new_stub(node_hash));
                     idx += PREFIX_BRANCH_HASH.len() + HASH_SIZE;
                 },
                 PREFIX_INT_EMPTY => {
@@ -655,25 +652,24 @@ impl SubTree {
             }
         }
 
-        SubTree::from_data(structure, nodes, hasher)
+        SubTree::from_data(structure, &nodes, hasher)
     }
 
-    pub fn from_data(
-        structure: Vec<u8>,
-        nodes: Vec<Node>,
-        hasher: Hasher,
-    ) -> Result<Self, SMTError> {
+    pub fn from_data(structure: &[u8], nodes: &[Node], hasher: Hasher) -> Result<Self, SMTError> {
         let height = structure
             .iter()
             .max()
             .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
 
-        let node_hashes = nodes.iter().map(|n| n.hash.clone()).collect();
-        let calculated = hasher(&node_hashes, &structure, *height as usize);
+        let node_hashes = nodes
+            .iter()
+            .map(|n| n.hash.clone())
+            .collect::<Vec<Vec<u8>>>();
+        let calculated = hasher(&node_hashes, structure, *height as usize);
 
         Ok(Self {
-            structure,
-            nodes,
+            structure: structure.to_vec(),
+            nodes: nodes.to_vec(),
             root: calculated,
         })
     }
@@ -714,7 +710,7 @@ impl QueryHashesExtraInfo {
 
 impl<'a> QueryHashesInfo<'a> {
     fn new(
-        layer_nodes: &'a Vec<Node>,
+        layer_nodes: &'a [Node],
         layer_structure: &'a [u8],
         vecs: QueryHashesRefMut<'a>,
         extra: QueryHashesExtraInfo,
@@ -792,8 +788,7 @@ impl SparseMerkleTree {
         let root = self.get_subtree(db, &self.root)?;
         let mut ancestor_hashes = vec![];
         for query in queries {
-            let query_proof =
-                self.generate_query_proof(db, &mut root.clone(), query.to_vec(), 0)?;
+            let query_proof = self.generate_query_proof(db, &mut root.clone(), query, 0)?;
             query_with_proofs.push(query_proof.clone());
             ancestor_hashes.extend(query_proof.ancestor_hashes);
         }
@@ -847,11 +842,11 @@ impl SparseMerkleTree {
         }
 
         let value = db
-            .get(node_hash.clone())
+            .get(node_hash)
             .map_err(|err| SMTError::Unknown(err.to_string()))?
             .ok_or_else(|| SMTError::NotFound(String::from("node_hash does not exist")))?;
 
-        SubTree::new(value, self.key_length, self.hasher)
+        SubTree::new(&value, self.key_length, self.hasher)
     }
 
     fn calc_bins(
@@ -905,8 +900,8 @@ impl SparseMerkleTree {
             let current_node = current_subtree.nodes[i].clone();
             let new_offset = 1 << (self.subtree_height - h as usize);
 
-            let slice_keys = bins.keys[bin_offset..bin_offset + new_offset].to_vec();
-            let slice_values = bins.values[bin_offset..bin_offset + new_offset].to_vec();
+            let slice_keys = &bins.keys[bin_offset..bin_offset + new_offset];
+            let slice_values = &bins.values[bin_offset..bin_offset + new_offset];
             let mut sum = 0;
             let base_length: Vec<u32> = slice_keys
                 .iter()
@@ -917,8 +912,8 @@ impl SparseMerkleTree {
                 .collect();
 
             let info = UpdateNodeInfo::new(
-                &slice_keys,
-                &slice_values,
+                slice_keys,
+                slice_values,
                 &base_length,
                 current_node,
                 0,
@@ -942,15 +937,15 @@ impl SparseMerkleTree {
     fn update_subtree(
         &mut self,
         db: &mut impl DB,
-        key_bin: Vec<Vec<u8>>,
-        value_bin: Vec<Vec<u8>>,
+        key_bin: &[Vec<u8>],
+        value_bin: &[Vec<u8>],
         current_subtree: &SubTree,
         height: u32,
     ) -> Result<SubTree, SMTError> {
         if key_bin.is_empty() {
             return Ok(current_subtree.clone());
         }
-        let updated = self.calc_updated_info(db, current_subtree, &key_bin, &value_bin, height)?;
+        let updated = self.calc_updated_info(db, current_subtree, key_bin, value_bin, height)?;
         if updated.bin_offset != self.max_number_of_nodes {
             return Err(SMTError::Unknown(format!(
                 "bin_offset {} expected {}",
@@ -973,7 +968,7 @@ impl SparseMerkleTree {
             self.hasher,
         )?;
         let value = new_subtree.encode();
-        db.set(new_subtree.root.clone(), value)
+        db.set(&new_subtree.root, &value)
             .map_err(|err| SMTError::Unknown(err.to_string()))?;
 
         Ok(new_subtree)
@@ -988,10 +983,7 @@ impl SparseMerkleTree {
 
         if info.current_node.kind == NodeKind::Empty {
             if !info.value_bins[idx][0].is_empty() {
-                let new_leaf = Node::new_leaf(
-                    info.key_bins[idx][0].as_slice(),
-                    info.value_bins[idx][0].as_slice(),
-                );
+                let new_leaf = Node::new_leaf(&info.key_bins[idx][0], &info.value_bins[idx][0]);
                 return Ok((vec![new_leaf], vec![info.h]));
             }
             return Ok((vec![info.current_node.clone()], vec![info.h]));
@@ -1001,10 +993,7 @@ impl SparseMerkleTree {
             && utils::is_bytes_equal(&info.current_node.key, &info.key_bins[idx][0])
         {
             if !info.value_bins[idx][0].is_empty() {
-                let new_leaf = Node::new_leaf(
-                    info.key_bins[idx][0].as_slice(),
-                    info.value_bins[idx][0].as_slice(),
-                );
+                let new_leaf = Node::new_leaf(&info.key_bins[idx][0], &info.value_bins[idx][0]);
                 return Ok((vec![new_leaf], vec![info.h]));
             }
             return Ok((vec![Node::new_empty()], vec![info.h]));
@@ -1021,14 +1010,12 @@ impl SparseMerkleTree {
         let btm_subtree = match info.current_node.kind {
             NodeKind::Stub => {
                 let subtree = self.get_subtree(db, &info.current_node.hash)?;
-                db.del(info.current_node.hash.clone())
+                db.del(&info.current_node.hash)
                     .map_err(|err| SMTError::Unknown(err.to_string()))?;
                 subtree
             },
             NodeKind::Empty => self.get_subtree(db, &info.current_node.hash)?,
-            NodeKind::Leaf => {
-                SubTree::from_data(vec![0], vec![info.current_node.clone()], self.hasher)?
-            },
+            NodeKind::Leaf => SubTree::from_data(&[0], &[info.current_node.clone()], self.hasher)?,
             _ => {
                 return Err(SMTError::Unknown(String::from("invalid node type")));
             },
@@ -1038,15 +1025,15 @@ impl SparseMerkleTree {
         }
         let new_subtree = self.update_subtree(
             db,
-            info.key_bins[0].clone(),
-            info.value_bins[0].clone(),
+            &info.key_bins[0],
+            &info.value_bins[0],
             &btm_subtree,
             info.height + info.h as u32,
         )?;
         if new_subtree.nodes.len() == 1 {
             return Ok((vec![new_subtree.nodes[0].clone()], vec![info.h]));
         }
-        let new_branch = Node::new_stub(new_subtree.root.as_slice());
+        let new_branch = Node::new_stub(&new_subtree.root);
 
         Ok((vec![new_branch], vec![info.h]))
     }
@@ -1056,7 +1043,7 @@ impl SparseMerkleTree {
             NodeKind::Empty => Ok((Node::new_empty(), Node::new_empty())),
             NodeKind::Leaf => {
                 if utils::is_bit_set(
-                    info.current_node.key.as_slice(),
+                    &info.current_node.key,
                     (info.height + info.h as u32) as usize,
                 ) {
                     Ok((Node::new_empty(), info.current_node.clone()))
@@ -1165,7 +1152,7 @@ impl SparseMerkleTree {
         if d.current_node.kind == NodeKind::Empty {
             return Ok(QueryProofWithProof::new(
                 d.query_key,
-                &vec![],
+                &[],
                 d.ref_mut_vecs.binary_bitmap,
                 &Vec::from(ancestor_hashes),
                 &(sibling_hashes),
@@ -1177,7 +1164,7 @@ impl SparseMerkleTree {
             return Ok(QueryProofWithProof::new(
                 &d.current_node.key,
                 // 0 index is the leaf prefix
-                &d.current_node.data[PREFIX_LEAF_HASH.len() + HASH_SIZE..].to_vec(),
+                &d.current_node.data[PREFIX_LEAF_HASH.len() + HASH_SIZE..],
                 &binary_bitmap,
                 &Vec::from(ancestor_hashes),
                 &sibling_hashes,
@@ -1188,7 +1175,7 @@ impl SparseMerkleTree {
         let lower_query_proof = self.generate_query_proof(
             db,
             &mut lower_subtree,
-            d.query_key.to_vec(),
+            d.query_key,
             d.height + d.query_height,
         )?;
 
@@ -1228,7 +1215,7 @@ impl SparseMerkleTree {
         &mut self,
         db: &mut impl DB,
         current_subtree: &mut SubTree,
-        query_key: Vec<u8>,
+        query_key: &[u8],
         height: usize,
     ) -> Result<QueryProofWithProof, SMTError> {
         if query_key.len() != self.key_length {
@@ -1242,7 +1229,7 @@ impl SparseMerkleTree {
         }
 
         let (current_node, query_height) =
-            self.find_current_node(current_subtree, &query_key, height)?;
+            self.find_current_node(current_subtree, query_key, height)?;
 
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
@@ -1260,7 +1247,7 @@ impl SparseMerkleTree {
         );
         calculate_query_hashes(info);
         let data = GenerateResultData {
-            query_key: &query_key,
+            query_key,
             current_node: &current_node,
             ref_mut_vecs: QueryHashesRefMut {
                 ancestor_hashes: &mut ancestor_hashes,
@@ -1312,12 +1299,12 @@ impl SparseMerkleTree {
         vec![]
     }
 
-    pub fn new(root: Vec<u8>, key_length: usize, subtree_height: usize) -> Self {
+    pub fn new(root: &[u8], key_length: usize, subtree_height: usize) -> Self {
         let max_number_of_nodes = 1 << subtree_height;
         let r = if root.is_empty() {
             utils::empty_hash()
         } else {
-            root
+            root.to_vec()
         };
         Self {
             root: r,
@@ -1338,19 +1325,19 @@ impl SparseMerkleTree {
         }
         let (update_keys, update_values) = data.entries();
         let root = self.get_subtree(db, &self.root)?;
-        let new_root = self.update_subtree(db, update_keys, update_values, &root, 0)?;
+        let new_root = self.update_subtree(db, &update_keys, &update_values, &root, 0)?;
         self.root = new_root.root;
         Ok(self.root.clone())
     }
 
-    pub fn prove(&mut self, db: &mut impl DB, queries: Vec<Vec<u8>>) -> Result<Proof, SMTError> {
+    pub fn prove(&mut self, db: &mut impl DB, queries: &[Vec<u8>]) -> Result<Proof, SMTError> {
         if queries.is_empty() {
             return Ok(Proof {
                 queries: vec![],
                 sibling_hashes: vec![],
             });
         }
-        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, &queries)?;
+        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, queries)?;
         let proof_queries = self.proof_queries(&query_with_proofs);
 
         query_with_proofs.sort_descending();
@@ -1370,7 +1357,7 @@ impl SparseMerkleTree {
     }
 
     pub fn verify(
-        query_keys: &Vec<Vec<u8>>,
+        query_keys: &[Vec<u8>],
         proof: &Proof,
         root: &[u8],
         key_length: usize,
@@ -1410,7 +1397,7 @@ mod tests {
 
         for (data, hash, structure) in test_data {
             let decoded_data = hex::decode(data).unwrap();
-            let tree = SubTree::new(decoded_data, 32, tree_hasher).unwrap();
+            let tree = SubTree::new(&decoded_data, 32, tree_hasher).unwrap();
             let decoded_hash = hex::decode(hash).unwrap();
             assert_eq!(tree.structure, structure);
             assert_eq!(tree.root, decoded_hash);
@@ -1426,14 +1413,14 @@ mod tests {
 
         for (data, _, _) in test_data {
             let decoded_data = hex::decode(data).unwrap();
-            let tree = SubTree::new(decoded_data.clone(), 32, tree_hasher).unwrap();
+            let tree = SubTree::new(&decoded_data, 32, tree_hasher).unwrap();
             assert_eq!(tree.encode(), decoded_data.clone());
         }
     }
 
     #[test]
     fn test_empty_tree() {
-        let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+        let mut tree = SparseMerkleTree::new(&[], 32, 8);
         let mut data = UpdateData {
             data: HashMap::new(),
         };
@@ -1456,7 +1443,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(&[], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1488,7 +1475,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(&[], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1528,7 +1515,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(&[], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1576,7 +1563,7 @@ mod tests {
         )];
 
         for (keys, values, root) in test_data {
-            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(&[], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1763,7 +1750,7 @@ mod tests {
         ];
 
         for (keys, values, root, query_keys, sibling_hashes, queries) in test_data {
-            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(&[], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -1781,7 +1768,10 @@ mod tests {
             let proof = tree
                 .prove(
                     &mut db,
-                    query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                    &query_keys
+                        .iter()
+                        .map(|k| hex::decode(k).unwrap())
+                        .collect::<Vec<Vec<u8>>>(),
                 )
                 .unwrap();
             for (i, query) in proof.queries.iter().enumerate() {
@@ -1798,7 +1788,10 @@ mod tests {
                 sibling_hashes
             );
             assert!(SparseMerkleTree::verify(
-                &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                &query_keys
+                    .iter()
+                    .map(|k| hex::decode(k).unwrap())
+                    .collect::<Vec<Vec<u8>>>(),
                 &proof,
                 &result,
                 32
@@ -2010,7 +2003,7 @@ mod tests {
         )];
 
         for (keys, values, root, query_keys, sibling_hashes, queries) in test_data {
-            let mut tree = SparseMerkleTree::new(vec![], 32, 8);
+            let mut tree = SparseMerkleTree::new(&[], 32, 8);
             let mut data = UpdateData {
                 data: HashMap::new(),
             };
@@ -2028,7 +2021,10 @@ mod tests {
             let proof = tree
                 .prove(
                     &mut db,
-                    query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                    &query_keys
+                        .iter()
+                        .map(|k| hex::decode(k).unwrap())
+                        .collect::<Vec<Vec<u8>>>(),
                 )
                 .unwrap();
             for (i, query) in proof.queries.iter().enumerate() {
@@ -2045,7 +2041,10 @@ mod tests {
                 sibling_hashes
             );
             assert!(SparseMerkleTree::verify(
-                &query_keys.iter().map(|k| hex::decode(k).unwrap()).collect(),
+                &query_keys
+                    .iter()
+                    .map(|k| hex::decode(k).unwrap())
+                    .collect::<Vec<Vec<u8>>>(),
                 &proof,
                 &result,
                 32
