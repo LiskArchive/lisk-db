@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::smt::NestedVec;
+use crate::types::NestedVec;
 
 const MAX_VARINT_LEN: usize = 10;
 

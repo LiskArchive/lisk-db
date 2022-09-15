@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
@@ -9,8 +8,6 @@ use crate::batch;
 use crate::options;
 use crate::utils;
 
-pub type Cache = HashMap<Vec<u8>, Vec<u8>>;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     message: String,
@@ -20,17 +17,7 @@ pub struct Database {
     tx: mpsc::Sender<options::DbMessage>,
 }
 
-pub trait New {
-    fn new() -> Self;
-}
-
 impl Finalize for Database {}
-
-impl New for Cache {
-    fn new() -> Self {
-        HashMap::new()
-    }
-}
 
 impl Database {
     fn new<'a, C>(

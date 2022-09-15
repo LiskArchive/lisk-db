@@ -5,9 +5,8 @@ use std::cmp;
 use std::collections::HashMap;
 
 use crate::batch;
-use crate::db::Cache;
 use crate::options::IterationOption;
-use crate::smt::KVPair;
+use crate::types::{Cache, KVPair};
 use crate::utils;
 
 type SharedStateDB = JsBox<RefCell<Database>>;

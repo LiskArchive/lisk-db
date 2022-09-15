@@ -1,7 +1,5 @@
 use crate::consts;
-use crate::db::Cache;
-use crate::options::OptionVec;
-use crate::smt;
+use crate::types::{Cache, KVPair, VecOption, DB};
 
 pub struct SmtDB<'a> {
     db: &'a rocksdb::DB,
@@ -12,13 +10,13 @@ pub struct InMemorySmtDB {
     cache: Cache,
 }
 
-impl smt::DB for SmtDB<'_> {
-    fn get(&self, key: &[u8]) -> Result<OptionVec, rocksdb::Error> {
+impl DB for SmtDB<'_> {
+    fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error> {
         let result = self.db.get([consts::PREFIX_SMT, key].concat())?;
         Ok(result)
     }
 
-    fn set(&mut self, pair: &smt::KVPair) -> Result<(), rocksdb::Error> {
+    fn set(&mut self, pair: &KVPair) -> Result<(), rocksdb::Error> {
         self.batch.put(pair.key(), pair.value());
         Ok(())
     }
@@ -38,8 +36,8 @@ impl<'a> SmtDB<'a> {
     }
 }
 
-impl smt::DB for InMemorySmtDB {
-    fn get(&self, key: &[u8]) -> Result<OptionVec, rocksdb::Error> {
+impl DB for InMemorySmtDB {
+    fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error> {
         let result = self.cache.get(key);
         if let Some(value) = result {
             return Ok(Some(value.clone()));
@@ -47,7 +45,7 @@ impl smt::DB for InMemorySmtDB {
         Ok(None)
     }
 
-    fn set(&mut self, pair: &smt::KVPair) -> Result<(), rocksdb::Error> {
+    fn set(&mut self, pair: &KVPair) -> Result<(), rocksdb::Error> {
         self.cache.insert(pair.key_as_vec(), pair.value_as_vec());
         Ok(())
     }

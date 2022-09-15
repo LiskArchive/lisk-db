@@ -6,9 +6,9 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::consts;
-use crate::db::Cache;
-use crate::smt::{KVPair, NestedVec, Proof, QueryProof, SparseMerkleTree, UpdateData};
+use crate::smt::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::smt_db;
+use crate::types::{Cache, KVPair, NestedVec};
 
 type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 type DatabaseParameters = (Arc<Mutex<InMemorySMT>>, Vec<u8>, Root<JsFunction>);
@@ -103,7 +103,7 @@ impl JsFunctionContext<'_> {
             .context
             .argument::<JsArray>(1)?
             .to_vec(&mut self.context)?;
-        let mut data: NestedVec = vec![];
+        let mut data = NestedVec::new();
         for key in input.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut self.context)?
@@ -166,7 +166,7 @@ impl JsFunctionContext<'_> {
 
     fn get_proof(&mut self) -> NeonResult<Proof> {
         let raw_proof = self.context.argument::<JsObject>(2)?;
-        let mut sibling_hashes: NestedVec = vec![];
+        let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(&mut self.context, "siblingHashes")?
             .to_vec(&mut self.context)?;
@@ -219,7 +219,7 @@ impl JsFunctionContext<'_> {
             .context
             .argument::<JsArray>(1)?
             .to_vec(&mut self.context)?;
-        let mut parsed_query_keys: NestedVec = vec![];
+        let mut parsed_query_keys = NestedVec::new();
         for key in query_keys.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut self.context)?

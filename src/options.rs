@@ -2,10 +2,9 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::consts;
+use crate::types::VecOption;
 
 pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
-
-pub type OptionVec = Option<Vec<u8>>;
 
 // Messages sent on the database channel
 pub enum DbMessage {
@@ -25,8 +24,8 @@ pub struct DatabaseOptions {
 pub struct IterationOption {
     pub limit: i64,
     pub reverse: bool,
-    pub gte: OptionVec,
-    pub lte: OptionVec,
+    pub gte: VecOption,
+    pub lte: VecOption,
 }
 
 impl DatabaseOptions {

@@ -1,7 +1,6 @@
 use crate::batch;
 use crate::codec;
-use crate::db::Cache;
-use crate::smt::{KVPair, KVPairCodec, NestedVec};
+use crate::types::{Cache, KVPair, KVPairCodec, NestedVec};
 
 #[derive(Clone, Debug)]
 pub struct Diff {

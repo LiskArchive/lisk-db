@@ -3,9 +3,7 @@ use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use thiserror::Error;
 
-use crate::codec;
-use crate::db::Cache;
-use crate::options::OptionVec;
+use crate::types::{Cache, KVPair, NestedVec, VecOption, DB};
 use crate::utils;
 
 const PREFIX_INT_LEAF_HASH: u8 = 0;
@@ -19,21 +17,8 @@ static PREFIX_EMPTY: &[u8] = &[2];
 
 type Hasher = fn(node_hashes: &[Vec<u8>], structure: &[u8], height: usize) -> Vec<u8>;
 
-pub type NestedVec = Vec<Vec<u8>>;
-
 trait SortDescending {
     fn sort_descending(&mut self);
-}
-
-pub trait DB {
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, rocksdb::Error>;
-    fn set(&mut self, pair: &KVPair) -> Result<(), rocksdb::Error>;
-    fn del(&mut self, key: &[u8]) -> Result<(), rocksdb::Error>;
-}
-
-pub trait KVPairCodec {
-    fn decode(val: &[u8]) -> Result<KVPair, codec::CodecError>;
-    fn encode(&self) -> Vec<u8>;
 }
 
 #[derive(Error, Debug)]
@@ -55,9 +40,6 @@ enum NodeKind {
     Stub,
     Temp,
 }
-
-#[derive(Clone, Debug)]
-pub struct KVPair(Vec<u8>, Vec<u8>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateData {
@@ -88,9 +70,8 @@ struct QueryProofWithProof {
 #[derive(Clone, Debug)]
 struct Node {
     kind: NodeKind,
+    hash: KVPair,
     key: Vec<u8>,
-    data: Vec<u8>,
-    hash: Vec<u8>,
     index: usize,
 }
 
@@ -317,15 +298,17 @@ fn calculate_subtree(
 }
 
 fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
-    let mut parent_node =
-        Node::new_branch(&info.layer_nodes[i].hash, &info.layer_nodes[i + 1].hash);
+    let mut parent_node = Node::new_branch(
+        info.layer_nodes[i].hash.value(),
+        info.layer_nodes[i + 1].hash.value(),
+    );
     parent_node.index = info.extra.max_index + i;
     next_info.layer_nodes.push(parent_node.clone());
     next_info.layer_structure.push(info.layer_structure[i] - 1);
     if next_info.target_id == info.layer_nodes[i].index {
         info.ref_mut_vecs
             .ancestor_hashes
-            .push_front(parent_node.hash.clone());
+            .push_front(parent_node.hash.value_as_vec());
         next_info.target_id = parent_node.index;
         if info.layer_nodes[i + 1].kind == NodeKind::Empty {
             info.ref_mut_vecs.binary_bitmap.push(false);
@@ -333,12 +316,12 @@ fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInf
             info.ref_mut_vecs.binary_bitmap.push(true);
             info.ref_mut_vecs
                 .sibling_hashes
-                .push_front(info.layer_nodes[i + 1].hash.clone());
+                .push_front(info.layer_nodes[i + 1].hash.value_as_vec());
         }
     } else if next_info.target_id == info.layer_nodes[i + 1].index {
         info.ref_mut_vecs
             .ancestor_hashes
-            .push_front(parent_node.hash.clone());
+            .push_front(parent_node.hash.value_as_vec());
         next_info.target_id = parent_node.index;
         if info.layer_nodes[i].kind == NodeKind::Empty {
             info.ref_mut_vecs.binary_bitmap.push(false);
@@ -346,7 +329,7 @@ fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInf
             info.ref_mut_vecs.binary_bitmap.push(true);
             info.ref_mut_vecs
                 .sibling_hashes
-                .push_front(info.layer_nodes[i].hash.clone());
+                .push_front(info.layer_nodes[i].hash.value_as_vec());
         }
     }
 }
@@ -453,32 +436,6 @@ impl rocksdb::WriteBatchIterator for UpdateData {
     /// Called with a key that was `delete`d from the batch.
     fn delete(&mut self, key: Box<[u8]>) {
         self.data.insert(key_hash(&key), vec![]);
-    }
-}
-
-impl KVPair {
-    pub fn new(key: &[u8], value: &[u8]) -> Self {
-        Self(key.to_vec(), value.to_vec())
-    }
-
-    pub fn key(&self) -> &[u8] {
-        &self.0
-    }
-
-    pub fn value(&self) -> &[u8] {
-        &self.1
-    }
-
-    pub fn key_as_vec(&self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-
-    pub fn value_as_vec(&self) -> Vec<u8> {
-        self.1.to_vec()
-    }
-
-    pub fn is_empty_value(&self) -> bool {
-        self.1.is_empty()
     }
 }
 
@@ -614,8 +571,7 @@ impl Node {
     fn new_temp() -> Self {
         Self {
             kind: NodeKind::Temp,
-            data: vec![],
-            hash: vec![],
+            hash: KVPair::new(&[], &[]),
             key: vec![],
             index: 0,
         }
@@ -625,8 +581,7 @@ impl Node {
         let data = [PREFIX_BRANCH_HASH, node_hash].concat();
         Self {
             kind: NodeKind::Stub,
-            data,
-            hash: node_hash.to_vec(),
+            hash: KVPair::new(&data, node_hash),
             key: vec![],
             index: 0,
         }
@@ -638,8 +593,7 @@ impl Node {
         let hashed = branch_hash(&combined);
         Self {
             kind: NodeKind::Stub,
-            data,
-            hash: hashed,
+            hash: KVPair::new(&data, &hashed),
             key: vec![],
             index: 0,
         }
@@ -650,8 +604,7 @@ impl Node {
         let data = [PREFIX_LEAF_HASH, pair.key(), pair.value()].concat();
         Self {
             kind: NodeKind::Leaf,
-            data,
-            hash: h,
+            hash: KVPair::new(&data, &h),
             key: pair.key_as_vec(),
             index: 0,
         }
@@ -662,8 +615,7 @@ impl Node {
         let data = [PREFIX_EMPTY].concat();
         Self {
             kind: NodeKind::Empty,
-            data,
-            hash: h,
+            hash: KVPair::new(&data, &h),
             key: vec![],
             index: 0,
         }
@@ -721,7 +673,10 @@ impl SubTree {
             .max()
             .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
 
-        let node_hashes = nodes.iter().map(|n| n.hash.clone()).collect::<NestedVec>();
+        let node_hashes = nodes
+            .iter()
+            .map(|n| n.hash.value_as_vec())
+            .collect::<NestedVec>();
         let calculated = hasher(&node_hashes, structure, *height as usize);
 
         Ok(Self {
@@ -739,13 +694,13 @@ impl SubTree {
         Self {
             structure,
             nodes: node_hashes,
-            root: empty.hash,
+            root: empty.hash.value_as_vec(),
         }
     }
 
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
-        let node_hashes: NestedVec = self.nodes.iter().map(|n| n.data.clone()).collect();
+        let node_hashes: NestedVec = self.nodes.iter().map(|n| n.hash.key_as_vec()).collect();
         [
             vec![node_length],
             self.structure.clone(),
@@ -888,7 +843,7 @@ impl SparseMerkleTree {
         true
     }
 
-    fn get_subtree(&self, db: &impl DB, node_hash: &Vec<u8>) -> Result<SubTree, SMTError> {
+    fn get_subtree(&self, db: &impl DB, node_hash: &[u8]) -> Result<SubTree, SMTError> {
         if node_hash.is_empty() {
             return Ok(SubTree::new_empty());
         }
@@ -1071,12 +1026,12 @@ impl SparseMerkleTree {
     ) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
         let btm_subtree = match info.current_node.kind {
             NodeKind::Stub => {
-                let subtree = self.get_subtree(db, &info.current_node.hash)?;
-                db.del(&info.current_node.hash)
+                let subtree = self.get_subtree(db, info.current_node.hash.value())?;
+                db.del(info.current_node.hash.value())
                     .map_err(|err| SMTError::Unknown(err.to_string()))?;
                 subtree
             },
-            NodeKind::Empty => self.get_subtree(db, &info.current_node.hash)?,
+            NodeKind::Empty => self.get_subtree(db, info.current_node.hash.value())?,
             NodeKind::Leaf => SubTree::from_data(&[0], &[info.current_node.clone()], self.hasher)?,
             _ => {
                 return Err(SMTError::Unknown(String::from("invalid node type")));
@@ -1222,10 +1177,10 @@ impl SparseMerkleTree {
         }
 
         if d.current_node.kind == NodeKind::Leaf {
-            ancestor_hashes.push_back(d.current_node.hash.clone());
+            ancestor_hashes.push_back(d.current_node.hash.value_as_vec());
             let pair = KVPair::new(
                 &d.current_node.key,
-                &d.current_node.data[PREFIX_LEAF_HASH.len() + HASH_SIZE..],
+                &d.current_node.hash.key()[PREFIX_LEAF_HASH.len() + HASH_SIZE..],
             );
             return Ok(QueryProofWithProof::new_with_pair(
                 pair,
@@ -1236,7 +1191,7 @@ impl SparseMerkleTree {
             ));
         }
 
-        let mut lower_subtree = self.get_subtree(db, &d.current_node.hash)?;
+        let mut lower_subtree = self.get_subtree(db, d.current_node.hash.value())?;
         let lower_query_proof = self.generate_query_proof(
             db,
             &mut lower_subtree,
@@ -1336,7 +1291,7 @@ impl SparseMerkleTree {
                 return query.hash.clone();
             }
 
-            let mut sibling_hash: OptionVec = None;
+            let mut sibling_hash: VecOption = None;
 
             if !sorted_queries.is_empty() && query.is_sibling_of(&sorted_queries[0]) {
                 let sibling = sorted_queries.pop_front().unwrap();

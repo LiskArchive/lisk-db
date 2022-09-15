@@ -7,10 +7,8 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 use crate::batch;
-use crate::db::Cache;
 use crate::diff;
-use crate::options::OptionVec;
-use crate::smt::KVPair;
+use crate::types::{Cache, KVPair, VecOption};
 use crate::utils;
 
 pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
@@ -28,7 +26,7 @@ pub enum StateWriterError {
 
 #[derive(Clone, Debug)]
 pub struct StateCache {
-    init: OptionVec,
+    init: VecOption,
     value: Vec<u8>,
     dirty: bool,
     deleted: bool,

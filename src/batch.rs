@@ -3,7 +3,7 @@ use neon::types::buffer::TypedArray;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
-use crate::smt::KVPair;
+use crate::types::KVPair;
 
 pub type SendableWriteBatch = RefCell<Arc<Mutex<WriteBatch>>>;
 

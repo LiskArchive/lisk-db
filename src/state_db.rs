@@ -13,6 +13,7 @@ use crate::options;
 use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
+use crate::types::{KVPair, NestedVec};
 use crate::utils;
 
 type SharedStateDB = JsBox<RefCell<StateDB>>;
@@ -64,11 +65,8 @@ impl Commit {
 }
 
 impl CommitData {
-    fn new(data: Commit, prev_root: &[u8]) -> Self {
-        Self {
-            data,
-            prev_root: prev_root.to_vec(),
-        }
+    fn new(data: Commit, prev_root: Vec<u8>) -> Self {
+        Self { data, prev_root }
     }
 }
 
@@ -329,7 +327,7 @@ impl StateDB {
     fn prove(
         &self,
         root: Vec<u8>,
-        queries: smt::NestedVec,
+        queries: NestedVec,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.key_length;
@@ -419,7 +417,7 @@ impl StateDB {
 impl StateDB {
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: smt::NestedVec = vec![];
+        let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(ctx, "siblingHashes")?
             .to_vec(ctx)?;
@@ -450,7 +448,7 @@ impl StateDB {
                 .as_slice(ctx)
                 .to_vec();
             queries.push(smt::QueryProof {
-                pair: smt::KVPair::new(&key, &value),
+                pair: KVPair::new(&key, &value),
                 bitmap,
             });
         }
@@ -461,9 +459,9 @@ impl StateDB {
         })
     }
 
-    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<smt::NestedVec> {
+    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<NestedVec> {
         let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
-        let mut parsed_query_keys: smt::NestedVec = vec![];
+        let mut parsed_query_keys = NestedVec::new();
         for key in query_keys.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
@@ -612,7 +610,7 @@ impl StateDB {
         }
         let writer = writer.borrow().clone();
         let commit = Commit::new(expected, height, readonly, check_root);
-        let commit_data = CommitData::new(commit, &prev_root);
+        let commit_data = CommitData::new(commit, prev_root);
         db.commit(writer, commit_data, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -626,7 +624,7 @@ impl StateDB {
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut queries: smt::NestedVec = vec![];
+        let mut queries = NestedVec::new();
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj
@@ -648,7 +646,6 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
         let key_length = db.key_length;
-        // root: &Vec<u8>, query_keys: &smt::NestedVec, proof: &Proof
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let proof = Self::proof(&mut ctx)?;
