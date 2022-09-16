@@ -2,7 +2,7 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::consts;
-use crate::types::VecOption;
+use crate::types::{DatabaseOptions, KeyLength, VecOption};
 
 pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
 
@@ -14,12 +14,6 @@ pub enum DbMessage {
     Close,
 }
 
-#[derive(Debug)]
-pub struct DatabaseOptions {
-    pub readonly: bool,
-    pub key_length: usize,
-}
-
 #[derive(Clone, Debug)]
 pub struct IterationOption {
     pub limit: i64,
@@ -29,7 +23,14 @@ pub struct IterationOption {
 }
 
 impl DatabaseOptions {
-    pub fn new<'a, C>(
+    fn new() -> Self {
+        Self {
+            readonly: false,
+            key_length: consts::KEY_LENGTH,
+        }
+    }
+
+    pub fn new_with_context<'a, C>(
         ctx: &mut C,
         input: Option<Handle<JsValue>>,
     ) -> Result<Self, neon::result::Throw>
@@ -37,10 +38,7 @@ impl DatabaseOptions {
         C: Context<'a>,
     {
         if input.is_none() {
-            return Ok(Self {
-                readonly: false,
-                key_length: consts::KEY_LENGTH,
-            });
+            return Ok(Self::new());
         }
         let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
         let readonly = obj
@@ -51,14 +49,15 @@ impl DatabaseOptions {
                     .unwrap_or(false)
             })
             .unwrap_or(false);
-        let key_length = obj
-            .get_opt::<JsNumber, _, _>(ctx, "keyLength")?
-            .map(|val| {
-                val.downcast::<JsNumber, _>(ctx)
-                    .map(|val| val.value(ctx) as usize)
-                    .unwrap_or(consts::KEY_LENGTH)
-            })
-            .unwrap_or(consts::KEY_LENGTH);
+        let key_length = KeyLength(
+            obj.get_opt::<JsNumber, _, _>(ctx, "keyLength")?
+                .map(|val| {
+                    val.downcast::<JsNumber, _>(ctx)
+                        .map(|val| val.value(ctx) as u16)
+                        .unwrap_or_else(|_| consts::KEY_LENGTH.into())
+                })
+                .unwrap_or_else(|| consts::KEY_LENGTH.into()),
+        );
 
         Ok(Self {
             readonly,

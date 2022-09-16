@@ -6,6 +6,7 @@ use neon::types::buffer::TypedArray;
 
 use crate::batch;
 use crate::options;
+use crate::types::DatabaseOptions;
 use crate::utils;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,11 +21,7 @@ pub struct Database {
 impl Finalize for Database {}
 
 impl Database {
-    fn new<'a, C>(
-        ctx: &mut C,
-        path: String,
-        opts: options::DatabaseOptions,
-    ) -> Result<Self, rocksdb::Error>
+    fn new<'a, C>(ctx: &mut C, path: String, opts: DatabaseOptions) -> Result<Self, rocksdb::Error>
     where
         C: Context<'a>,
     {
@@ -134,7 +131,7 @@ impl Database {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<Database>> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
-        let db_opts = options::DatabaseOptions::new(&mut ctx, options)?;
+        let db_opts = DatabaseOptions::new_with_context(&mut ctx, options)?;
         let db = Database::new(&mut ctx, path, db_opts).or_else(|err| ctx.throw_error(&err))?;
 
         return Ok(ctx.boxed(db));

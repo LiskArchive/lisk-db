@@ -8,11 +8,11 @@ use neon::types::buffer::TypedArray;
 use crate::consts;
 use crate::smt::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::smt_db;
-use crate::types::{Cache, KVPair, NestedVec};
+use crate::types::{Cache, KVPair, KeyLength, NestedVec};
 
 type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 type DatabaseParameters = (Arc<Mutex<InMemorySMT>>, Vec<u8>, Root<JsFunction>);
-type VerifyParameters = (Vec<u8>, NestedVec, Proof, usize, Root<JsFunction>);
+type VerifyParameters = (Vec<u8>, NestedVec, Proof, KeyLength, Root<JsFunction>);
 
 struct JsFunctionContext<'a> {
     context: FunctionContext<'a>,
@@ -20,7 +20,7 @@ struct JsFunctionContext<'a> {
 
 pub struct InMemorySMT {
     db: smt_db::InMemorySmtDB,
-    key_length: usize,
+    key_length: KeyLength,
 }
 
 impl JsFunctionContext<'_> {
@@ -75,7 +75,7 @@ impl JsFunctionContext<'_> {
             let mut inner_smt = in_memory_smt.lock().unwrap();
 
             let mut tree =
-                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_HEIGHT);
 
             let result = tree.commit(&mut inner_smt.db, &mut update_data);
 
@@ -122,7 +122,7 @@ impl JsFunctionContext<'_> {
         thread::spawn(move || {
             let mut inner_smt = in_memory_smt.lock().unwrap();
             let mut tree =
-                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_HEIGHT);
 
             let result = tree.prove(&mut inner_smt.db, &data);
 
@@ -233,7 +233,8 @@ impl JsFunctionContext<'_> {
         let key_length = self
             .context
             .argument::<JsNumber>(3)?
-            .value(&mut self.context) as usize;
+            .value(&mut self.context)
+            .into();
         let callback = self
             .context
             .argument::<JsFunction>(4)?
@@ -247,7 +248,7 @@ impl Finalize for InMemorySMT {}
 
 impl InMemorySMT {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
-        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
+        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
         let tree = InMemorySMT {
             db: smt_db::InMemorySmtDB::new(),
             key_length,
