@@ -2,13 +2,19 @@ use std::collections::HashMap;
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
 
+use sha2::{Digest, Sha256};
+
 use crate::codec;
+use crate::consts::PREFIX_BRANCH_HASH;
+
+const PREFIX_SIZE: usize = 6;
 
 pub type NestedVec = Vec<Vec<u8>>;
 pub type SharedNestedVec<'a> = Vec<&'a [u8]>;
 pub type Cache = HashMap<Vec<u8>, Vec<u8>>;
 pub type VecOption = Option<Vec<u8>>;
 pub type SharedVec = Arc<Mutex<Arc<Vec<u8>>>>;
+pub type ArcMutex<T> = Arc<Mutex<T>>;
 
 // Strong type of SMT with max value KEY_LENGTH * 8
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -33,10 +39,13 @@ pub enum SubtreeHeightKind {
     Sixteen = 16,
 }
 
-#[derive(Debug)]
-pub struct DatabaseOptions {
-    pub readonly: bool,
-    pub key_length: KeyLength,
+// HashKind represents kind of Vec that should be used in HashWithKind trait
+#[derive(PartialEq, Eq)]
+pub enum HashKind {
+    Key,
+    Value,
+    Branch,
+    Empty,
 }
 
 #[derive(Clone, Debug)]
@@ -45,14 +54,16 @@ pub struct KVPair(pub Vec<u8>, pub Vec<u8>);
 #[derive(Clone, Debug)]
 pub struct SharedKVPair<'a>(pub &'a [u8], pub &'a [u8]);
 
-pub trait DB {
-    fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error>;
-    fn set(&mut self, pair: &KVPair) -> Result<(), rocksdb::Error>;
-    fn del(&mut self, key: &[u8]) -> Result<(), rocksdb::Error>;
-}
-
 pub trait New {
     fn new() -> Self;
+}
+
+pub trait Hash256 {
+    fn hash(&self) -> Vec<u8>;
+}
+
+pub trait HashWithKind {
+    fn hash_with_kind(&self, kind: HashKind) -> Vec<u8>;
 }
 
 pub trait KVPairCodec {
@@ -177,6 +188,33 @@ impl From<StructurePosition> for Height {
     #[inline]
     fn from(value: StructurePosition) -> Height {
         Height(value.0)
+    }
+}
+
+impl HashWithKind for Vec<u8> {
+    fn hash_with_kind(&self, kind: HashKind) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        match kind {
+            HashKind::Key => {
+                let body = &self[PREFIX_SIZE..];
+                hasher.update(body);
+            },
+            HashKind::Value => {
+                hasher.update(self);
+            },
+            HashKind::Branch => {
+                hasher.update(PREFIX_BRANCH_HASH);
+                hasher.update(self);
+            },
+            HashKind::Empty => {},
+        };
+        let result = hasher.finalize();
+        if kind == HashKind::Key {
+            let prefix = &self[..PREFIX_SIZE];
+            [prefix, result.as_slice()].concat()
+        } else {
+            result.to_vec()
+        }
     }
 }
 

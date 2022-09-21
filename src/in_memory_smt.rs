@@ -1,17 +1,19 @@
-use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
+use crate::common_db::{
+    DatabaseKind, JsArcMutex, JsNewWithArcMutex, Kind as DBKind, NewDBWithKeyLength,
+};
 use crate::consts;
 use crate::smt::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::smt_db;
-use crate::types::{Cache, KVPair, KeyLength, NestedVec};
+use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
 
-type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
-type DatabaseParameters = (Arc<Mutex<InMemorySMT>>, Vec<u8>, Root<JsFunction>);
+type SharedInMemorySMT = JsArcMutex<InMemorySMT>;
+type DatabaseParameters = (ArcMutex<InMemorySMT>, Vec<u8>, Root<JsFunction>);
 type VerifyParameters = (Vec<u8>, NestedVec, Proof, KeyLength, Root<JsFunction>);
 
 struct JsFunctionContext<'a> {
@@ -22,6 +24,24 @@ pub struct InMemorySMT {
     db: smt_db::InMemorySmtDB,
     key_length: KeyLength,
 }
+
+impl NewDBWithKeyLength for InMemorySMT {
+    fn new_db_with_key_length(len: Option<KeyLength>) -> Self {
+        Self {
+            db: smt_db::InMemorySmtDB::default(),
+            key_length: len.expect("The key_length should have a value"),
+        }
+    }
+}
+
+impl DatabaseKind for InMemorySMT {
+    fn db_kind() -> DBKind {
+        DBKind::InMemorySMT
+    }
+}
+
+impl JsNewWithArcMutex for InMemorySMT {}
+impl Finalize for InMemorySMT {}
 
 impl JsFunctionContext<'_> {
     fn get_database_parameters(&mut self) -> NeonResult<DatabaseParameters> {
@@ -244,20 +264,7 @@ impl JsFunctionContext<'_> {
     }
 }
 
-impl Finalize for InMemorySMT {}
-
 impl InMemorySMT {
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
-        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
-        let tree = InMemorySMT {
-            db: smt_db::InMemorySmtDB::new(),
-            key_length,
-        };
-
-        let ref_tree = RefCell::new(Arc::new(Mutex::new(tree)));
-        return Ok(ctx.boxed(ref_tree));
-    }
-
     pub fn js_update(ctx: FunctionContext) -> JsResult<JsUndefined> {
         let mut js_context = JsFunctionContext { context: ctx };
 

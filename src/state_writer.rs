@@ -1,17 +1,20 @@
-use neon::prelude::*;
-use neon::types::buffer::TypedArray;
-use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use thiserror::Error;
 
 use crate::batch;
+use crate::common_db::{
+    DatabaseKind, JsArcMutex, JsNewWithArcMutex, Kind as DBKind, NewDBWithKeyLength,
+};
 use crate::diff;
-use crate::types::{Cache, KVPair, SharedKVPair, VecOption};
+use crate::types::{Cache, KVPair, KeyLength, SharedKVPair, VecOption};
 use crate::utils;
 
-pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
+pub type SendableStateWriter = JsArcMutex<StateWriter>;
 
 trait Batch {
     fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>);
@@ -32,11 +35,35 @@ pub struct StateCache {
     deleted: bool,
 }
 
+#[derive(Default)]
 pub struct StateWriter {
     counter: u32,
     pub backup: HashMap<u32, HashMap<Vec<u8>, StateCache>>,
     pub cache: HashMap<Vec<u8>, StateCache>,
 }
+
+impl DatabaseKind for StateWriter {
+    fn db_kind() -> DBKind {
+        DBKind::StateWriter
+    }
+}
+
+impl Clone for StateWriter {
+    fn clone(&self) -> Self {
+        let mut cloned = StateWriter::default();
+        cloned.cache.clone_from(&self.cache);
+        cloned
+    }
+}
+
+impl NewDBWithKeyLength for StateWriter {
+    fn new_db_with_key_length(_: Option<KeyLength>) -> Self {
+        Self::default()
+    }
+}
+
+impl JsNewWithArcMutex for StateWriter {}
+impl Finalize for StateWriter {}
 
 impl StateCache {
     fn new(val: &[u8]) -> Self {
@@ -58,25 +85,7 @@ impl StateCache {
     }
 }
 
-impl Finalize for StateWriter {}
-
-impl Clone for StateWriter {
-    fn clone(&self) -> Self {
-        let mut cloned = StateWriter::new();
-        cloned.cache.clone_from(&self.cache);
-        cloned
-    }
-}
-
 impl StateWriter {
-    pub fn new() -> Self {
-        Self {
-            counter: 0,
-            backup: HashMap::new(),
-            cache: HashMap::new(),
-        }
-    }
-
     pub fn cache_new(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new(pair.value());
         self.cache.insert(pair.key_as_vec(), cache);
@@ -197,18 +206,12 @@ impl StateWriter {
 }
 
 impl StateWriter {
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<SendableStateWriter>> {
-        let batch = RefCell::new(Arc::new(Mutex::new(StateWriter::new())));
-
-        Ok(ctx.boxed(batch))
-    }
-
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsObject> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let writer = Arc::clone(&batch.borrow());
         let inner_writer = writer.lock().unwrap();
@@ -232,7 +235,7 @@ impl StateWriter {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let writer = Arc::clone(&batch.borrow());
         let mut inner_writer = writer.lock().unwrap();
@@ -250,7 +253,7 @@ impl StateWriter {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let writer = Arc::clone(&batch.borrow());
         let mut inner_writer = writer.lock().unwrap();
@@ -267,7 +270,7 @@ impl StateWriter {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let writer = Arc::clone(&batch.borrow());
         let mut inner_writer = writer.lock().unwrap();
@@ -282,7 +285,7 @@ impl StateWriter {
         // Get the `this` value as a `JsBox<Database>`
         let writer = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let batch = Arc::clone(&writer.borrow());
         let mut inner_writer = batch.lock().unwrap();
@@ -297,7 +300,7 @@ impl StateWriter {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let writer = Arc::clone(&batch.borrow());
         let inner_writer = writer.lock().unwrap();
@@ -310,7 +313,7 @@ impl StateWriter {
     pub fn js_snapshot(mut ctx: FunctionContext) -> JsResult<JsNumber> {
         let writer = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let batch = Arc::clone(&writer.borrow());
         let mut inner_writer = batch.lock().unwrap();
@@ -323,7 +326,7 @@ impl StateWriter {
     pub fn js_restore_snapshot(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let writer = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let batch = Arc::clone(&writer.borrow());
         let mut inner_writer = batch.lock().unwrap();
@@ -341,7 +344,7 @@ impl StateWriter {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
 
         let writer = Arc::clone(&batch.borrow());
         let inner_writer = writer.lock().unwrap();
@@ -367,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_cache() {
-        let mut writer = StateWriter::new();
+        let mut writer = StateWriter::default();
 
         writer.cache_new(&SharedKVPair::new(&[0, 0, 2], &[1, 2, 3]));
         writer.cache_existing(&SharedKVPair::new(&[0, 0, 3], &[1, 2, 4]));

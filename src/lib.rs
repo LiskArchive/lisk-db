@@ -1,7 +1,10 @@
 use neon::prelude::*;
 
+use crate::common_db::{JsNewWithArcMutex, JsNewWithBox, JsNewWithBoxRef};
+
 mod batch;
 mod codec;
+mod common_db;
 mod consts;
 mod db;
 mod diff;
@@ -17,7 +20,10 @@ mod utils;
 
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
-    cx.export_function("db_new", db::Database::js_new)?;
+    cx.export_function(
+        "db_new",
+        db::Database::js_new_with_box::<common_db::Options, db::Database>,
+    )?;
     cx.export_function("db_clear", db::Database::js_clear)?;
     cx.export_function("db_close", db::Database::js_close)?;
     cx.export_function("db_get", db::Database::js_get)?;
@@ -27,11 +33,17 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("db_write", db::Database::js_write)?;
     cx.export_function("db_iterate", db::Database::js_iterate)?;
 
-    cx.export_function("batch_new", batch::WriteBatch::js_new)?;
+    cx.export_function(
+        "batch_new",
+        batch::WriteBatch::js_new_with_arc_mutx::<batch::WriteBatch>,
+    )?;
     cx.export_function("batch_set", batch::WriteBatch::js_set)?;
     cx.export_function("batch_del", batch::WriteBatch::js_del)?;
 
-    cx.export_function("state_db_new", state_db::StateDB::js_new)?;
+    cx.export_function(
+        "state_db_new",
+        state_db::StateDB::js_new_with_box_ref::<common_db::Options, state_db::StateDB>,
+    )?;
     cx.export_function("state_db_close", state_db::StateDB::js_close)?;
     cx.export_function("state_db_get", state_db::StateDB::js_get)?;
     cx.export_function("state_db_exists", state_db::StateDB::js_exists)?;
@@ -45,7 +57,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
         state_db::StateDB::js_clean_diff_until,
     )?;
 
-    cx.export_function("state_writer_new", state_writer::StateWriter::js_new)?;
+    cx.export_function(
+        "state_writer_new",
+        state_writer::StateWriter::js_new_with_arc_mutx::<state_writer::StateWriter>,
+    )?;
     cx.export_function("state_writer_get", state_writer::StateWriter::js_get)?;
     cx.export_function("state_writer_update", state_writer::StateWriter::js_update)?;
     cx.export_function("state_writer_del", state_writer::StateWriter::js_del)?;
@@ -74,7 +89,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
         state_writer::StateWriter::js_restore_snapshot,
     )?;
 
-    cx.export_function("in_memory_db_new", in_memory_db::Database::js_new)?;
+    cx.export_function(
+        "in_memory_db_new",
+        in_memory_db::Database::js_new_with_box_ref::<common_db::Options, in_memory_db::Database>,
+    )?;
     cx.export_function("in_memory_db_clone", in_memory_db::Database::js_clone)?;
     cx.export_function("in_memory_db_get", in_memory_db::Database::js_get)?;
     cx.export_function("in_memory_db_set", in_memory_db::Database::js_set)?;
@@ -83,7 +101,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("in_memory_db_write", in_memory_db::Database::js_write)?;
     cx.export_function("in_memory_db_iterate", in_memory_db::Database::js_iterate)?;
 
-    cx.export_function("in_memory_smt_new", in_memory_smt::InMemorySMT::js_new)?;
+    cx.export_function(
+        "in_memory_smt_new",
+        in_memory_smt::InMemorySMT::js_new_with_arc_mutx::<in_memory_smt::InMemorySMT>,
+    )?;
     cx.export_function(
         "in_memory_smt_update",
         in_memory_smt::InMemorySMT::js_update,
