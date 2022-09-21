@@ -21,7 +21,7 @@ impl KVPairCodec for KVPair {
         let mut writer = codec::Writer::new();
         writer.write_bytes(1, self.key());
         writer.write_bytes(2, self.value());
-        writer.result()
+        writer.result().to_vec()
     }
 }
 
@@ -64,7 +64,7 @@ impl Diff {
         let deleted: NestedVec = self.deleted.iter().map(|v| v.encode()).collect();
         writer.write_bytes_slice(3, &deleted);
 
-        writer.result()
+        writer.result().to_vec()
     }
 
     pub fn revert_update(&self) -> Cache {

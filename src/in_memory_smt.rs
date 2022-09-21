@@ -84,7 +84,7 @@ impl JsFunctionContext<'_> {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val.to_vec());
+                        let buffer = JsBuffer::external(&mut ctx, val.lock().unwrap().clone());
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],

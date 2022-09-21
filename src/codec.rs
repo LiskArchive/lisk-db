@@ -156,8 +156,8 @@ impl Writer {
         }
     }
 
-    pub fn result(&self) -> Vec<u8> {
-        self.result.clone()
+    pub fn result(&self) -> &Vec<u8> {
+        &self.result
     }
 
     fn write_key(&mut self, wire_type: u32, field_number: u32) {

@@ -66,7 +66,7 @@ impl WriteBatch {
             .this()
             .downcast_or_throw::<JsBox<SendableWriteBatch>, _>(&mut ctx)?;
 
-        let batch = batch.borrow().clone();
+        let batch = batch.borrow();
         let mut inner_batch = batch.lock().unwrap();
 
         inner_batch.batch.put(key, value);
@@ -81,7 +81,7 @@ impl WriteBatch {
             .this()
             .downcast_or_throw::<JsBox<SendableWriteBatch>, _>(&mut ctx)?;
 
-        let batch = batch.borrow().clone();
+        let batch = batch.borrow();
         let mut inner_batch = batch.lock().unwrap();
 
         inner_batch.batch.delete(key);

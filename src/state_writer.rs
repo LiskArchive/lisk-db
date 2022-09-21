@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::batch;
 use crate::diff;
-use crate::types::{Cache, KVPair, VecOption};
+use crate::types::{Cache, KVPair, SharedKVPair, VecOption};
 use crate::utils;
 
 pub type SendableStateWriter = RefCell<Arc<Mutex<StateWriter>>>;
@@ -77,12 +77,12 @@ impl StateWriter {
         }
     }
 
-    pub fn cache_new(&mut self, pair: &KVPair) {
+    pub fn cache_new(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new(pair.value());
         self.cache.insert(pair.key_as_vec(), cache);
     }
 
-    pub fn cache_existing(&mut self, pair: &KVPair) {
+    pub fn cache_existing(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new_existing(pair.value());
         self.cache.insert(pair.key_as_vec(), cache);
     }
@@ -255,7 +255,7 @@ impl StateWriter {
         let writer = batch.borrow().clone();
         let mut inner_writer = writer.lock().unwrap();
 
-        inner_writer.cache_new(&KVPair::new(&key, &value));
+        inner_writer.cache_new(&SharedKVPair::new(&key, &value));
 
         Ok(ctx.undefined())
     }
@@ -263,7 +263,7 @@ impl StateWriter {
     pub fn js_cache_existing(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let pair = KVPair::new(&key, &value);
+        let pair = SharedKVPair::new(&key, &value);
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
@@ -369,8 +369,8 @@ mod tests {
     fn test_cache() {
         let mut writer = StateWriter::new();
 
-        writer.cache_new(&KVPair::new(&[0, 0, 2], &[1, 2, 3]));
-        writer.cache_existing(&KVPair::new(&[0, 0, 3], &[1, 2, 4]));
+        writer.cache_new(&SharedKVPair::new(&[0, 0, 2], &[1, 2, 3]));
+        writer.cache_existing(&SharedKVPair::new(&[0, 0, 3], &[1, 2, 4]));
 
         let (value, deleted, exists) = writer.get(&[0, 0, 2]);
         assert_eq!(value, &[1, 2, 3]);

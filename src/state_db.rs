@@ -38,7 +38,7 @@ struct CommitData {
 }
 
 struct CommitResultInfo {
-    next_root: Result<Vec<u8>, smt::SMTError>,
+    next_root: Result<Arc<Mutex<Vec<u8>>>, smt::SMTError>,
     data: Commit,
 }
 
@@ -64,7 +64,7 @@ impl CommitData {
 }
 
 impl CommitResultInfo {
-    fn new(next_root: Result<Vec<u8>, smt::SMTError>, data: Commit) -> Self {
+    fn new(next_root: Result<Arc<Mutex<Vec<u8>>>, smt::SMTError>, data: Commit) -> Self {
         Self { data, next_root }
     }
 }
@@ -185,7 +185,7 @@ impl StateDB {
         height: Height,
         state_root: &[u8],
         key_length: KeyLength,
-    ) -> Result<Vec<u8>, DataStoreError> {
+    ) -> Result<Arc<Mutex<Vec<u8>>>, DataStoreError> {
         let diff_bytes = conn
             .get(&[consts::PREFIX_DIFF, &height.as_u32_to_be_bytes()].concat())
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
@@ -231,7 +231,7 @@ impl StateDB {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val);
+                        let buffer = JsBuffer::external(&mut ctx, val.lock().unwrap().clone());
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
@@ -249,11 +249,11 @@ impl StateDB {
         smtdb: &smt_db::SmtDB,
         writer: MutexGuard<state_writer::StateWriter>,
         info: CommitResultInfo,
-    ) -> Result<Vec<u8>, smt::SMTError> {
+    ) -> Result<Arc<Mutex<Vec<u8>>>, smt::SMTError> {
         info.next_root.as_ref()?;
         let root = info.next_root.unwrap();
         if info.data.check_expected
-            && utils::compare(&info.data.expected, &root) != cmp::Ordering::Equal
+            && utils::compare(&info.data.expected, &root.lock().unwrap()) != cmp::Ordering::Equal
         {
             return Err(smt::SMTError::InvalidRoot(String::from(
                 "Not matching with expected",
@@ -304,7 +304,7 @@ impl StateDB {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val);
+                        let buffer = JsBuffer::external(&mut ctx, val.lock().unwrap().clone());
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],

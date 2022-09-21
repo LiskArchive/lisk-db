@@ -1,10 +1,12 @@
 use sha2::{Digest, Sha256};
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 use crate::types::{
-    Cache, Height, KVPair, KeyLength, NestedVec, StructurePosition, SubtreeHeight, VecOption, DB,
+    Cache, Height, KVPair, KeyLength, NestedVec, SharedKVPair, SharedNestedVec, StructurePosition,
+    SubtreeHeight, VecOption, DB,
 };
 use crate::utils;
 
@@ -118,8 +120,8 @@ struct NextQueryHashesInfo {
     target_id: usize,
 }
 struct UpdateNodeInfo<'a> {
-    key_bins: &'a [NestedVec],
-    value_bins: &'a [NestedVec],
+    key_bins: &'a [SharedNestedVec<'a>],
+    value_bins: &'a [SharedNestedVec<'a>],
     length_bins: &'a [u32],
     current_node: Node,
     length_base: u32,
@@ -127,9 +129,9 @@ struct UpdateNodeInfo<'a> {
     structure_pos: StructurePosition,
 }
 
-struct Bins {
-    keys: Vec<NestedVec>,
-    values: Vec<NestedVec>,
+struct Bins<'a> {
+    keys: Vec<SharedNestedVec<'a>>,
+    values: Vec<SharedNestedVec<'a>>,
 }
 
 struct UpdatedInfo {
@@ -139,7 +141,7 @@ struct UpdatedInfo {
 }
 
 pub struct SparseMerkleTree {
-    root: Vec<u8>,
+    root: Arc<Mutex<Vec<u8>>>,
     key_length: KeyLength,
     subtree_height: SubtreeHeight,
     max_number_of_nodes: usize,
@@ -498,12 +500,12 @@ impl UpdateData {
         Self { data: new_data }
     }
 
-    pub fn entries(&self) -> (NestedVec, NestedVec) {
+    pub fn entries(&self) -> (SharedNestedVec, SharedNestedVec) {
         let mut kv_pair = vec![];
         for (k, v) in self.data.iter() {
-            kv_pair.push(KVPair(k.clone(), v.clone()));
+            kv_pair.push(SharedKVPair(k, v));
         }
-        kv_pair.sort_by(|a, b| a.0.cmp(&b.0));
+        kv_pair.sort_by(|a, b| a.0.cmp(b.0));
         let mut keys = vec![];
         let mut values = vec![];
         for kv in kv_pair {
@@ -774,8 +776,8 @@ impl NextQueryHashesInfo {
 
 impl<'a> UpdateNodeInfo<'a> {
     fn new(
-        key_bins: &'a [NestedVec],
-        value_bins: &'a [NestedVec],
+        key_bins: &'a [SharedNestedVec],
+        value_bins: &'a [SharedNestedVec],
         length_bins: &'a [u32],
         current_node: Node,
         length_base: u32,
@@ -813,7 +815,7 @@ impl SparseMerkleTree {
         queries: &[Vec<u8>],
     ) -> Result<(Vec<QueryProofWithProof>, NestedVec), SMTError> {
         let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
-        let root = self.get_subtree(db, &self.root)?;
+        let root = self.get_subtree(db, &self.root.lock().unwrap())?;
         let mut ancestor_hashes = vec![];
         for query in queries {
             let query_proof =
@@ -878,12 +880,12 @@ impl SparseMerkleTree {
         SubTree::new(&value, self.key_length, self.hasher)
     }
 
-    fn calc_bins(
+    fn calc_bins<'a>(
         &mut self,
-        key_bin: &[Vec<u8>],
-        value_bin: &[Vec<u8>],
+        key_bin: &'a [&'a [u8]],
+        value_bin: &'a [&'a [u8]],
         height: Height,
-    ) -> Result<Bins, SMTError> {
+    ) -> Result<Bins<'a>, SMTError> {
         let mut keys = vec![];
         let mut values = vec![];
 
@@ -893,8 +895,8 @@ impl SparseMerkleTree {
         }
         let b = height.div_to_usize(8);
         for i in 0..key_bin.len() {
-            let k = key_bin[i].clone();
-            let v = value_bin[i].clone();
+            let k = key_bin[i];
+            let v = value_bin[i];
             let bin_idx = if self.subtree_height.is_four() {
                 match height.mod_to_u8(8) {
                     0 => Ok(k[b] >> 4),
@@ -912,12 +914,12 @@ impl SparseMerkleTree {
         Ok(Bins { keys, values })
     }
 
-    fn calc_updated_info(
+    fn calc_updated_info<'a>(
         &mut self,
         db: &mut impl DB,
         current_subtree: &SubTree,
-        key_bin: &[Vec<u8>],
-        value_bin: &[Vec<u8>],
+        key_bin: &'a [&'a [u8]],
+        value_bin: &'a [&'a [u8]],
         height: Height,
     ) -> Result<UpdatedInfo, SMTError> {
         let bins = self.calc_bins(key_bin, value_bin, height)?;
@@ -963,11 +965,11 @@ impl SparseMerkleTree {
         })
     }
 
-    fn update_subtree(
+    fn update_subtree<'a>(
         &mut self,
         db: &mut impl DB,
-        key_bin: &[Vec<u8>],
-        value_bin: &[Vec<u8>],
+        key_bin: &'a [&'a [u8]],
+        value_bin: &'a [&'a [u8]],
         current_subtree: &SubTree,
         height: Height,
     ) -> Result<SubTree, SMTError> {
@@ -1015,23 +1017,19 @@ impl SparseMerkleTree {
 
         if info.current_node.kind == NodeKind::Empty {
             if !info.value_bins[idx][0].is_empty() {
-                let new_leaf = Node::new_leaf(&KVPair::new(
-                    &info.key_bins[idx][0],
-                    &info.value_bins[idx][0],
-                ));
+                let new_leaf =
+                    Node::new_leaf(&KVPair::new(info.key_bins[idx][0], info.value_bins[idx][0]));
                 return Ok(Some((new_leaf, info.structure_pos)));
             }
             return Ok(Some((info.current_node.clone(), info.structure_pos)));
         }
 
         if info.current_node.kind == NodeKind::Leaf
-            && utils::is_bytes_equal(&info.current_node.key, &info.key_bins[idx][0])
+            && utils::is_bytes_equal(&info.current_node.key, info.key_bins[idx][0])
         {
             if !info.value_bins[idx][0].is_empty() {
-                let new_leaf = Node::new_leaf(&KVPair::new(
-                    &info.key_bins[idx][0],
-                    &info.value_bins[idx][0],
-                ));
+                let new_leaf =
+                    Node::new_leaf(&KVPair::new(info.key_bins[idx][0], info.value_bins[idx][0]));
                 return Ok(Some((new_leaf, info.structure_pos)));
             }
             return Ok(Some((Node::new_empty(), info.structure_pos)));
@@ -1350,7 +1348,7 @@ impl SparseMerkleTree {
             root.to_vec()
         };
         Self {
-            root: r,
+            root: Arc::new(Mutex::new(r)),
             key_length,
             hasher: tree_hasher,
             subtree_height,
@@ -1362,15 +1360,15 @@ impl SparseMerkleTree {
         &mut self,
         db: &mut impl DB,
         data: &mut UpdateData,
-    ) -> Result<Vec<u8>, SMTError> {
+    ) -> Result<Arc<Mutex<Vec<u8>>>, SMTError> {
         if data.is_empty() {
-            return Ok(self.root.clone());
+            return Ok(Arc::clone(&self.root));
         }
         let (update_keys, update_values) = data.entries();
-        let root = self.get_subtree(db, &self.root)?;
+        let root = self.get_subtree(db, &self.root.lock().unwrap())?;
         let new_root = self.update_subtree(db, &update_keys, &update_values, &root, Height(0))?;
-        self.root = new_root.root;
-        Ok(self.root.clone())
+        self.root = Arc::new(Mutex::new(new_root.root));
+        Ok(Arc::clone(&self.root))
     }
 
     pub fn prove(&mut self, db: &mut impl DB, queries: &[Vec<u8>]) -> Result<Proof, SMTError> {
@@ -1469,7 +1467,7 @@ mod tests {
         let result = tree.commit(&mut db, &mut data);
 
         assert_eq!(
-            result.unwrap(),
+            *result.unwrap().lock().unwrap(),
             hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
                 .unwrap()
         );
@@ -1495,7 +1493,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
         }
     }
 
@@ -1525,7 +1523,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
         }
     }
 
@@ -1563,7 +1561,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
         }
     }
 
@@ -1609,7 +1607,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(result.unwrap(), hex::decode(root).unwrap());
+            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
         }
     }
 
@@ -1797,7 +1795,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data).unwrap();
 
-            assert_eq!(result.clone(), hex::decode(root).unwrap());
+            assert_eq!(*result.lock().unwrap(), hex::decode(root).unwrap());
 
             let proof = tree
                 .prove(
@@ -1827,7 +1825,7 @@ mod tests {
                     .map(|k| hex::decode(k).unwrap())
                     .collect::<NestedVec>(),
                 &proof,
-                &result,
+                &result.lock().unwrap(),
                 KeyLength(32)
             )
             .unwrap());
@@ -2060,7 +2058,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data).unwrap();
 
-            assert_eq!(result.clone(), hex::decode(root).unwrap());
+            assert_eq!(*result.lock().unwrap(), hex::decode(root).unwrap());
 
             let proof = tree
                 .prove(
@@ -2090,7 +2088,7 @@ mod tests {
                     .map(|k| hex::decode(k).unwrap())
                     .collect::<NestedVec>(),
                 &proof,
-                &result,
+                &result.lock().unwrap(),
                 KeyLength(32)
             )
             .unwrap());
