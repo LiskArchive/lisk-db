@@ -1235,7 +1235,7 @@ impl SparseMerkleTree {
         ))
     }
 
-    fn clac_query_hashes_extra_info(
+    fn calc_query_hashes_extra_info(
         &self,
         current_subtree: &mut SubTree,
         current_node: &Node,
@@ -1276,7 +1276,7 @@ impl SparseMerkleTree {
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
         let mut binary_bitmap: Vec<bool> = vec![];
-        let extra = self.clac_query_hashes_extra_info(current_subtree, &current_node)?;
+        let extra = self.calc_query_hashes_extra_info(current_subtree, &current_node)?;
         let info = QueryHashesInfo::new(
             current_subtree.nodes.clone(),
             current_subtree.structure.clone(),
