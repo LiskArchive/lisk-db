@@ -12,6 +12,7 @@ mod smt;
 mod smt_db;
 mod state_db;
 mod state_writer;
+mod types;
 mod utils;
 
 #[neon::main]

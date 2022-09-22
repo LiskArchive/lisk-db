@@ -13,6 +13,7 @@ use crate::options;
 use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
+use crate::types::{DatabaseOptions, Height, KVPair, KeyLength, NestedVec};
 use crate::utils;
 
 type SharedStateDB = JsBox<RefCell<StateDB>>;
@@ -22,61 +23,49 @@ pub enum DataStoreError {
     #[error("unknown data store error `{0}`")]
     Unknown(String),
     #[error("Diff not found for height: `{0}`")]
-    DiffNotFound(u32),
+    DiffNotFound(usize),
 }
 
-#[derive(Clone, Debug)]
-struct KVPair(Vec<u8>, Vec<u8>);
+struct Commit {
+    db_options: DatabaseOptions,
+    check_expected: bool,
+    expected: Vec<u8>,
+}
 
 struct CommitData {
-    height: u32,
+    data: Commit,
     prev_root: Vec<u8>,
-    readonly: bool,
-    expected: Vec<u8>,
-    check_expected: bool,
 }
 
-struct CommitResultInfo<'a> {
+struct CommitResultInfo {
     next_root: Result<Vec<u8>, smt::SMTError>,
-    expected: &'a [u8],
-    height: u32,
-    readonly: bool,
-    check_expected: bool,
+    data: Commit,
 }
 
 pub struct StateDB {
     tx: mpsc::Sender<options::DbMessage>,
-    readonly: bool,
-    key_length: usize,
+    options: DatabaseOptions,
 }
 
-impl CommitData {
-    fn new(h: u32, prev_root: &[u8], r: bool, expected: &[u8], check_expected: bool) -> Self {
+impl Commit {
+    fn new(expected: Vec<u8>, db_options: DatabaseOptions, check_expected: bool) -> Self {
         Self {
-            height: h,
-            prev_root: prev_root.to_vec(),
-            readonly: r,
-            expected: expected.to_vec(),
+            db_options,
             check_expected,
+            expected,
         }
     }
 }
 
-impl<'a> CommitResultInfo<'a> {
-    fn new(
-        next_root: Result<Vec<u8>, smt::SMTError>,
-        expected: &'a [u8],
-        height: u32,
-        readonly: bool,
-        check_expected: bool,
-    ) -> Self {
-        Self {
-            next_root,
-            expected,
-            height,
-            readonly,
-            check_expected,
-        }
+impl CommitData {
+    fn new(data: Commit, prev_root: Vec<u8>) -> Self {
+        Self { data, prev_root }
+    }
+}
+
+impl CommitResultInfo {
+    fn new(next_root: Result<Vec<u8>, smt::SMTError>, data: Commit) -> Self {
+        Self { data, next_root }
     }
 }
 
@@ -86,7 +75,7 @@ impl StateDB {
     fn new<'a, C>(
         ctx: &mut C,
         path: String,
-        opts: options::DatabaseOptions,
+        db_options: DatabaseOptions,
     ) -> Result<Self, rocksdb::Error>
     where
         C: Context<'a>,
@@ -100,7 +89,7 @@ impl StateDB {
         options.create_if_missing(true);
 
         let mut opened: rocksdb::DB;
-        if opts.readonly {
+        if db_options.readonly {
             opened = rocksdb::DB::open_for_read_only(&options, path, false)?;
         } else {
             opened = rocksdb::DB::open(&options, path)?;
@@ -119,8 +108,7 @@ impl StateDB {
 
         Ok(Self {
             tx,
-            readonly: opts.readonly,
-            key_length: opts.key_length,
+            options: db_options,
         })
     }
 
@@ -194,20 +182,20 @@ impl StateDB {
 
     fn get_revert_result(
         conn: &rocksdb::DB,
-        height: u32,
+        height: Height,
         state_root: &[u8],
-        key_length: usize,
+        key_length: KeyLength,
     ) -> Result<Vec<u8>, DataStoreError> {
         let diff_bytes = conn
-            .get(&[consts::PREFIX_DIFF, height.to_be_bytes().as_slice()].concat())
+            .get(&[consts::PREFIX_DIFF, &height.as_u32_to_be_bytes()].concat())
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
-            .ok_or(DataStoreError::DiffNotFound(height))?;
+            .ok_or_else(|| DataStoreError::DiffNotFound(height.into()))?;
 
         let d = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
         let mut data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SmtDB::new(conn);
-        let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_SIZE);
+        let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_HEIGHT);
         let prev_root = tree
             .commit(&mut smtdb, &mut data)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
@@ -217,7 +205,7 @@ impl StateDB {
         write_batch.set_prefix(&consts::PREFIX_STATE);
         d.revert_commit(&mut write_batch);
         write_batch.set_prefix(&consts::PREFIX_DIFF);
-        write_batch.delete(height.to_be_bytes().as_slice());
+        write_batch.delete(&height.as_u32_to_be_bytes());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -231,11 +219,11 @@ impl StateDB {
 
     fn revert(
         &mut self,
-        height: u32,
+        height: Height,
         state_root: Vec<u8>,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let key_length = self.key_length;
+        let key_length = self.options.key_length;
         self.send(move |conn, channel| {
             let result = StateDB::get_revert_result(conn, height, &state_root, key_length);
             channel.send(move |mut ctx| {
@@ -264,12 +252,14 @@ impl StateDB {
     ) -> Result<Vec<u8>, smt::SMTError> {
         info.next_root.as_ref()?;
         let root = info.next_root.unwrap();
-        if info.check_expected && utils::compare(info.expected, &root) != cmp::Ordering::Equal {
+        if info.data.check_expected
+            && utils::compare(&info.data.expected, &root) != cmp::Ordering::Equal
+        {
             return Err(smt::SMTError::InvalidRoot(String::from(
                 "Not matching with expected",
             )));
         }
-        if info.readonly {
+        if info.data.db_options.readonly {
             return Ok(root);
         }
         // Create global batch
@@ -278,7 +268,8 @@ impl StateDB {
         write_batch.set_prefix(&consts::PREFIX_STATE);
         let diff = writer.commit(&mut write_batch);
         write_batch.set_prefix(&consts::PREFIX_DIFF);
-        write_batch.put(info.height.to_be_bytes().as_slice(), diff.encode().as_ref());
+        let key = info.data.db_options.key_length.as_u32_to_be_bytes();
+        write_batch.put(&key, diff.encode().as_ref());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::PREFIX_SMT);
@@ -297,16 +288,15 @@ impl StateDB {
         d: CommitData,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let key_length = self.key_length;
+        let key_length = self.options.key_length;
         self.send(move |conn, channel| {
             let w = writer.lock().unwrap();
             let mut data = smt::UpdateData::new_with_hash(w.get_updated());
             let mut smtdb = smt_db::SmtDB::new(conn);
             let mut tree =
-                smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_SIZE);
+                smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_HEIGHT);
             let root = tree.commit(&mut smtdb, &mut data);
-            let result_info =
-                CommitResultInfo::new(root, &d.expected, d.height, d.readonly, d.check_expected);
+            let result_info = CommitResultInfo::new(root, d.data);
             let result = StateDB::handle_commit_result(conn, &smtdb, w, result_info);
 
             channel.send(move |mut ctx| {
@@ -330,12 +320,12 @@ impl StateDB {
     fn prove(
         &self,
         root: Vec<u8>,
-        queries: Vec<Vec<u8>>,
+        queries: NestedVec,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
-        let key_length = self.key_length;
+        let key_length = self.options.key_length;
         self.send(move |conn, channel| {
-            let mut tree = smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_SIZE);
+            let mut tree = smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_HEIGHT);
             let mut smtdb = smt_db::SmtDB::new(conn);
             let result = tree.prove(&mut smtdb, &queries);
 
@@ -354,9 +344,9 @@ impl StateDB {
                         let queries = ctx.empty_array();
                         for (i, v) in val.queries.iter().enumerate() {
                             let obj = ctx.empty_object();
-                            let key = JsBuffer::external(&mut ctx, v.key.to_vec());
+                            let key = JsBuffer::external(&mut ctx, v.key_as_vec());
                             obj.set(&mut ctx, "key", key)?;
-                            let value = JsBuffer::external(&mut ctx, v.value.to_vec());
+                            let value = JsBuffer::external(&mut ctx, v.value_as_vec());
                             obj.set(&mut ctx, "value", value)?;
                             let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
                             obj.set(&mut ctx, "bitmap", bitmap)?;
@@ -375,14 +365,18 @@ impl StateDB {
         .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
-    fn clean_diff_until(&self, height: u32, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
-        if height == 0 {
+    fn clean_diff_until(
+        &self,
+        height: Height,
+        cb: Root<JsFunction>,
+    ) -> Result<(), DataStoreError> {
+        if height.is_equal_to(0) {
             return Ok(());
         }
         self.send(move |conn, channel| {
             let zero: u32 = 0;
             let start = [consts::PREFIX_DIFF, zero.to_be_bytes().as_slice()].concat();
-            let end = [consts::PREFIX_DIFF, (height - 1).to_be_bytes().as_slice()].concat();
+            let end = [consts::PREFIX_DIFF, &height.sub(1).as_u32_to_be_bytes()].concat();
             let mut batch = rocksdb::WriteBatch::default();
 
             let iter = conn.iterator(rocksdb::IteratorMode::From(
@@ -420,7 +414,7 @@ impl StateDB {
 impl StateDB {
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
+        let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(ctx, "siblingHashes")?
             .to_vec(ctx)?;
@@ -450,7 +444,10 @@ impl StateDB {
                 .get::<JsTypedArray<u8>, _, _>(ctx, "bitmap")?
                 .as_slice(ctx)
                 .to_vec();
-            queries.push(smt::QueryProof { key, value, bitmap });
+            queries.push(smt::QueryProof {
+                pair: KVPair::new(&key, &value),
+                bitmap,
+            });
         }
 
         Ok(smt::Proof {
@@ -459,9 +456,9 @@ impl StateDB {
         })
     }
 
-    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<Vec<Vec<u8>>> {
+    fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<NestedVec> {
         let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
+        let mut parsed_query_keys = NestedVec::new();
         for key in query_keys.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
@@ -476,7 +473,7 @@ impl StateDB {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
-        let db_opts = options::DatabaseOptions::new(&mut ctx, options)?;
+        let db_opts = DatabaseOptions::new_with_context(&mut ctx, options)?;
         let db = StateDB::new(&mut ctx, path, db_opts).or_else(|err| ctx.throw_error(&err))?;
         let ref_db = RefCell::new(db);
 
@@ -522,7 +519,7 @@ impl StateDB {
 
     pub fn js_revert(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let prev_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx) as u32;
+        let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
         let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
@@ -591,7 +588,7 @@ impl StateDB {
     pub fn js_commit(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let writer = ctx.argument::<JsBox<state_writer::SendableStateWriter>>(0)?;
 
-        let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx) as u32;
+        let key_length = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
 
         let prev_root = ctx.argument::<JsTypedArray<u8>>(2)?.as_slice(&ctx).to_vec();
 
@@ -605,11 +602,16 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let mut db = db.borrow_mut();
-        if db.readonly {
+        if db.options.readonly {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
+        let db_options = DatabaseOptions {
+            key_length,
+            readonly,
+        };
+        let commit = Commit::new(expected, db_options, check_root);
         let writer = writer.borrow().clone();
-        let commit_data = CommitData::new(height, &prev_root, readonly, &expected, check_root);
+        let commit_data = CommitData::new(commit, prev_root);
         db.commit(writer, commit_data, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -623,7 +625,7 @@ impl StateDB {
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
-        let mut queries: Vec<Vec<u8>> = vec![];
+        let mut queries = NestedVec::new();
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
             let key = obj
@@ -644,8 +646,7 @@ impl StateDB {
     pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
-        let key_length = db.key_length;
-        // root: &Vec<u8>, query_keys: &Vec<Vec<u8>>, proof: &Proof
+        let key_length = db.options.key_length;
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let proof = Self::proof(&mut ctx)?;
@@ -679,7 +680,7 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
 
-        let height = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as u32;
+        let height = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
 
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 

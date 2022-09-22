@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -9,10 +8,11 @@ use neon::types::buffer::TypedArray;
 use crate::consts;
 use crate::smt::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::smt_db;
+use crate::types::{Cache, KVPair, KeyLength, NestedVec};
 
 type SharedInMemorySMT = JsBox<RefCell<Arc<Mutex<InMemorySMT>>>>;
 type DatabaseParameters = (Arc<Mutex<InMemorySMT>>, Vec<u8>, Root<JsFunction>);
-type VerifyParameters = (Vec<u8>, Vec<Vec<u8>>, Proof, usize, Root<JsFunction>);
+type VerifyParameters = (Vec<u8>, NestedVec, Proof, KeyLength, Root<JsFunction>);
 
 struct JsFunctionContext<'a> {
     context: FunctionContext<'a>,
@@ -20,7 +20,7 @@ struct JsFunctionContext<'a> {
 
 pub struct InMemorySMT {
     db: smt_db::InMemorySmtDB,
-    key_length: usize,
+    key_length: KeyLength,
 }
 
 impl JsFunctionContext<'_> {
@@ -44,13 +44,13 @@ impl JsFunctionContext<'_> {
         Ok((in_memory_smt, state_root, callback))
     }
 
-    fn get_key_value_pairs(&mut self) -> NeonResult<HashMap<Vec<u8>, Vec<u8>>> {
+    fn get_key_value_pairs(&mut self) -> NeonResult<Cache> {
         let input = self
             .context
             .argument::<JsArray>(1)?
             .to_vec(&mut self.context)?;
 
-        let mut data: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        let mut data = Cache::new();
         for key in input.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut self.context)?;
             let key = obj
@@ -66,7 +66,7 @@ impl JsFunctionContext<'_> {
         Ok(data)
     }
 
-    fn update_database(&mut self, data: HashMap<Vec<u8>, Vec<u8>>) -> NeonResult<()> {
+    fn update_database(&mut self, data: Cache) -> NeonResult<()> {
         let (in_memory_smt, state_root, callback) = self.get_database_parameters()?;
         let channel = self.context.channel();
 
@@ -75,7 +75,7 @@ impl JsFunctionContext<'_> {
             let mut inner_smt = in_memory_smt.lock().unwrap();
 
             let mut tree =
-                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_HEIGHT);
 
             let result = tree.commit(&mut inner_smt.db, &mut update_data);
 
@@ -98,12 +98,12 @@ impl JsFunctionContext<'_> {
         Ok(())
     }
 
-    fn get_keys(&mut self) -> NeonResult<Vec<Vec<u8>>> {
+    fn get_keys(&mut self) -> NeonResult<NestedVec> {
         let input = self
             .context
             .argument::<JsArray>(1)?
             .to_vec(&mut self.context)?;
-        let mut data: Vec<Vec<u8>> = vec![];
+        let mut data = NestedVec::new();
         for key in input.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut self.context)?
@@ -115,14 +115,14 @@ impl JsFunctionContext<'_> {
         Ok(data)
     }
 
-    fn prove(&mut self, data: Vec<Vec<u8>>) -> NeonResult<()> {
+    fn prove(&mut self, data: NestedVec) -> NeonResult<()> {
         let (in_memory_smt, state_root, callback) = self.get_database_parameters()?;
         let channel = self.context.channel();
 
         thread::spawn(move || {
             let mut inner_smt = in_memory_smt.lock().unwrap();
             let mut tree =
-                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_SIZE);
+                SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_HEIGHT);
 
             let result = tree.prove(&mut inner_smt.db, &data);
 
@@ -142,9 +142,9 @@ impl JsFunctionContext<'_> {
                         obj.set(&mut ctx, "queries", queries)?;
                         for (i, v) in val.queries.iter().enumerate() {
                             let obj = ctx.empty_object();
-                            let key = JsBuffer::external(&mut ctx, v.key.to_vec());
+                            let key = JsBuffer::external(&mut ctx, v.key_as_vec());
                             obj.set(&mut ctx, "key", key)?;
-                            let value = JsBuffer::external(&mut ctx, v.value.to_vec());
+                            let value = JsBuffer::external(&mut ctx, v.value_as_vec());
                             obj.set(&mut ctx, "value", value)?;
                             let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
                             obj.set(&mut ctx, "bitmap", bitmap)?;
@@ -166,7 +166,7 @@ impl JsFunctionContext<'_> {
 
     fn get_proof(&mut self) -> NeonResult<Proof> {
         let raw_proof = self.context.argument::<JsObject>(2)?;
-        let mut sibling_hashes: Vec<Vec<u8>> = vec![];
+        let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(&mut self.context, "siblingHashes")?
             .to_vec(&mut self.context)?;
@@ -195,7 +195,10 @@ impl JsFunctionContext<'_> {
                 .get::<JsTypedArray<u8>, _, _>(&mut self.context, "bitmap")?
                 .as_slice(&self.context)
                 .to_vec();
-            queries.push(QueryProof { key, value, bitmap });
+            queries.push(QueryProof {
+                pair: KVPair::new(&key, &value),
+                bitmap,
+            });
         }
         let proof = Proof {
             queries,
@@ -216,7 +219,7 @@ impl JsFunctionContext<'_> {
             .context
             .argument::<JsArray>(1)?
             .to_vec(&mut self.context)?;
-        let mut parsed_query_keys: Vec<Vec<u8>> = vec![];
+        let mut parsed_query_keys = NestedVec::new();
         for key in query_keys.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut self.context)?
@@ -230,7 +233,8 @@ impl JsFunctionContext<'_> {
         let key_length = self
             .context
             .argument::<JsNumber>(3)?
-            .value(&mut self.context) as usize;
+            .value(&mut self.context)
+            .into();
         let callback = self
             .context
             .argument::<JsFunction>(4)?
@@ -244,7 +248,7 @@ impl Finalize for InMemorySMT {}
 
 impl InMemorySMT {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedInMemorySMT> {
-        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as usize;
+        let key_length = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
         let tree = InMemorySMT {
             db: smt_db::InMemorySmtDB::new(),
             key_length,
