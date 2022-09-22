@@ -1005,7 +1005,7 @@ impl SparseMerkleTree {
         Ok(new_subtree)
     }
 
-    fn update_one_node(&self, info: &UpdateNodeInfo) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+    fn update_one_node(&self, info: &UpdateNodeInfo) -> Result<Option<(Node, u8)>, SMTError> {
         let idx = info
             .length_bins
             .iter()
@@ -1018,12 +1018,9 @@ impl SparseMerkleTree {
                     &info.key_bins[idx][0],
                     &info.value_bins[idx][0],
                 ));
-                return Ok((vec![new_leaf], vec![info.structure_pos.into()]));
+                return Ok(Some((new_leaf, info.structure_pos.into())));
             }
-            return Ok((
-                vec![info.current_node.clone()],
-                vec![info.structure_pos.into()],
-            ));
+            return Ok(Some((info.current_node.clone(), info.structure_pos.into())));
         }
 
         if info.current_node.kind == NodeKind::Leaf
@@ -1034,19 +1031,19 @@ impl SparseMerkleTree {
                     &info.key_bins[idx][0],
                     &info.value_bins[idx][0],
                 ));
-                return Ok((vec![new_leaf], vec![info.structure_pos.into()]));
+                return Ok(Some((new_leaf, info.structure_pos.into())));
             }
-            return Ok((vec![Node::new_empty()], vec![info.structure_pos.into()]));
+            return Ok(Some((Node::new_empty(), info.structure_pos.into())));
         }
 
-        Ok((vec![], vec![]))
+        Ok(None)
     }
 
     fn update_same_height(
         &mut self,
         db: &mut impl DB,
         info: &UpdateNodeInfo,
-    ) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+    ) -> Result<(Node, u8), SMTError> {
         let btm_subtree = match info.current_node.kind {
             NodeKind::Stub => {
                 let subtree = self.get_subtree(db, info.current_node.hash.value())?;
@@ -1071,14 +1068,11 @@ impl SparseMerkleTree {
             info.height + info.structure_pos.into(),
         )?;
         if new_subtree.nodes.len() == 1 {
-            return Ok((
-                vec![new_subtree.nodes[0].clone()],
-                vec![info.structure_pos.into()],
-            ));
+            return Ok((new_subtree.nodes[0].clone(), info.structure_pos.into()));
         }
         let new_branch = Node::new_stub(&new_subtree.root);
 
-        Ok((vec![new_branch], vec![info.structure_pos.into()]))
+        Ok((new_branch, info.structure_pos.into()))
     }
 
     fn left_right_nodes(&self, info: &UpdateNodeInfo) -> Result<(Node, Node), SMTError> {
@@ -1108,14 +1102,17 @@ impl SparseMerkleTree {
             return Ok((vec![info.current_node], vec![info.structure_pos.into()]));
         }
         if total_data == 1 {
-            let (n, v) = self.update_one_node(&info)?;
-            if !n.is_empty() && !v.is_empty() {
-                return Ok((n, v));
+            match self.update_one_node(&info)? {
+                Some((node, structure)) => {
+                    return Ok((vec![node], vec![structure]));
+                },
+                None => {},
             }
         }
 
         if info.structure_pos == self.subtree_height.into() {
-            return self.update_same_height(db, &info);
+            let (node, structure) = self.update_same_height(db, &info)?;
+            return Ok((vec![node], vec![structure]));
         }
 
         let (left_node, right_node) = self.left_right_nodes(&info)?;
