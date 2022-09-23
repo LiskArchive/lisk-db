@@ -187,7 +187,7 @@ impl StateWriter {
                 continue;
             }
             if value.dirty {
-                updated.push(KVPair::new(key, &value.init.clone().unwrap()));
+                updated.push(KVPair::new(key, value.init.as_ref().unwrap()));
                 batch.put(&kv);
                 continue;
             }
@@ -210,7 +210,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let writer = batch.borrow().clone();
+        let writer = Arc::clone(&batch.borrow());
         let inner_writer = writer.lock().unwrap();
 
         let (value, deleted, exists) = inner_writer.get(&key);
@@ -234,7 +234,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let writer = batch.borrow().clone();
+        let writer = Arc::clone(&batch.borrow());
         let mut inner_writer = writer.lock().unwrap();
 
         inner_writer
@@ -252,7 +252,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let writer = batch.borrow().clone();
+        let writer = Arc::clone(&batch.borrow());
         let mut inner_writer = writer.lock().unwrap();
 
         inner_writer.cache_new(&SharedKVPair::new(&key, &value));
@@ -269,7 +269,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let writer = batch.borrow().clone();
+        let writer = Arc::clone(&batch.borrow());
         let mut inner_writer = writer.lock().unwrap();
 
         inner_writer.cache_existing(&pair);
@@ -284,7 +284,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let batch = writer.borrow().clone();
+        let batch = Arc::clone(&writer.borrow());
         let mut inner_writer = batch.lock().unwrap();
 
         inner_writer.delete(&key);
@@ -299,7 +299,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let writer = batch.borrow().clone();
+        let writer = Arc::clone(&batch.borrow());
         let inner_writer = writer.lock().unwrap();
 
         let cached = inner_writer.is_cached(&key);
@@ -312,7 +312,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let batch = writer.borrow().clone();
+        let batch = Arc::clone(&writer.borrow());
         let mut inner_writer = batch.lock().unwrap();
 
         let index = inner_writer.snapshot();
@@ -325,7 +325,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let batch = writer.borrow().clone();
+        let batch = Arc::clone(&writer.borrow());
         let mut inner_writer = batch.lock().unwrap();
         let index = ctx.argument::<JsNumber>(0)?.value(&mut ctx) as u32;
 
@@ -343,7 +343,7 @@ impl StateWriter {
             .this()
             .downcast_or_throw::<JsBox<SendableStateWriter>, _>(&mut ctx)?;
 
-        let writer = batch.borrow().clone();
+        let writer = Arc::clone(&batch.borrow());
         let inner_writer = writer.lock().unwrap();
 
         let results = inner_writer.get_range(&start, &end);

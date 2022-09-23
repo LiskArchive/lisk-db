@@ -2,6 +2,7 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use std::cell::{RefCell, RefMut};
 use std::cmp;
+use std::sync::Arc;
 
 use crate::batch;
 use crate::options::IterationOption;
@@ -35,7 +36,7 @@ fn get_key_value_pairs(db: RefMut<Database>, options: &IterationOption) -> Vec<K
         let gte = options
             .gte
             .clone()
-            .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+            .unwrap_or_else(|| vec![0; options.lte.as_ref().unwrap().len()]);
         let lte = options.lte.clone().unwrap_or_else(|| vec![255; gte.len()]);
         db.cache_range(&gte, &lte)
     };
@@ -206,7 +207,7 @@ impl Database {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
 
-        let batch = batch.borrow().clone();
+        let batch = Arc::clone(&batch.borrow());
         let inner_batch = batch.lock().unwrap();
 
         inner_batch.batch.iterate(&mut db.cache);

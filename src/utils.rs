@@ -19,7 +19,7 @@ pub fn get_iteration_mode<'a>(
         let lte = options
             .lte
             .clone()
-            .unwrap_or_else(|| vec![255; options.gte.clone().unwrap().len()]);
+            .unwrap_or_else(|| vec![255; options.gte.as_ref().unwrap().len()]);
         *opt = if has_prefix {
             [consts::PREFIX_STATE, lte.as_slice()].concat()
         } else {
@@ -30,7 +30,7 @@ pub fn get_iteration_mode<'a>(
         let gte = options
             .gte
             .clone()
-            .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+            .unwrap_or_else(|| vec![0; options.lte.as_ref().unwrap().len()]);
         *opt = if has_prefix {
             [consts::PREFIX_STATE, gte.as_slice()].concat()
         } else {

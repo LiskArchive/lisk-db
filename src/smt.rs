@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 use crate::types::{
-    Cache, Height, KVPair, KeyLength, NestedVec, SharedKVPair, SharedNestedVec, StructurePosition,
-    SubtreeHeight, VecOption, DB,
+    Cache, Height, KVPair, KeyLength, NestedVec, SharedKVPair, SharedNestedVec, SharedVec,
+    StructurePosition, SubtreeHeight, VecOption, DB,
 };
 use crate::utils;
 
@@ -19,7 +19,8 @@ static PREFIX_LEAF_HASH: &[u8] = &[0];
 static PREFIX_BRANCH_HASH: &[u8] = &[1];
 static PREFIX_EMPTY: &[u8] = &[2];
 
-type Hasher = fn(node_hashes: &[Vec<u8>], structure: &[u8], height: Height) -> Vec<u8>;
+type Hasher = fn(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Arc<Vec<u8>>;
+type SharedNode = Arc<Mutex<Node>>;
 
 trait SortDescending {
     fn sort_descending(&mut self);
@@ -58,8 +59,8 @@ pub struct Proof {
 
 #[derive(Clone, Debug)]
 pub struct QueryProof {
-    pub pair: KVPair,
-    pub bitmap: Vec<u8>,
+    pub pair: Arc<KVPair>,
+    pub bitmap: Arc<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,8 +84,8 @@ struct Node {
 #[derive(Clone, Debug)]
 struct SubTree {
     structure: Vec<u8>,
-    nodes: Vec<Node>,
-    root: Vec<u8>,
+    nodes: Vec<SharedNode>,
+    root: Arc<Vec<u8>>,
 }
 
 struct QueryHashesExtraInfo {
@@ -108,14 +109,14 @@ struct QueryHashesRefMut<'a> {
 }
 
 struct QueryHashesInfo<'a> {
-    layer_nodes: Vec<Node>,
+    layer_nodes: Vec<SharedNode>,
     layer_structure: Vec<u8>,
     ref_mut_vecs: QueryHashesRefMut<'a>,
     extra: QueryHashesExtraInfo,
 }
 
 struct NextQueryHashesInfo {
-    layer_nodes: Vec<Node>,
+    layer_nodes: Vec<SharedNode>,
     layer_structure: Vec<u8>,
     target_id: usize,
 }
@@ -123,7 +124,7 @@ struct UpdateNodeInfo<'a> {
     key_bins: &'a [SharedNestedVec<'a>],
     value_bins: &'a [SharedNestedVec<'a>],
     length_bins: &'a [u32],
-    current_node: Node,
+    current_node: SharedNode,
     length_base: u32,
     height: Height,
     structure_pos: StructurePosition,
@@ -135,13 +136,13 @@ struct Bins<'a> {
 }
 
 struct UpdatedInfo {
-    nodes: Vec<Node>,
+    nodes: Vec<SharedNode>,
     structures: Vec<u8>,
     bin_offset: usize,
 }
 
 pub struct SparseMerkleTree {
-    root: Arc<Mutex<Vec<u8>>>,
+    root: SharedVec,
     key_length: KeyLength,
     subtree_height: SubtreeHeight,
     max_number_of_nodes: usize,
@@ -187,8 +188,8 @@ fn empty_hash() -> Vec<u8> {
     result.to_vec()
 }
 
-fn tree_hasher(node_hashes: &[Vec<u8>], structure: &[u8], height: Height) -> Vec<u8> {
-    let mut node_hashes: NestedVec = node_hashes.to_vec();
+fn tree_hasher(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Arc<Vec<u8>> {
+    let mut node_hashes: Vec<Arc<Vec<u8>>> = node_hashes.to_vec();
     let mut structure: Vec<u8> = structure.to_vec();
     let mut height = height;
 
@@ -199,20 +200,24 @@ fn tree_hasher(node_hashes: &[Vec<u8>], structure: &[u8], height: Height) -> Vec
 
         while i < node_hashes.len() {
             if structure[i] == height.into() {
-                let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
+                let branch = [
+                    (*node_hashes[i]).as_slice(),
+                    (*node_hashes[i + 1]).as_slice(),
+                ]
+                .concat();
                 let hash = branch_hash(&branch);
-                next_hashes.push(hash);
+                next_hashes.push(Arc::new(hash));
                 next_structure.push(structure[i] - 1);
                 i += 1;
             } else {
-                next_hashes.push(node_hashes[i].clone());
+                next_hashes.push(Arc::clone(&node_hashes[i]));
                 next_structure.push(structure[i]);
             }
             i += 1;
         }
 
         if height.is_equal_to(1) {
-            return next_hashes[0].clone();
+            return Arc::clone(&next_hashes[0]);
         }
 
         height = height.sub(1);
@@ -220,38 +225,41 @@ fn tree_hasher(node_hashes: &[Vec<u8>], structure: &[u8], height: Height) -> Vec
         structure = next_structure;
     }
 
-    node_hashes[0].clone()
+    Arc::clone(&node_hashes[0])
 }
 
 fn parent_node(
-    layer_nodes: &[Node],
+    layer_nodes: &[SharedNode],
     layer_structure: &[u8],
-    tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
+    tree_map: &mut VecDeque<(Vec<SharedNode>, Vec<u8>)>,
     i: usize,
-) -> Result<Node, SMTError> {
-    if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Empty {
-        Ok(layer_nodes[i].clone())
-    } else if layer_nodes[i].kind == NodeKind::Empty && layer_nodes[i + 1].kind == NodeKind::Leaf {
-        Ok(layer_nodes[i + 1].clone())
-    } else if layer_nodes[i].kind == NodeKind::Leaf && layer_nodes[i + 1].kind == NodeKind::Empty {
-        Ok(layer_nodes[i].clone())
+) -> Result<SharedNode, SMTError> {
+    let layer_node_kind = layer_nodes[i].lock().unwrap().kind.clone();
+    let layer_node_next_kind = layer_nodes[i + 1].lock().unwrap().kind.clone();
+
+    if layer_node_kind == NodeKind::Empty && layer_node_next_kind == NodeKind::Empty {
+        Ok(Arc::clone(&layer_nodes[i]))
+    } else if layer_node_kind == NodeKind::Empty && layer_node_next_kind == NodeKind::Leaf {
+        Ok(Arc::clone(&layer_nodes[i + 1]))
+    } else if layer_node_kind == NodeKind::Leaf && layer_node_next_kind == NodeKind::Empty {
+        Ok(Arc::clone(&layer_nodes[i]))
     } else {
-        let (mut left_nodes, mut left_structure) = if layer_nodes[i].kind == NodeKind::Temp {
+        let (mut left_nodes, mut left_structure) = if layer_node_kind == NodeKind::Temp {
             let (nodes, structure) = tree_map
                 .pop_back()
                 .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
             (nodes, structure)
         } else {
-            (vec![layer_nodes[i].clone()], vec![layer_structure[i]])
+            (vec![Arc::clone(&layer_nodes[i])], vec![layer_structure[i]])
         };
-        let (right_nodes, right_structure) = if layer_nodes[i + 1].kind == NodeKind::Temp {
+        let (right_nodes, right_structure) = if layer_node_next_kind == NodeKind::Temp {
             let (nodes, structure) = tree_map
                 .pop_back()
                 .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
             (nodes, structure)
         } else {
             (
-                vec![layer_nodes[i + 1].clone()],
+                vec![Arc::clone(&layer_nodes[i + 1])],
                 vec![layer_structure[i + 1]],
             )
         };
@@ -260,15 +268,15 @@ fn parent_node(
         let stub = Node::new_temp();
         tree_map.push_front((left_nodes, left_structure));
 
-        Ok(stub)
+        Ok(Arc::new(Mutex::new(stub)))
     }
 }
 
 fn calculate_subtree(
-    layer_nodes: &[Node],
+    layer_nodes: &[SharedNode],
     layer_structure: &[u8],
     height: Height,
-    tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
+    tree_map: &mut VecDeque<(Vec<SharedNode>, Vec<u8>)>,
     hasher: Hasher,
 ) -> Result<SubTree, SMTError> {
     let mut layer_nodes = layer_nodes.to_vec();
@@ -276,12 +284,12 @@ fn calculate_subtree(
     let mut height = height;
 
     while !height.is_equal_to(0) {
-        let mut next_layer_nodes: Vec<Node> = vec![];
+        let mut next_layer_nodes: Vec<SharedNode> = vec![];
         let mut next_layer_structure: Vec<u8> = vec![];
         let mut i = 0;
         while i < layer_nodes.len() {
             if layer_structure[i] != height.into() {
-                next_layer_nodes.push(layer_nodes[i].clone());
+                next_layer_nodes.push(Arc::clone(&layer_nodes[i]));
                 next_layer_structure.push(layer_structure[i]);
                 i += 1;
                 continue;
@@ -294,7 +302,7 @@ fn calculate_subtree(
             i += 2;
         }
         if height.is_equal_to(1) {
-            if next_layer_nodes[0].kind == NodeKind::Temp {
+            if next_layer_nodes[0].lock().unwrap().kind == NodeKind::Temp {
                 let (nodes, structure) = tree_map.pop_front().ok_or_else(|| {
                     SMTError::Unknown(String::from("Subtree must exist for stub"))
                 })?;
@@ -311,38 +319,43 @@ fn calculate_subtree(
 }
 
 fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
-    let mut parent_node = Node::new_branch(
-        info.layer_nodes[i].hash.value(),
-        info.layer_nodes[i + 1].hash.value(),
-    );
+    let layer_node = info.layer_nodes[i].lock().unwrap();
+    let layer_node_next = info.layer_nodes[i + 1].lock().unwrap();
+
+    let mut parent_node = Node::new_branch(layer_node.hash.value(), layer_node_next.hash.value());
     parent_node.index = info.extra.max_index + i;
-    next_info.layer_nodes.push(parent_node.clone());
+    let parent_node_index = parent_node.index;
+    let parent_node_hash = parent_node.hash.value_as_vec();
+
+    next_info
+        .layer_nodes
+        .push(Arc::new(Mutex::new(parent_node)));
     next_info.layer_structure.push(info.layer_structure[i] - 1);
-    if next_info.target_id == info.layer_nodes[i].index {
+    if next_info.target_id == layer_node.index {
         info.ref_mut_vecs
             .ancestor_hashes
-            .push_front(parent_node.hash.value_as_vec());
-        next_info.target_id = parent_node.index;
-        if info.layer_nodes[i + 1].kind == NodeKind::Empty {
+            .push_front(parent_node_hash);
+        next_info.target_id = parent_node_index;
+        if layer_node_next.kind == NodeKind::Empty {
             info.ref_mut_vecs.binary_bitmap.push(false);
         } else {
             info.ref_mut_vecs.binary_bitmap.push(true);
             info.ref_mut_vecs
                 .sibling_hashes
-                .push_front(info.layer_nodes[i + 1].hash.value_as_vec());
+                .push_front(layer_node_next.hash.value_as_vec());
         }
-    } else if next_info.target_id == info.layer_nodes[i + 1].index {
+    } else if next_info.target_id == layer_node_next.index {
         info.ref_mut_vecs
             .ancestor_hashes
-            .push_front(parent_node.hash.value_as_vec());
-        next_info.target_id = parent_node.index;
-        if info.layer_nodes[i].kind == NodeKind::Empty {
+            .push_front(parent_node_hash);
+        next_info.target_id = parent_node_index;
+        if layer_node.kind == NodeKind::Empty {
             info.ref_mut_vecs.binary_bitmap.push(false);
         } else {
             info.ref_mut_vecs.binary_bitmap.push(true);
             info.ref_mut_vecs
                 .sibling_hashes
-                .push_front(info.layer_nodes[i].hash.value_as_vec());
+                .push_front(layer_node.hash.value_as_vec());
         }
     }
 }
@@ -354,7 +367,7 @@ fn calculate_query_hashes(mut info: QueryHashesInfo) {
         let mut i = 0;
         while i < info.layer_nodes.len() {
             if info.layer_structure[i] != info.extra.height.into() {
-                next_info.push(info.layer_nodes[i].clone(), info.layer_structure[i]);
+                next_info.push(Arc::clone(&info.layer_nodes[i]), info.layer_structure[i]);
                 i += 1;
                 continue;
             }
@@ -417,7 +430,7 @@ fn calculate_sibling_hashes(
             if !utils::bytes_in(ancestor_hashes, &node_hash)
                 && !utils::bytes_in(sibling_hashes, &node_hash)
             {
-                sibling_hashes.push(node_hash.clone());
+                sibling_hashes.push(node_hash);
             }
         }
         query.slice_bitmap();
@@ -454,10 +467,10 @@ impl rocksdb::WriteBatchIterator for UpdateData {
 
 impl QueryProof {
     #[inline]
-    pub fn new_with_binary_bitmap(pair: KVPair, binary_bitmap: &[bool]) -> Self {
+    pub fn new_with_binary_bitmap(pair: Arc<KVPair>, binary_bitmap: &[bool]) -> Self {
         Self {
             pair,
-            bitmap: utils::bools_to_bytes(binary_bitmap),
+            bitmap: Arc::new(utils::bools_to_bytes(binary_bitmap)),
         }
     }
 
@@ -522,7 +535,7 @@ impl UpdateData {
 
 impl QueryProofWithProof {
     fn new_with_pair(
-        pair: KVPair,
+        pair: Arc<KVPair>,
         binary_bitmap: &[bool],
         ancestor_hashes: &[Vec<u8>],
         sibling_hashes: &[Vec<u8>],
@@ -550,7 +563,7 @@ impl QueryProofWithProof {
 
     fn slice_bitmap(&mut self) {
         self.binary_bitmap = self.binary_bitmap[1..].to_vec();
-        self.query_proof.bitmap = utils::bools_to_bytes(&self.binary_bitmap);
+        self.query_proof.bitmap = Arc::new(utils::bools_to_bytes(&self.binary_bitmap));
     }
 
     fn binary_path(&self) -> Vec<bool> {
@@ -648,7 +661,7 @@ impl SubTree {
         let node_length: usize = data[0] as usize + 1;
         let structure = &data[1..node_length + 1];
         let node_data = &data[node_length + 1..];
-        let mut nodes = vec![];
+        let mut nodes: Vec<SharedNode> = vec![];
         let mut idx = 0;
 
         let key_length: usize = key_length.into();
@@ -662,17 +675,17 @@ impl SubTree {
                             ..idx + PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE],
                     );
                     let node = Node::new_leaf(&kv);
-                    nodes.push(node);
+                    nodes.push(Arc::new(Mutex::new(node)));
                     idx += PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE;
                 },
                 PREFIX_INT_BRANCH_HASH => {
                     let node_hash = &node_data[idx + PREFIX_BRANCH_HASH.len()
                         ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE];
-                    nodes.push(Node::new_stub(node_hash));
+                    nodes.push(Arc::new(Mutex::new(Node::new_stub(node_hash))));
                     idx += PREFIX_BRANCH_HASH.len() + HASH_SIZE;
                 },
                 PREFIX_INT_EMPTY => {
-                    nodes.push(Node::new_empty());
+                    nodes.push(Arc::new(Mutex::new(Node::new_empty())));
                     idx += PREFIX_EMPTY.len();
                 },
                 _ => {
@@ -686,7 +699,11 @@ impl SubTree {
         SubTree::from_data(structure, &nodes, hasher)
     }
 
-    pub fn from_data(structure: &[u8], nodes: &[Node], hasher: Hasher) -> Result<Self, SMTError> {
+    pub fn from_data(
+        structure: &[u8],
+        nodes: &[SharedNode],
+        hasher: Hasher,
+    ) -> Result<Self, SMTError> {
         let height = structure
             .iter()
             .max()
@@ -694,8 +711,8 @@ impl SubTree {
 
         let node_hashes = nodes
             .iter()
-            .map(|n| n.hash.value_as_vec())
-            .collect::<NestedVec>();
+            .map(|n| Arc::new(n.lock().unwrap().hash.value_as_vec()))
+            .collect::<Vec<Arc<Vec<u8>>>>();
         let calculated = hasher(&node_hashes, structure, height.into());
 
         Ok(Self {
@@ -708,22 +725,26 @@ impl SubTree {
     pub fn new_empty() -> Self {
         let structure = vec![0];
         let empty = Node::new_empty();
-        let node_hashes = vec![Node::new_empty()];
+        let node_hashes = vec![Arc::new(Mutex::new(Node::new_empty()))];
 
         Self {
             structure,
             nodes: node_hashes,
-            root: empty.hash.value_as_vec(),
+            root: Arc::new(empty.hash.value_as_vec()),
         }
     }
 
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
-        let node_hashes: NestedVec = self.nodes.iter().map(|n| n.hash.key_as_vec()).collect();
+        let node_hashes: Vec<Vec<u8>> = self
+            .nodes
+            .iter()
+            .map(|n| n.lock().unwrap().hash.key_as_vec())
+            .collect();
         [
-            vec![node_length],
-            self.structure.clone(),
-            node_hashes.concat(),
+            &[node_length],
+            self.structure.as_slice(),
+            node_hashes.concat().as_slice(),
         ]
         .concat()
     }
@@ -741,7 +762,7 @@ impl QueryHashesExtraInfo {
 
 impl<'a> QueryHashesInfo<'a> {
     fn new(
-        layer_nodes: Vec<Node>,
+        layer_nodes: Vec<SharedNode>,
         layer_structure: Vec<u8>,
         vecs: QueryHashesRefMut<'a>,
         extra: QueryHashesExtraInfo,
@@ -768,7 +789,7 @@ impl NextQueryHashesInfo {
         }
     }
 
-    fn push(&mut self, old_layer_nodes: Node, old_layer_structure: u8) {
+    fn push(&mut self, old_layer_nodes: SharedNode, old_layer_structure: u8) {
         self.layer_nodes.push(old_layer_nodes);
         self.layer_structure.push(old_layer_structure);
     }
@@ -779,7 +800,7 @@ impl<'a> UpdateNodeInfo<'a> {
         key_bins: &'a [SharedNestedVec],
         value_bins: &'a [SharedNestedVec],
         length_bins: &'a [u32],
-        current_node: Node,
+        current_node: SharedNode,
         length_base: u32,
         height: Height,
         structure_pos: StructurePosition,
@@ -801,8 +822,8 @@ impl SparseMerkleTree {
         let mut proof_queries = vec![];
         for query in query_with_proofs {
             proof_queries.push(QueryProof {
-                pair: query.query_proof.pair.clone(),
-                bitmap: query.query_proof.bitmap.clone(),
+                pair: Arc::clone(&query.query_proof.pair),
+                bitmap: Arc::clone(&query.query_proof.bitmap),
             });
         }
 
@@ -815,11 +836,10 @@ impl SparseMerkleTree {
         queries: &[Vec<u8>],
     ) -> Result<(Vec<QueryProofWithProof>, NestedVec), SMTError> {
         let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
-        let root = self.get_subtree(db, &self.root.lock().unwrap())?;
+        let mut root = self.get_subtree(db, &self.root.lock().unwrap())?;
         let mut ancestor_hashes = vec![];
         for query in queries {
-            let query_proof =
-                self.generate_query_proof(db, &mut root.clone(), query, Height(0))?;
+            let query_proof = self.generate_query_proof(db, &mut root, query, Height(0))?;
             query_with_proofs.push(query_proof.clone());
             ancestor_hashes.extend(query_proof.ancestor_hashes);
         }
@@ -835,7 +855,12 @@ impl SparseMerkleTree {
 
             filter_map.insert(
                 binary_path,
-                QueryProofWithProof::new_with_pair(query.pair.clone(), &binary_bitmap, &[], &[]),
+                QueryProofWithProof::new_with_pair(
+                    Arc::clone(&query.pair),
+                    &binary_bitmap,
+                    &[],
+                    &[],
+                ),
             );
         }
 
@@ -923,12 +948,12 @@ impl SparseMerkleTree {
         height: Height,
     ) -> Result<UpdatedInfo, SMTError> {
         let bins = self.calc_bins(key_bin, value_bin, height)?;
-        let mut nodes: Vec<Node> = vec![];
+        let mut nodes: Vec<SharedNode> = vec![];
         let mut structures: Vec<u8> = vec![];
         let mut bin_offset = 0;
         for i in 0..current_subtree.nodes.len() {
             let pos = current_subtree.structure[i];
-            let current_node = current_subtree.nodes[i].clone();
+            let current_node = Arc::clone(&current_subtree.nodes[i]);
             let new_offset = 1 << self.subtree_height.sub_to_usize(pos);
 
             let slice_keys = &bins.keys[bin_offset..bin_offset + new_offset];
@@ -946,14 +971,17 @@ impl SparseMerkleTree {
                 slice_keys,
                 slice_values,
                 &base_length,
-                current_node,
+                Arc::clone(&current_node),
                 0,
                 height,
                 pos.into(),
             );
             let (updated_nodes, heights) = self.update_node(db, info)?;
 
-            nodes.extend(updated_nodes);
+            for node in updated_nodes {
+                nodes.push(node);
+            }
+
             structures.extend(heights);
             bin_offset += new_offset;
         }
@@ -1008,31 +1036,36 @@ impl SparseMerkleTree {
     fn update_one_node(
         &self,
         info: &UpdateNodeInfo,
-    ) -> Result<Option<(Node, StructurePosition)>, SMTError> {
+    ) -> Result<Option<(SharedNode, StructurePosition)>, SMTError> {
         let idx = info
             .length_bins
             .iter()
             .position(|&r| r == info.length_base + 1)
             .ok_or_else(|| SMTError::Unknown(String::from("Invalid index")))?;
 
-        if info.current_node.kind == NodeKind::Empty {
+        let current_node = info.current_node.lock().unwrap();
+
+        if current_node.kind == NodeKind::Empty {
             if !info.value_bins[idx][0].is_empty() {
                 let new_leaf =
                     Node::new_leaf(&KVPair::new(info.key_bins[idx][0], info.value_bins[idx][0]));
-                return Ok(Some((new_leaf, info.structure_pos)));
+                return Ok(Some((Arc::new(Mutex::new(new_leaf)), info.structure_pos)));
             }
-            return Ok(Some((info.current_node.clone(), info.structure_pos)));
+            return Ok(Some((Arc::clone(&info.current_node), info.structure_pos)));
         }
 
-        if info.current_node.kind == NodeKind::Leaf
-            && utils::is_bytes_equal(&info.current_node.key, info.key_bins[idx][0])
+        if current_node.kind == NodeKind::Leaf
+            && utils::is_bytes_equal(&current_node.key, info.key_bins[idx][0])
         {
             if !info.value_bins[idx][0].is_empty() {
                 let new_leaf =
                     Node::new_leaf(&KVPair::new(info.key_bins[idx][0], info.value_bins[idx][0]));
-                return Ok(Some((new_leaf, info.structure_pos)));
+                return Ok(Some((Arc::new(Mutex::new(new_leaf)), info.structure_pos)));
             }
-            return Ok(Some((Node::new_empty(), info.structure_pos)));
+            return Ok(Some((
+                Arc::new(Mutex::new(Node::new_empty())),
+                info.structure_pos,
+            )));
         }
 
         Ok(None)
@@ -1042,16 +1075,22 @@ impl SparseMerkleTree {
         &mut self,
         db: &mut impl DB,
         info: &UpdateNodeInfo,
-    ) -> Result<(Node, StructurePosition), SMTError> {
-        let btm_subtree = match info.current_node.kind {
+    ) -> Result<(SharedNode, StructurePosition), SMTError> {
+        let current_node_kind = info.current_node.lock().unwrap().kind.clone();
+        let btm_subtree = match current_node_kind {
             NodeKind::Stub => {
-                let subtree = self.get_subtree(db, info.current_node.hash.value())?;
-                db.del(info.current_node.hash.value())
+                let subtree =
+                    self.get_subtree(db, info.current_node.lock().unwrap().hash.value())?;
+                db.del(info.current_node.lock().unwrap().hash.value())
                     .map_err(|err| SMTError::Unknown(err.to_string()))?;
                 subtree
             },
-            NodeKind::Empty => self.get_subtree(db, info.current_node.hash.value())?,
-            NodeKind::Leaf => SubTree::from_data(&[0], &[info.current_node.clone()], self.hasher)?,
+            NodeKind::Empty => {
+                self.get_subtree(db, info.current_node.lock().unwrap().hash.value())?
+            },
+            NodeKind::Leaf => {
+                SubTree::from_data(&[0], &[Arc::clone(&info.current_node)], self.hasher)?
+            },
             _ => {
                 return Err(SMTError::Unknown(String::from("invalid node type")));
             },
@@ -1067,24 +1106,38 @@ impl SparseMerkleTree {
             info.height + info.structure_pos.into(),
         )?;
         if new_subtree.nodes.len() == 1 {
-            return Ok((new_subtree.nodes[0].clone(), info.structure_pos));
+            return Ok((Arc::clone(&new_subtree.nodes[0]), info.structure_pos));
         }
         let new_branch = Node::new_stub(&new_subtree.root);
 
-        Ok((new_branch, info.structure_pos))
+        Ok((Arc::new(Mutex::new(new_branch)), info.structure_pos))
     }
 
-    fn left_right_nodes(&self, info: &UpdateNodeInfo) -> Result<(Node, Node), SMTError> {
-        match info.current_node.kind {
-            NodeKind::Empty => Ok((Node::new_empty(), Node::new_empty())),
+    fn left_right_nodes(
+        &self,
+        info: &UpdateNodeInfo,
+    ) -> Result<(SharedNode, SharedNode), SMTError> {
+        let current_node = info.current_node.lock().unwrap();
+
+        match current_node.kind {
+            NodeKind::Empty => Ok((
+                Arc::new(Mutex::new(Node::new_empty())),
+                Arc::new(Mutex::new(Node::new_empty())),
+            )),
             NodeKind::Leaf => {
                 if utils::is_bit_set(
-                    &info.current_node.key,
+                    &current_node.key,
                     (info.height + info.structure_pos.into()).into(),
                 ) {
-                    Ok((Node::new_empty(), info.current_node.clone()))
+                    Ok((
+                        Arc::new(Mutex::new(Node::new_empty())),
+                        Arc::clone(&info.current_node),
+                    ))
                 } else {
-                    Ok((info.current_node.clone(), Node::new_empty()))
+                    Ok((
+                        Arc::clone(&info.current_node),
+                        Arc::new(Mutex::new(Node::new_empty())),
+                    ))
                 }
             },
             _ => Err(SMTError::Unknown(String::from("Invalid node kind"))),
@@ -1095,17 +1148,17 @@ impl SparseMerkleTree {
         &mut self,
         db: &mut impl DB,
         info: UpdateNodeInfo,
-    ) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+    ) -> Result<(Vec<SharedNode>, Vec<u8>), SMTError> {
         let total_data = info.length_bins[info.length_bins.len() - 1] - info.length_base;
         if total_data == 0 {
-            return Ok((vec![info.current_node], vec![info.structure_pos.into()]));
+            return Ok((
+                vec![Arc::clone(&info.current_node)],
+                vec![info.structure_pos.into()],
+            ));
         }
         if total_data == 1 {
-            match self.update_one_node(&info)? {
-                Some((node, structure)) => {
-                    return Ok((vec![node], vec![structure.into()]));
-                },
-                None => {},
+            if let Some((node, structure)) = self.update_one_node(&info)? {
+                return Ok((vec![node], vec![structure.into()]));
             }
         }
 
@@ -1162,14 +1215,14 @@ impl SparseMerkleTree {
         current_subtree: &SubTree,
         query_key: &[u8],
         height: Height,
-    ) -> Result<(Node, Height), SMTError> {
+    ) -> Result<(SharedNode, Height), SMTError> {
         let mut bin_offset = 0;
-        let mut current_node: Option<Node> = None;
+        let mut current_node: Option<SharedNode> = None;
         let bin_idx = self.find_index(query_key, height)?;
         let mut h = 0;
         for i in 0..current_subtree.nodes.len() {
             h = current_subtree.structure[i];
-            current_node = Some(current_subtree.nodes[i].clone());
+            current_node = Some(Arc::clone(&current_subtree.nodes[i]));
             let new_offset = 1 << (self.subtree_height.sub_to_usize(h));
             if bin_offset <= bin_idx && bin_idx < bin_offset + new_offset {
                 break;
@@ -1177,7 +1230,7 @@ impl SparseMerkleTree {
             bin_offset += new_offset
         }
 
-        Ok((current_node.unwrap(), h.into()))
+        Ok((Arc::clone(&current_node.unwrap()), h.into()))
     }
 
     fn calc_query_proof_from_result(
@@ -1189,7 +1242,7 @@ impl SparseMerkleTree {
         let sibling_hashes = Vec::from(d.ref_mut_vecs.sibling_hashes.clone());
         let binary_bitmap = d.ref_mut_vecs.binary_bitmap.clone();
         if d.current_node.kind == NodeKind::Empty {
-            let pair = KVPair::new(d.query_key, &[]);
+            let pair = Arc::new(KVPair::new(d.query_key, &[]));
             return Ok(QueryProofWithProof::new_with_pair(
                 pair,
                 d.ref_mut_vecs.binary_bitmap,
@@ -1200,10 +1253,10 @@ impl SparseMerkleTree {
 
         if d.current_node.kind == NodeKind::Leaf {
             ancestor_hashes.push_back(d.current_node.hash.value_as_vec());
-            let pair = KVPair::new(
+            let pair = Arc::new(KVPair::new(
                 &d.current_node.key,
                 &d.current_node.hash.key()[PREFIX_LEAF_HASH.len() + HASH_SIZE..],
-            );
+            ));
             return Ok(QueryProofWithProof::new_with_pair(
                 pair,
                 // 0 index is the leaf prefix
@@ -1266,7 +1319,7 @@ impl SparseMerkleTree {
         }
 
         for (i, node) in current_subtree.nodes.iter_mut().enumerate() {
-            node.index = i;
+            node.lock().unwrap().index = i;
         }
 
         let (current_node, query_height) =
@@ -1275,7 +1328,8 @@ impl SparseMerkleTree {
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
         let mut binary_bitmap: Vec<bool> = vec![];
-        let extra = self.calc_query_hashes_extra_info(current_subtree, &current_node)?;
+        let extra =
+            self.calc_query_hashes_extra_info(current_subtree, &current_node.lock().unwrap())?;
         let info = QueryHashesInfo::new(
             current_subtree.nodes.clone(),
             current_subtree.structure.clone(),
@@ -1289,7 +1343,7 @@ impl SparseMerkleTree {
         calculate_query_hashes(info);
         let data = GenerateResultData {
             query_key,
-            current_node: &current_node,
+            current_node: &current_node.lock().unwrap(),
             ref_mut_vecs: QueryHashesRefMut {
                 ancestor_hashes: &mut ancestor_hashes,
                 sibling_hashes: &mut sibling_hashes,
@@ -1327,11 +1381,13 @@ impl SparseMerkleTree {
             let d = query.binary_key()[query.height() - 1];
             let mut next_query = query.clone();
             if !d {
-                next_query.hash =
-                    branch_hash(&[query.hash.clone(), sibling_hash.unwrap()].concat());
+                next_query.hash = branch_hash(
+                    &[query.hash.as_slice(), sibling_hash.unwrap().as_slice()].concat(),
+                );
             } else {
-                next_query.hash =
-                    branch_hash(&[sibling_hash.unwrap(), query.hash.clone()].concat());
+                next_query.hash = branch_hash(
+                    &[sibling_hash.unwrap().as_slice(), query.hash.as_slice()].concat(),
+                );
             }
             next_query.slice_bitmap();
             insert_and_filter_queries(next_query, &mut sorted_queries);
@@ -1348,7 +1404,7 @@ impl SparseMerkleTree {
             root.to_vec()
         };
         Self {
-            root: Arc::new(Mutex::new(r)),
+            root: Arc::new(Mutex::new(Arc::new(r))),
             key_length,
             hasher: tree_hasher,
             subtree_height,
@@ -1360,7 +1416,7 @@ impl SparseMerkleTree {
         &mut self,
         db: &mut impl DB,
         data: &mut UpdateData,
-    ) -> Result<Arc<Mutex<Vec<u8>>>, SMTError> {
+    ) -> Result<SharedVec, SMTError> {
         if data.is_empty() {
             return Ok(Arc::clone(&self.root));
         }
@@ -1441,7 +1497,7 @@ mod tests {
             let tree = SubTree::new(&decoded_data, KeyLength(32), tree_hasher).unwrap();
             let decoded_hash = hex::decode(hash).unwrap();
             assert_eq!(tree.structure, structure);
-            assert_eq!(tree.root, decoded_hash);
+            assert_eq!(*tree.root, decoded_hash);
         }
     }
     #[test]
@@ -1455,7 +1511,7 @@ mod tests {
         for (data, _, _) in test_data {
             let decoded_data = hex::decode(data).unwrap();
             let tree = SubTree::new(&decoded_data, KeyLength(32), tree_hasher).unwrap();
-            assert_eq!(tree.encode(), decoded_data.clone());
+            assert_eq!(tree.encode(), decoded_data);
         }
     }
 
@@ -1467,7 +1523,7 @@ mod tests {
         let result = tree.commit(&mut db, &mut data);
 
         assert_eq!(
-            *result.unwrap().lock().unwrap(),
+            **result.unwrap().lock().unwrap(),
             hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
                 .unwrap()
         );
@@ -1493,7 +1549,10 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
+            assert_eq!(
+                **result.unwrap().lock().unwrap(),
+                hex::decode(root).unwrap()
+            );
         }
     }
 
@@ -1523,7 +1582,10 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
+            assert_eq!(
+                **result.unwrap().lock().unwrap(),
+                hex::decode(root).unwrap()
+            );
         }
     }
 
@@ -1561,7 +1623,10 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
+            assert_eq!(
+                **result.unwrap().lock().unwrap(),
+                hex::decode(root).unwrap()
+            );
         }
     }
 
@@ -1607,7 +1672,10 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data);
 
-            assert_eq!(*result.unwrap().lock().unwrap(), hex::decode(root).unwrap());
+            assert_eq!(
+                **result.unwrap().lock().unwrap(),
+                hex::decode(root).unwrap()
+            );
         }
     }
 
@@ -1649,8 +1717,8 @@ mod tests {
                         "f6d10a31f5362e0ceada0b2fccabc648dc25d635bb3331f5cb0f499591f104b8",
                     ],
                     vec![QueryProof {
-                        bitmap: hex::decode("17").unwrap(),
-                        pair: KVPair(
+                        bitmap: Arc::new(hex::decode("17").unwrap()),
+                        pair: Arc::new(KVPair(
                             hex::decode(
                                 "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
                             )
@@ -1659,7 +1727,7 @@ mod tests {
                                 "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
                             )
                             .unwrap(),
-                        ),
+                        )),
                     }],
                 ),
                 (
@@ -1747,37 +1815,37 @@ mod tests {
                     ],
                     vec![
                     QueryProof {
-                        bitmap: hex::decode("3f").unwrap(),
-                        pair: KVPair(hex::decode(
+                        bitmap: Arc::new(hex::decode("3f").unwrap()),
+                        pair: Arc::new(KVPair(hex::decode(
                             "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
                         )
                         .unwrap(),
                         hex::decode(
                             "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
                         )
-                        .unwrap(),),
+                        .unwrap(),)),
                     },
                     QueryProof {
-                        bitmap: hex::decode("bf").unwrap(),
-                        pair: KVPair(hex::decode(
+                        bitmap: Arc::new(hex::decode("bf").unwrap()),
+                        pair: Arc::new(KVPair(hex::decode(
                             "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
                         )
                         .unwrap(),
                         hex::decode(
                             "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
                         )
-                        .unwrap(),),
+                        .unwrap(),)),
                     },
                     QueryProof {
-                        bitmap: hex::decode("2f").unwrap(),
-                        pair: KVPair(hex::decode(
+                        bitmap: Arc::new(hex::decode("2f").unwrap()),
+                        pair: Arc::new(KVPair(hex::decode(
                             "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
                         )
                         .unwrap(),
                         hex::decode(
                             "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
                         )
-                        .unwrap(),),
+                        .unwrap(),)),
                     },
                 ],
                 ),
@@ -1795,7 +1863,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data).unwrap();
 
-            assert_eq!(*result.lock().unwrap(), hex::decode(root).unwrap());
+            assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());
 
             let proof = tree
                 .prove(
@@ -1966,8 +2034,8 @@ mod tests {
             ],
             vec![
                 QueryProof {
-                    bitmap: hex::decode("3f").unwrap(),
-                    pair: KVPair(
+                    bitmap: Arc::new(hex::decode("3f").unwrap()),
+                    pair: Arc::new(KVPair(
                         hex::decode(
                             "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
                         )
@@ -1976,11 +2044,11 @@ mod tests {
                             "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
                         )
                         .unwrap(),
-                    ),
+                    )),
                 },
                 QueryProof {
-                    bitmap: hex::decode("bf").unwrap(),
-                    pair: KVPair(
+                    bitmap: Arc::new(hex::decode("bf").unwrap()),
+                    pair: Arc::new(KVPair(
                         hex::decode(
                             "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
                         )
@@ -1989,11 +2057,11 @@ mod tests {
                             "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
                         )
                         .unwrap(),
-                    ),
+                    )),
                 },
                 QueryProof {
-                    bitmap: hex::decode("3f").unwrap(),
-                    pair: KVPair(
+                    bitmap: Arc::new(hex::decode("3f").unwrap()),
+                    pair: Arc::new(KVPair(
                         hex::decode(
                             "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
                         )
@@ -2002,11 +2070,11 @@ mod tests {
                             "1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba",
                         )
                         .unwrap(),
-                    ),
+                    )),
                 },
                 QueryProof {
-                    bitmap: hex::decode("9f").unwrap(),
-                    pair: KVPair(
+                    bitmap: Arc::new(hex::decode("9f").unwrap()),
+                    pair: Arc::new(KVPair(
                         hex::decode(
                             "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
                         )
@@ -2015,11 +2083,11 @@ mod tests {
                             "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
                         )
                         .unwrap(),
-                    ),
+                    )),
                 },
                 QueryProof {
-                    bitmap: hex::decode("5f").unwrap(),
-                    pair: KVPair(
+                    bitmap: Arc::new(hex::decode("5f").unwrap()),
+                    pair: Arc::new(KVPair(
                         hex::decode(
                             "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
                         )
@@ -2028,11 +2096,11 @@ mod tests {
                             "214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7",
                         )
                         .unwrap(),
-                    ),
+                    )),
                 },
                 QueryProof {
-                    bitmap: hex::decode("015f").unwrap(),
-                    pair: KVPair(
+                    bitmap: Arc::new(hex::decode("015f").unwrap()),
+                    pair: Arc::new(KVPair(
                         hex::decode(
                             "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
                         )
@@ -2041,7 +2109,7 @@ mod tests {
                             "88e443a340e2356812f72e04258672e5b287a177b66636e961cbc8d66b1e9b97",
                         )
                         .unwrap(),
-                    ),
+                    )),
                 },
             ],
         )];
@@ -2058,7 +2126,7 @@ mod tests {
             let mut db = smt_db::InMemorySmtDB::new();
             let result = tree.commit(&mut db, &mut data).unwrap();
 
-            assert_eq!(*result.lock().unwrap(), hex::decode(root).unwrap());
+            assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());
 
             let proof = tree
                 .prove(

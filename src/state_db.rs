@@ -13,7 +13,7 @@ use crate::options;
 use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
-use crate::types::{DatabaseOptions, Height, KVPair, KeyLength, NestedVec};
+use crate::types::{DatabaseOptions, Height, KVPair, KeyLength, NestedVec, SharedVec};
 use crate::utils;
 
 type SharedStateDB = JsBox<RefCell<StateDB>>;
@@ -38,7 +38,7 @@ struct CommitData {
 }
 
 struct CommitResultInfo {
-    next_root: Result<Arc<Mutex<Vec<u8>>>, smt::SMTError>,
+    next_root: Result<SharedVec, smt::SMTError>,
     data: Commit,
 }
 
@@ -64,7 +64,7 @@ impl CommitData {
 }
 
 impl CommitResultInfo {
-    fn new(next_root: Result<Arc<Mutex<Vec<u8>>>, smt::SMTError>, data: Commit) -> Self {
+    fn new(next_root: Result<SharedVec, smt::SMTError>, data: Commit) -> Self {
         Self { data, next_root }
     }
 }
@@ -185,7 +185,7 @@ impl StateDB {
         height: Height,
         state_root: &[u8],
         key_length: KeyLength,
-    ) -> Result<Arc<Mutex<Vec<u8>>>, DataStoreError> {
+    ) -> Result<SharedVec, DataStoreError> {
         let diff_bytes = conn
             .get(&[consts::PREFIX_DIFF, &height.as_u32_to_be_bytes()].concat())
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
@@ -231,7 +231,7 @@ impl StateDB {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val.lock().unwrap().clone());
+                        let buffer = JsBuffer::external(&mut ctx, (**val.lock().unwrap()).clone());
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
@@ -249,7 +249,7 @@ impl StateDB {
         smtdb: &smt_db::SmtDB,
         writer: MutexGuard<state_writer::StateWriter>,
         info: CommitResultInfo,
-    ) -> Result<Arc<Mutex<Vec<u8>>>, smt::SMTError> {
+    ) -> Result<SharedVec, smt::SMTError> {
         info.next_root.as_ref()?;
         let root = info.next_root.unwrap();
         if info.data.check_expected
@@ -304,7 +304,7 @@ impl StateDB {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val.lock().unwrap().clone());
+                        let buffer = JsBuffer::external(&mut ctx, (**val.lock().unwrap()).clone());
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
@@ -445,8 +445,8 @@ impl StateDB {
                 .as_slice(ctx)
                 .to_vec();
             queries.push(smt::QueryProof {
-                pair: KVPair::new(&key, &value),
-                bitmap,
+                pair: Arc::new(KVPair::new(&key, &value)),
+                bitmap: Arc::new(bitmap),
             });
         }
 
@@ -548,7 +548,7 @@ impl StateDB {
                 if utils::is_key_out_of_range(&options, &key, counter as i64, true) {
                     break;
                 }
-                let c = a_cb_on_data.clone();
+                let c = Arc::clone(&a_cb_on_data);
                 channel.send(move |mut ctx| {
                     let obj = ctx.empty_object();
                     let (_, key_without_prefix) = key.split_first().unwrap();
@@ -610,7 +610,7 @@ impl StateDB {
             readonly,
         };
         let commit = Commit::new(expected, db_options, check_root);
-        let writer = writer.borrow().clone();
+        let writer = Arc::clone(&writer.borrow());
         let commit_data = CommitData::new(commit, prev_root);
         db.commit(writer, commit_data, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;

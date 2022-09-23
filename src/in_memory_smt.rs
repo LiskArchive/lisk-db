@@ -29,7 +29,7 @@ impl JsFunctionContext<'_> {
             .context
             .this()
             .downcast_or_throw::<SharedInMemorySMT, _>(&mut self.context)?;
-        let in_memory_smt = in_memory_smt.borrow().clone();
+        let in_memory_smt = Arc::clone(&in_memory_smt.borrow());
 
         let state_root = self
             .context
@@ -84,7 +84,7 @@ impl JsFunctionContext<'_> {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
-                        let buffer = JsBuffer::external(&mut ctx, val.lock().unwrap().clone());
+                        let buffer = JsBuffer::external(&mut ctx, (**val.lock().unwrap()).clone());
                         vec![ctx.null().upcast(), buffer.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
@@ -196,8 +196,8 @@ impl JsFunctionContext<'_> {
                 .as_slice(&self.context)
                 .to_vec();
             queries.push(QueryProof {
-                pair: KVPair::new(&key, &value),
-                bitmap,
+                pair: Arc::new(KVPair::new(&key, &value)),
+                bitmap: Arc::new(bitmap),
             });
         }
         let proof = Proof {
