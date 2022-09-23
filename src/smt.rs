@@ -106,8 +106,8 @@ struct QueryHashesRefMut<'a> {
 }
 
 struct QueryHashesInfo<'a> {
-    layer_nodes: &'a [Node],
-    layer_structure: &'a [u8],
+    layer_nodes: Vec<Node>,
+    layer_structure: Vec<u8>,
     ref_mut_vecs: QueryHashesRefMut<'a>,
     extra: QueryHashesExtraInfo,
 }
@@ -186,32 +186,39 @@ fn empty_hash() -> Vec<u8> {
 }
 
 fn tree_hasher(node_hashes: &[Vec<u8>], structure: &[u8], height: Height) -> Vec<u8> {
-    if node_hashes.len() == 1 {
-        return node_hashes[0].clone();
-    }
-    let mut next_hashes = vec![];
-    let mut next_structure = vec![];
-    let mut i = 0;
+    let mut node_hashes: NestedVec = node_hashes.to_vec();
+    let mut structure: Vec<u8> = structure.to_vec();
+    let mut height = height;
 
-    while i < node_hashes.len() {
-        if structure[i] == height.into() {
-            let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
-            let hash = branch_hash(&branch);
-            next_hashes.push(hash);
-            next_structure.push(structure[i] - 1);
+    while node_hashes.len() != 1 {
+        let mut next_hashes = vec![];
+        let mut next_structure = vec![];
+        let mut i = 0;
+
+        while i < node_hashes.len() {
+            if structure[i] == height.into() {
+                let branch = [node_hashes[i].clone(), node_hashes[i + 1].clone()].concat();
+                let hash = branch_hash(&branch);
+                next_hashes.push(hash);
+                next_structure.push(structure[i] - 1);
+                i += 1;
+            } else {
+                next_hashes.push(node_hashes[i].clone());
+                next_structure.push(structure[i]);
+            }
             i += 1;
-        } else {
-            next_hashes.push(node_hashes[i].clone());
-            next_structure.push(structure[i]);
         }
-        i += 1;
+
+        if height.is_equal_to(1) {
+            return next_hashes[0].clone();
+        }
+
+        height = height.sub(1);
+        node_hashes = next_hashes;
+        structure = next_structure;
     }
 
-    if height.is_equal_to(1) {
-        return next_hashes[0].clone();
-    }
-
-    tree_hasher(&next_hashes, &next_structure, height.sub(1))
+    node_hashes[0].clone()
 }
 
 fn parent_node(
@@ -262,42 +269,43 @@ fn calculate_subtree(
     tree_map: &mut VecDeque<(Vec<Node>, Vec<u8>)>,
     hasher: Hasher,
 ) -> Result<SubTree, SMTError> {
-    if height.is_equal_to(0) {
-        return SubTree::from_data(&[0], layer_nodes, hasher);
-    }
-    let mut next_layer_nodes: Vec<Node> = vec![];
-    let mut next_layer_structure: Vec<u8> = vec![];
-    let mut i = 0;
-    while i < layer_nodes.len() {
-        if layer_structure[i] != height.into() {
-            next_layer_nodes.push(layer_nodes[i].clone());
-            next_layer_structure.push(layer_structure[i]);
-            i += 1;
-            continue;
-        }
+    let mut layer_nodes = layer_nodes.to_vec();
+    let mut layer_structure = layer_structure.to_vec();
+    let mut height = height;
 
-        let parent = parent_node(layer_nodes, layer_structure, tree_map, i)?;
-        next_layer_nodes.push(parent);
-        next_layer_structure.push(layer_structure[i] - 1);
-        // using 2 layer nodes
-        i += 2;
-    }
-    if height.is_equal_to(1) {
-        if next_layer_nodes[0].kind == NodeKind::Temp {
-            let (nodes, structure) = tree_map
-                .pop_front()
-                .ok_or_else(|| SMTError::Unknown(String::from("Subtree must exist for stub")))?;
-            return SubTree::from_data(&structure, &nodes, hasher);
+    while !height.is_equal_to(0) {
+        let mut next_layer_nodes: Vec<Node> = vec![];
+        let mut next_layer_structure: Vec<u8> = vec![];
+        let mut i = 0;
+        while i < layer_nodes.len() {
+            if layer_structure[i] != height.into() {
+                next_layer_nodes.push(layer_nodes[i].clone());
+                next_layer_structure.push(layer_structure[i]);
+                i += 1;
+                continue;
+            }
+
+            let parent = parent_node(&layer_nodes, &layer_structure, tree_map, i)?;
+            next_layer_nodes.push(parent);
+            next_layer_structure.push(layer_structure[i] - 1);
+            // using 2 layer nodes
+            i += 2;
         }
-        return SubTree::from_data(&[0], &next_layer_nodes, hasher);
+        if height.is_equal_to(1) {
+            if next_layer_nodes[0].kind == NodeKind::Temp {
+                let (nodes, structure) = tree_map.pop_front().ok_or_else(|| {
+                    SMTError::Unknown(String::from("Subtree must exist for stub"))
+                })?;
+                return SubTree::from_data(&structure, &nodes, hasher);
+            }
+            return SubTree::from_data(&[0], &next_layer_nodes, hasher);
+        }
+        layer_nodes = next_layer_nodes;
+        layer_structure = next_layer_structure;
+        height = height.sub(1);
     }
-    calculate_subtree(
-        &next_layer_nodes,
-        &next_layer_structure,
-        height.sub(1),
-        tree_map,
-        hasher,
-    )
+
+    SubTree::from_data(&[0], &layer_nodes, hasher)
 }
 
 fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
@@ -338,32 +346,32 @@ fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInf
 }
 
 fn calculate_query_hashes(mut info: QueryHashesInfo) {
-    if info.extra.height.is_equal_to(0) {
-        return;
-    }
-    let mut next_info = NextQueryHashesInfo::new(info.extra.target_id);
-    let mut i = 0;
-    while i < info.layer_nodes.len() {
-        if info.layer_structure[i] != info.extra.height.into() {
-            next_info.push(info.layer_nodes[i].clone(), info.layer_structure[i]);
-            i += 1;
-            continue;
+    let mut is_extra_height_zero = info.extra.height.is_equal_to(0);
+    while !is_extra_height_zero {
+        let mut next_info = NextQueryHashesInfo::new(info.extra.target_id);
+        let mut i = 0;
+        while i < info.layer_nodes.len() {
+            if info.layer_structure[i] != info.extra.height.into() {
+                next_info.push(info.layer_nodes[i].clone(), info.layer_structure[i]);
+                i += 1;
+                continue;
+            }
+            calc_next_info(&mut info, &mut next_info, i);
+            i += 2;
         }
-        calc_next_info(&mut info, &mut next_info, i);
-        i += 2;
+        let new_extra = QueryHashesExtraInfo::new(
+            info.extra.height.sub(1),
+            next_info.target_id,
+            info.extra.max_index + i + 1,
+        );
+        info = QueryHashesInfo::new(
+            next_info.layer_nodes,
+            next_info.layer_structure,
+            info.ref_mut_vecs,
+            new_extra,
+        );
+        is_extra_height_zero = info.extra.height.is_equal_to(0);
     }
-    let new_extra = QueryHashesExtraInfo::new(
-        info.extra.height.sub(1),
-        next_info.target_id,
-        info.extra.max_index + i + 1,
-    );
-    let new_info = QueryHashesInfo::new(
-        &next_info.layer_nodes,
-        &next_info.layer_structure,
-        info.ref_mut_vecs,
-        new_extra,
-    );
-    calculate_query_hashes(new_info)
 }
 
 fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<QueryProofWithProof>) {
@@ -731,8 +739,8 @@ impl QueryHashesExtraInfo {
 
 impl<'a> QueryHashesInfo<'a> {
     fn new(
-        layer_nodes: &'a [Node],
-        layer_structure: &'a [u8],
+        layer_nodes: Vec<Node>,
+        layer_structure: Vec<u8>,
         vecs: QueryHashesRefMut<'a>,
         extra: QueryHashesExtraInfo,
     ) -> Self {
@@ -995,7 +1003,10 @@ impl SparseMerkleTree {
         Ok(new_subtree)
     }
 
-    fn update_one_node(&self, info: &UpdateNodeInfo) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+    fn update_one_node(
+        &self,
+        info: &UpdateNodeInfo,
+    ) -> Result<Option<(Node, StructurePosition)>, SMTError> {
         let idx = info
             .length_bins
             .iter()
@@ -1008,12 +1019,9 @@ impl SparseMerkleTree {
                     &info.key_bins[idx][0],
                     &info.value_bins[idx][0],
                 ));
-                return Ok((vec![new_leaf], vec![info.structure_pos.into()]));
+                return Ok(Some((new_leaf, info.structure_pos)));
             }
-            return Ok((
-                vec![info.current_node.clone()],
-                vec![info.structure_pos.into()],
-            ));
+            return Ok(Some((info.current_node.clone(), info.structure_pos)));
         }
 
         if info.current_node.kind == NodeKind::Leaf
@@ -1024,19 +1032,19 @@ impl SparseMerkleTree {
                     &info.key_bins[idx][0],
                     &info.value_bins[idx][0],
                 ));
-                return Ok((vec![new_leaf], vec![info.structure_pos.into()]));
+                return Ok(Some((new_leaf, info.structure_pos)));
             }
-            return Ok((vec![Node::new_empty()], vec![info.structure_pos.into()]));
+            return Ok(Some((Node::new_empty(), info.structure_pos)));
         }
 
-        Ok((vec![], vec![]))
+        Ok(None)
     }
 
     fn update_same_height(
         &mut self,
         db: &mut impl DB,
         info: &UpdateNodeInfo,
-    ) -> Result<(Vec<Node>, Vec<u8>), SMTError> {
+    ) -> Result<(Node, StructurePosition), SMTError> {
         let btm_subtree = match info.current_node.kind {
             NodeKind::Stub => {
                 let subtree = self.get_subtree(db, info.current_node.hash.value())?;
@@ -1061,14 +1069,11 @@ impl SparseMerkleTree {
             info.height + info.structure_pos.into(),
         )?;
         if new_subtree.nodes.len() == 1 {
-            return Ok((
-                vec![new_subtree.nodes[0].clone()],
-                vec![info.structure_pos.into()],
-            ));
+            return Ok((new_subtree.nodes[0].clone(), info.structure_pos));
         }
         let new_branch = Node::new_stub(&new_subtree.root);
 
-        Ok((vec![new_branch], vec![info.structure_pos.into()]))
+        Ok((new_branch, info.structure_pos))
     }
 
     fn left_right_nodes(&self, info: &UpdateNodeInfo) -> Result<(Node, Node), SMTError> {
@@ -1098,14 +1103,17 @@ impl SparseMerkleTree {
             return Ok((vec![info.current_node], vec![info.structure_pos.into()]));
         }
         if total_data == 1 {
-            let (n, v) = self.update_one_node(&info)?;
-            if !n.is_empty() && !v.is_empty() {
-                return Ok((n, v));
+            match self.update_one_node(&info)? {
+                Some((node, structure)) => {
+                    return Ok((vec![node], vec![structure.into()]));
+                },
+                None => {},
             }
         }
 
         if info.structure_pos == self.subtree_height.into() {
-            return self.update_same_height(db, &info);
+            let (node, structure) = self.update_same_height(db, &info)?;
+            return Ok((vec![node], vec![structure.into()]));
         }
 
         let (left_node, right_node) = self.left_right_nodes(&info)?;
@@ -1228,7 +1236,7 @@ impl SparseMerkleTree {
         ))
     }
 
-    fn clac_query_hashes_extra_info(
+    fn calc_query_hashes_extra_info(
         &self,
         current_subtree: &mut SubTree,
         current_node: &Node,
@@ -1269,10 +1277,10 @@ impl SparseMerkleTree {
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
         let mut binary_bitmap: Vec<bool> = vec![];
-        let extra = self.clac_query_hashes_extra_info(current_subtree, &current_node)?;
+        let extra = self.calc_query_hashes_extra_info(current_subtree, &current_node)?;
         let info = QueryHashesInfo::new(
-            &current_subtree.nodes,
-            &current_subtree.structure,
+            current_subtree.nodes.clone(),
+            current_subtree.structure.clone(),
             QueryHashesRefMut {
                 ancestor_hashes: &mut ancestor_hashes,
                 sibling_hashes: &mut sibling_hashes,
