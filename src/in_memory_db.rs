@@ -2,7 +2,7 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 use std::cell::{RefCell, RefMut};
 use std::cmp;
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::batch;
 use crate::options::IterationOption;
@@ -28,7 +28,7 @@ fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
     pairs.sort_by(|a, b| b.key().cmp(a.key()));
 }
 
-fn get_key_value_pairs(db: RefMut<Database>, options: IterationOption) -> Vec<KVPair> {
+fn get_key_value_pairs(db: RefMut<Database>, options: &IterationOption) -> Vec<KVPair> {
     let no_range = options.gte.is_none() && options.lte.is_none();
     let cached = if no_range {
         db.cache_all()
@@ -36,15 +36,13 @@ fn get_key_value_pairs(db: RefMut<Database>, options: IterationOption) -> Vec<KV
         let gte = options
             .gte
             .clone()
-            .unwrap_or_else(|| vec![0; options.lte.clone().unwrap().len()]);
+            .unwrap_or_else(|| vec![0; options.lte.as_ref().unwrap().len()]);
         let lte = options.lte.clone().unwrap_or_else(|| vec![255; gte.len()]);
         db.cache_range(&gte, &lte)
     };
 
     let mut results = vec![];
-    let mut exist_map = HashMap::new();
     for kv in cached {
-        exist_map.insert(kv.key_as_vec(), true);
         results.push(kv);
     }
 
@@ -184,7 +182,7 @@ impl Database {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow_mut();
 
-        let kv_pairs = get_key_value_pairs(db, options);
+        let kv_pairs = get_key_value_pairs(db, &options);
 
         let this = ctx.undefined();
         let arr = JsArray::new(&mut ctx, kv_pairs.len() as u32);
@@ -209,7 +207,7 @@ impl Database {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
 
-        let batch = batch.borrow().clone();
+        let batch = Arc::clone(&batch.borrow());
         let inner_batch = batch.lock().unwrap();
 
         inner_batch.batch.iterate(&mut db.cache);

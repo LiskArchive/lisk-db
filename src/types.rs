@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::ops::Add;
+use std::sync::{Arc, Mutex};
 
 use crate::codec;
 
 pub type NestedVec = Vec<Vec<u8>>;
+pub type SharedNestedVec<'a> = Vec<&'a [u8]>;
 pub type Cache = HashMap<Vec<u8>, Vec<u8>>;
 pub type VecOption = Option<Vec<u8>>;
+pub type SharedVec = Arc<Mutex<Arc<Vec<u8>>>>;
 
 // Strong type of SMT with max value KEY_LENGTH * 8
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -38,6 +41,9 @@ pub struct DatabaseOptions {
 
 #[derive(Clone, Debug)]
 pub struct KVPair(pub Vec<u8>, pub Vec<u8>);
+
+#[derive(Clone, Debug)]
+pub struct SharedKVPair<'a>(pub &'a [u8], pub &'a [u8]);
 
 pub trait DB {
     fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error>;
@@ -203,6 +209,29 @@ impl KVPair {
     #[inline]
     pub fn is_empty_value(&self) -> bool {
         self.1.is_empty()
+    }
+}
+
+impl<'a> SharedKVPair<'a> {
+    #[inline]
+    pub fn new(key: &'a [u8], value: &'a [u8]) -> Self {
+        Self(key, value)
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    pub fn key(&self) -> &[u8] {
+        self.0
+    }
+
+    #[inline]
+    pub fn value(&self) -> &[u8] {
+        self.1
+    }
+
+    #[inline]
+    pub fn key_as_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
     }
 }
 

@@ -275,7 +275,7 @@ impl Database {
             .this()
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
-        let batch = batch.borrow().clone();
+        let batch = Arc::clone(&batch.borrow());
 
         db.send(move |conn, channel| {
             let b = rocksdb::WriteBatch::default();
@@ -319,7 +319,7 @@ impl Database {
                 if utils::is_key_out_of_range(&options, &key, counter as i64, false) {
                     break;
                 }
-                let c = a_cb_on_data.clone();
+                let c = Arc::clone(&a_cb_on_data);
                 channel.send(move |mut ctx| {
                     let obj = ctx.empty_object();
                     let key_res = JsBuffer::external(&mut ctx, key);
