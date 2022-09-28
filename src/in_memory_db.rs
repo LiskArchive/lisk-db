@@ -5,11 +5,15 @@ use std::cmp;
 use std::sync::Arc;
 
 use crate::batch;
+use crate::common_db::{
+    JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithContext, Options as DBOptions,
+    OptionsWithContext,
+};
 use crate::options::IterationOption;
-use crate::types::{Cache, KVPair};
+use crate::types::{Cache, KVPair, New};
 use crate::utils;
 
-type SharedStateDB = JsBox<RefCell<Database>>;
+type SharedStateDB = JsBoxRef<Database>;
 
 #[derive(Clone, Debug)]
 pub struct CacheData {
@@ -65,15 +69,42 @@ impl rocksdb::WriteBatchIterator for CacheData {
     }
 }
 
-impl Finalize for Database {}
-
-impl Database {
-    pub fn new() -> Result<Self, rocksdb::Error> {
+impl NewDBWithContext for Database {
+    fn new_db_with_context<'a, C>(
+        _: &mut C,
+        _: String,
+        _: DBOptions,
+        _: DBKind,
+    ) -> Result<Self, rocksdb::Error>
+    where
+        C: Context<'a>,
+        Self: Sized,
+    {
         Ok(Database {
             cache: CacheData { data: Cache::new() },
         })
     }
+}
 
+impl JsNewWithBoxRef for Database {
+    fn js_new_with_box_ref<T: OptionsWithContext, U: NewDBWithContext + Send + Finalize>(
+        mut ctx: FunctionContext,
+    ) -> JsResult<JsBoxRef<U>> {
+        let db = U::new_db_with_context(
+            &mut ctx,
+            String::from(""),
+            DBOptions::new(),
+            DBKind::InMemoryDB,
+        )
+        .or_else(|err| ctx.throw_error(&err))?;
+        let ref_db = RefCell::new(db);
+
+        return Ok(ctx.boxed(ref_db));
+    }
+}
+
+impl Finalize for Database {}
+impl Database {
     fn cache_range(&self, start: &[u8], end: &[u8]) -> Vec<KVPair> {
         self.cache
             .data
@@ -115,13 +146,6 @@ impl Database {
 }
 
 impl Database {
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
-        let db = Database::new().or_else(|err| ctx.throw_error(&err))?;
-        let ref_db = RefCell::new(db);
-
-        return Ok(ctx.boxed(ref_db));
-    }
-
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let cb = ctx.argument::<JsFunction>(1)?;
@@ -201,7 +225,7 @@ impl Database {
     }
 
     pub fn js_write(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let batch = ctx.argument::<JsBox<batch::SendableWriteBatch>>(0)?;
+        let batch = ctx.argument::<batch::SendableWriteBatch>(0)?;
         let cb = ctx.argument::<JsFunction>(1)?;
 
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;

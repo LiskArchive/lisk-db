@@ -1,12 +1,11 @@
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
+use std::sync::{Arc, Mutex};
 
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::batch;
-use crate::options;
-use crate::types::DatabaseOptions;
+use crate::common_db::{JsNewWithBox, DB};
+use crate::options::IterationOption;
 use crate::utils;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,129 +13,9 @@ pub struct Error {
     message: String,
 }
 
-pub struct Database {
-    tx: mpsc::Sender<options::DbMessage>,
-}
-
-impl Finalize for Database {}
-
+pub type Database = DB;
+impl JsNewWithBox for Database {}
 impl Database {
-    fn new<'a, C>(ctx: &mut C, path: String, opts: DatabaseOptions) -> Result<Self, rocksdb::Error>
-    where
-        C: Context<'a>,
-    {
-        // Channel for sending callbacks to execute on the sqlite connection thread
-        let (tx, rx) = mpsc::channel::<options::DbMessage>();
-
-        let channel = ctx.channel();
-
-        let mut option = rocksdb::Options::default();
-        option.create_if_missing(true);
-
-        let mut opened: rocksdb::DB;
-        if opts.readonly {
-            opened = rocksdb::DB::open_for_read_only(&option, path, false)?;
-        } else {
-            opened = rocksdb::DB::open(&option, path)?;
-        }
-
-        thread::spawn(move || {
-            while let Ok(message) = rx.recv() {
-                match message {
-                    options::DbMessage::Callback(f) => {
-                        f(&mut opened, &channel);
-                    },
-                    options::DbMessage::Close => return,
-                }
-            }
-        });
-
-        Ok(Self { tx })
-    }
-
-    // Idiomatic rust would take an owned `self` to prevent use after close
-    // However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    fn close(&self) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.tx.send(options::DbMessage::Close)
-    }
-
-    fn send(
-        &self,
-        callback: impl FnOnce(&mut rocksdb::DB, &Channel) + Send + 'static,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.tx
-            .send(options::DbMessage::Callback(Box::new(callback)))
-    }
-
-    fn get_by_key(
-        &self,
-        key: Vec<u8>,
-        cb: Root<JsFunction>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.send(move |conn, channel| {
-            let result = conn.get(key);
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(Some(val)) => {
-                        let buffer = JsBuffer::external(&mut ctx, val);
-                        vec![ctx.null().upcast(), buffer.upcast()]
-                    },
-                    Ok(None) => vec![ctx.error("No data")?.upcast()],
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
-    }
-
-    fn exists(
-        &self,
-        key: Vec<u8>,
-        cb: Root<JsFunction>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.send(move |conn, channel| {
-            let exist = conn.key_may_exist(&key);
-            let result = if exist {
-                conn.get(&key).map(|res| res.is_some())
-            } else {
-                Ok(false)
-            };
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let converted = ctx.boolean(val);
-                        vec![ctx.null().upcast(), converted.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
-    }
-}
-
-impl Database {
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<Database>> {
-        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let options = ctx.argument_opt(1);
-        let db_opts = DatabaseOptions::new_with_context(&mut ctx, options)?;
-        let db = Database::new(&mut ctx, path, db_opts).or_else(|err| ctx.throw_error(&err))?;
-
-        return Ok(ctx.boxed(db));
-    }
-
     pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx
@@ -268,7 +147,7 @@ impl Database {
     }
 
     pub fn js_write(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let batch = ctx.argument::<JsBox<batch::SendableWriteBatch>>(0)?;
+        let batch = ctx.argument::<batch::SendableWriteBatch>(0)?;
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
         let db = ctx
@@ -303,7 +182,7 @@ impl Database {
 
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
-        let options = options::IterationOption::new(&mut ctx, option_inputs);
+        let options = IterationOption::new(&mut ctx, option_inputs);
         let cb_on_data = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let cb_done = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`

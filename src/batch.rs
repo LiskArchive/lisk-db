@@ -1,11 +1,12 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
-use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
 
-use crate::types::KVPair;
+use crate::common_db::{
+    DatabaseKind, JsArcMutex, JsNewWithArcMutex, Kind as DBKind, NewDBWithKeyLength,
+};
+use crate::types::{KVPair, KeyLength};
 
-pub type SendableWriteBatch = RefCell<Arc<Mutex<WriteBatch>>>;
+pub type SendableWriteBatch = JsArcMutex<WriteBatch>;
 
 pub trait BatchWriter {
     fn put(&mut self, pair: &KVPair);
@@ -21,11 +22,9 @@ pub struct PrefixWriteBatch<'a> {
     prefix: Option<&'a [u8]>,
 }
 
-impl Finalize for WriteBatch {}
-
 impl Clone for WriteBatch {
     fn clone(&self) -> Self {
-        let mut cloned = WriteBatch::new();
+        let mut cloned = WriteBatch::new_db_with_key_length(None);
         self.batch.iterate(&mut cloned);
         cloned
     }
@@ -42,21 +41,23 @@ impl rocksdb::WriteBatchIterator for WriteBatch {
     }
 }
 
-impl WriteBatch {
-    pub fn new() -> Self {
+impl NewDBWithKeyLength for WriteBatch {
+    fn new_db_with_key_length(_: Option<KeyLength>) -> Self {
         Self {
             batch: rocksdb::WriteBatch::default(),
         }
     }
+}
 
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<SendableWriteBatch>> {
-        let batch = RefCell::new(Arc::new(Mutex::new(WriteBatch {
-            batch: rocksdb::WriteBatch::default(),
-        })));
-
-        Ok(ctx.boxed(batch))
+impl DatabaseKind for WriteBatch {
+    fn db_kind() -> DBKind {
+        DBKind::Batch
     }
+}
 
+impl JsNewWithArcMutex for WriteBatch {}
+impl Finalize for WriteBatch {}
+impl WriteBatch {
     pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
@@ -64,7 +65,7 @@ impl WriteBatch {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableWriteBatch>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableWriteBatch, _>(&mut ctx)?;
 
         let batch = batch.borrow();
         let mut inner_batch = batch.lock().unwrap();
@@ -79,7 +80,7 @@ impl WriteBatch {
         // Get the `this` value as a `JsBox<Database>`
         let batch = ctx
             .this()
-            .downcast_or_throw::<JsBox<SendableWriteBatch>, _>(&mut ctx)?;
+            .downcast_or_throw::<SendableWriteBatch, _>(&mut ctx)?;
 
         let batch = batch.borrow();
         let mut inner_batch = batch.lock().unwrap();

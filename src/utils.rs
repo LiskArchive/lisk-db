@@ -1,7 +1,8 @@
 use crate::consts;
 use crate::options;
-use sha2::{Digest, Sha256};
 use std::cmp;
+
+use crate::types::{HashKind, HashWithKind};
 
 pub fn get_iteration_mode<'a>(
     options: &options::IterationOption,
@@ -82,12 +83,6 @@ fn find_longer<'a>(a: &'a [bool], b: &'a [bool]) -> (&'a [bool], &'a [bool]) {
     }
 }
 
-pub fn empty_hash() -> Vec<u8> {
-    let hasher = Sha256::new();
-    let result = hasher.finalize();
-    return result.as_slice().to_vec();
-}
-
 pub fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
     for (ai, bi) in a.iter().zip(b.iter()) {
         match ai.cmp(bi) {
@@ -108,7 +103,7 @@ pub fn is_bytes_equal(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn is_empty_hash(a: &[u8]) -> bool {
-    compare(a, empty_hash().as_slice()) == cmp::Ordering::Equal
+    compare(a, &vec![].hash_with_kind(HashKind::Empty)) == cmp::Ordering::Equal
 }
 
 pub fn is_bools_equal(a: &[bool], b: &[bool]) -> bool {

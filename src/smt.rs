@@ -4,9 +4,11 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
+use crate::common_db::Actions;
+use crate::consts::PREFIX_BRANCH_HASH;
 use crate::types::{
-    Cache, Height, KVPair, KeyLength, NestedVec, SharedKVPair, SharedNestedVec, SharedVec,
-    StructurePosition, SubtreeHeight, VecOption, DB,
+    ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
+    SharedKVPair, SharedNestedVec, SharedVec, StructurePosition, SubtreeHeight, VecOption,
 };
 use crate::utils;
 
@@ -14,13 +16,11 @@ const PREFIX_INT_LEAF_HASH: u8 = 0;
 const PREFIX_INT_BRANCH_HASH: u8 = 1;
 const PREFIX_INT_EMPTY: u8 = 2;
 const HASH_SIZE: usize = 32;
-const PREFIX_SIZE: usize = 6;
 static PREFIX_LEAF_HASH: &[u8] = &[0];
-static PREFIX_BRANCH_HASH: &[u8] = &[1];
 static PREFIX_EMPTY: &[u8] = &[2];
 
 type Hasher = fn(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Arc<Vec<u8>>;
-type SharedNode = Arc<Mutex<Node>>;
+type SharedNode = ArcMutex<Node>;
 
 trait SortDescending {
     fn sort_descending(&mut self);
@@ -149,43 +149,15 @@ pub struct SparseMerkleTree {
     hasher: Hasher,
 }
 
-fn key_hash(key: &[u8]) -> Vec<u8> {
-    let prefix = &key[..PREFIX_SIZE];
-    let body = &key[PREFIX_SIZE..];
-    let mut hasher = Sha256::new();
-    hasher.update(body);
-    let result = hasher.finalize();
-    [prefix, result.as_slice()].concat()
-}
-
-fn value_hash(value: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(value);
-    let result = hasher.finalize();
-    result.to_vec()
-}
-
-fn leaf_hash(pair: &KVPair) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(PREFIX_LEAF_HASH);
-    hasher.update(pair.key());
-    hasher.update(pair.value());
-    let result = hasher.finalize();
-    result.to_vec()
-}
-
-fn branch_hash(node_hash: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(PREFIX_BRANCH_HASH);
-    hasher.update(node_hash);
-    let result = hasher.finalize();
-    result.to_vec()
-}
-
-fn empty_hash() -> Vec<u8> {
-    let hasher = Sha256::new();
-    let result = hasher.finalize();
-    result.to_vec()
+impl Hash256 for KVPair {
+    fn hash(&self) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(PREFIX_LEAF_HASH);
+        hasher.update(self.key());
+        hasher.update(self.value());
+        let result = hasher.finalize();
+        result.to_vec()
+    }
 }
 
 fn tree_hasher(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Arc<Vec<u8>> {
@@ -205,7 +177,7 @@ fn tree_hasher(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -
                     (*node_hashes[i + 1]).as_slice(),
                 ]
                 .concat();
-                let hash = branch_hash(&branch);
+                let hash = branch.hash_with_kind(HashKind::Branch);
                 next_hashes.push(Arc::new(hash));
                 next_structure.push(structure[i] - 1);
                 i += 1;
@@ -457,11 +429,15 @@ impl std::convert::From<&SMTError> for SMTError {
 impl rocksdb::WriteBatchIterator for UpdateData {
     /// Called with a key and value that were `put` into the batch.
     fn put(&mut self, key: Box<[u8]>, value: Box<[u8]>) {
-        self.data.insert(key_hash(&key), value_hash(&value));
+        self.data.insert(
+            key.into_vec().hash_with_kind(HashKind::Key),
+            value.into_vec().hash_with_kind(HashKind::Value),
+        );
     }
     /// Called with a key that was `delete`d from the batch.
     fn delete(&mut self, key: Box<[u8]>) {
-        self.data.insert(key_hash(&key), vec![]);
+        self.data
+            .insert(key.into_vec().hash_with_kind(HashKind::Key), vec![]);
     }
 }
 
@@ -505,9 +481,12 @@ impl UpdateData {
         let mut new_data = Cache::new();
         for (k, v) in data {
             if !v.is_empty() {
-                new_data.insert(key_hash(&k), value_hash(&v));
+                new_data.insert(
+                    k.hash_with_kind(HashKind::Key),
+                    v.hash_with_kind(HashKind::Value),
+                );
             } else {
-                new_data.insert(key_hash(&k), vec![]);
+                new_data.insert(k.hash_with_kind(HashKind::Key), vec![]);
             }
         }
         Self { data: new_data }
@@ -541,9 +520,9 @@ impl QueryProofWithProof {
         sibling_hashes: &[Vec<u8>],
     ) -> Self {
         let hashed_key = if pair.is_empty_value() {
-            empty_hash()
+            vec![].hash_with_kind(HashKind::Empty)
         } else {
-            leaf_hash(&pair)
+            pair.hash()
         };
         Self {
             query_proof: QueryProof::new_with_binary_bitmap(pair, binary_bitmap),
@@ -621,7 +600,7 @@ impl Node {
     fn new_branch(left_hash: &[u8], right_hash: &[u8]) -> Self {
         let combined = [left_hash, right_hash].concat();
         let data = [PREFIX_BRANCH_HASH, &combined].concat();
-        let hashed = branch_hash(&combined);
+        let hashed = combined.hash_with_kind(HashKind::Branch);
         Self {
             kind: NodeKind::Stub,
             hash: KVPair::new(&data, &hashed),
@@ -631,7 +610,7 @@ impl Node {
     }
 
     fn new_leaf(pair: &KVPair) -> Self {
-        let h = leaf_hash(pair);
+        let h = pair.hash();
         let data = [PREFIX_LEAF_HASH, pair.key(), pair.value()].concat();
         Self {
             kind: NodeKind::Leaf,
@@ -642,7 +621,7 @@ impl Node {
     }
 
     fn new_empty() -> Self {
-        let h = empty_hash();
+        let h = vec![].hash_with_kind(HashKind::Empty);
         let data = [PREFIX_EMPTY].concat();
         Self {
             kind: NodeKind::Empty,
@@ -832,7 +811,7 @@ impl SparseMerkleTree {
 
     fn sibling_data(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         queries: &[Vec<u8>],
     ) -> Result<(Vec<QueryProofWithProof>, NestedVec), SMTError> {
         let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
@@ -888,7 +867,7 @@ impl SparseMerkleTree {
         true
     }
 
-    fn get_subtree(&self, db: &impl DB, node_hash: &[u8]) -> Result<SubTree, SMTError> {
+    fn get_subtree(&self, db: &impl Actions, node_hash: &[u8]) -> Result<SubTree, SMTError> {
         if node_hash.is_empty() {
             return Ok(SubTree::new_empty());
         }
@@ -941,7 +920,7 @@ impl SparseMerkleTree {
 
     fn calc_updated_info<'a>(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         current_subtree: &SubTree,
         key_bin: &'a [&'a [u8]],
         value_bin: &'a [&'a [u8]],
@@ -995,7 +974,7 @@ impl SparseMerkleTree {
 
     fn update_subtree<'a>(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         key_bin: &'a [&'a [u8]],
         value_bin: &'a [&'a [u8]],
         current_subtree: &SubTree,
@@ -1073,7 +1052,7 @@ impl SparseMerkleTree {
 
     fn update_same_height(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         info: &UpdateNodeInfo,
     ) -> Result<(SharedNode, StructurePosition), SMTError> {
         let current_node_kind = info.current_node.lock().unwrap().kind.clone();
@@ -1146,7 +1125,7 @@ impl SparseMerkleTree {
 
     fn update_node(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         info: UpdateNodeInfo,
     ) -> Result<(Vec<SharedNode>, Vec<u8>), SMTError> {
         let total_data = info.length_bins[info.length_bins.len() - 1] - info.length_base;
@@ -1235,7 +1214,7 @@ impl SparseMerkleTree {
 
     fn calc_query_proof_from_result(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         d: &GenerateResultData,
     ) -> Result<QueryProofWithProof, SMTError> {
         let mut ancestor_hashes = d.ref_mut_vecs.ancestor_hashes.clone();
@@ -1307,7 +1286,7 @@ impl SparseMerkleTree {
 
     fn generate_query_proof(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         current_subtree: &mut SubTree,
         query_key: &[u8],
         height: Height,
@@ -1373,7 +1352,7 @@ impl SparseMerkleTree {
                 let sibling = sorted_queries.pop_front().unwrap();
                 sibling_hash = Some(sibling.hash);
             } else if !query.binary_bitmap[0] {
-                sibling_hash = Some(empty_hash());
+                sibling_hash = Some(vec![].hash_with_kind(HashKind::Empty));
             } else if query.binary_bitmap[0] {
                 sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
                 next_sibling_hash += 1;
@@ -1381,13 +1360,13 @@ impl SparseMerkleTree {
             let d = query.binary_key()[query.height() - 1];
             let mut next_query = query.clone();
             if !d {
-                next_query.hash = branch_hash(
-                    &[query.hash.as_slice(), sibling_hash.unwrap().as_slice()].concat(),
-                );
+                next_query.hash = [query.hash.as_slice(), sibling_hash.unwrap().as_slice()]
+                    .concat()
+                    .hash_with_kind(HashKind::Branch);
             } else {
-                next_query.hash = branch_hash(
-                    &[sibling_hash.unwrap().as_slice(), query.hash.as_slice()].concat(),
-                );
+                next_query.hash = [sibling_hash.unwrap().as_slice(), query.hash.as_slice()]
+                    .concat()
+                    .hash_with_kind(HashKind::Branch);
             }
             next_query.slice_bitmap();
             insert_and_filter_queries(next_query, &mut sorted_queries);
@@ -1399,7 +1378,7 @@ impl SparseMerkleTree {
     pub fn new(root: &[u8], key_length: KeyLength, subtree_height: SubtreeHeight) -> Self {
         let max_number_of_nodes = 1 << subtree_height.u16();
         let r = if root.is_empty() {
-            utils::empty_hash()
+            vec![].hash_with_kind(HashKind::Empty)
         } else {
             root.to_vec()
         };
@@ -1414,7 +1393,7 @@ impl SparseMerkleTree {
 
     pub fn commit(
         &mut self,
-        db: &mut impl DB,
+        db: &mut impl Actions,
         data: &mut UpdateData,
     ) -> Result<SharedVec, SMTError> {
         if data.is_empty() {
@@ -1427,7 +1406,11 @@ impl SparseMerkleTree {
         Ok(Arc::clone(&self.root))
     }
 
-    pub fn prove(&mut self, db: &mut impl DB, queries: &[Vec<u8>]) -> Result<Proof, SMTError> {
+    pub fn prove(
+        &mut self,
+        db: &mut impl Actions,
+        queries: &[Vec<u8>],
+    ) -> Result<Proof, SMTError> {
         if queries.is_empty() {
             return Ok(Proof {
                 queries: vec![],
@@ -1519,7 +1502,7 @@ mod tests {
     fn test_empty_tree() {
         let mut tree = SparseMerkleTree::new(&[], KeyLength(32), Default::default());
         let mut data = UpdateData { data: Cache::new() };
-        let mut db = smt_db::InMemorySmtDB::new();
+        let mut db = smt_db::InMemorySmtDB::default();
         let result = tree.commit(&mut db, &mut data);
 
         assert_eq!(
@@ -1546,7 +1529,7 @@ mod tests {
                     hex::decode(values[idx]).unwrap(),
                 );
             }
-            let mut db = smt_db::InMemorySmtDB::new();
+            let mut db = smt_db::InMemorySmtDB::default();
             let result = tree.commit(&mut db, &mut data);
 
             assert_eq!(
@@ -1579,7 +1562,7 @@ mod tests {
                     hex::decode(values[idx]).unwrap(),
                 );
             }
-            let mut db = smt_db::InMemorySmtDB::new();
+            let mut db = smt_db::InMemorySmtDB::default();
             let result = tree.commit(&mut db, &mut data);
 
             assert_eq!(
@@ -1620,7 +1603,7 @@ mod tests {
                     hex::decode(values[idx]).unwrap(),
                 );
             }
-            let mut db = smt_db::InMemorySmtDB::new();
+            let mut db = smt_db::InMemorySmtDB::default();
             let result = tree.commit(&mut db, &mut data);
 
             assert_eq!(
@@ -1669,7 +1652,7 @@ mod tests {
                     hex::decode(values[idx]).unwrap(),
                 );
             }
-            let mut db = smt_db::InMemorySmtDB::new();
+            let mut db = smt_db::InMemorySmtDB::default();
             let result = tree.commit(&mut db, &mut data);
 
             assert_eq!(
@@ -1860,7 +1843,7 @@ mod tests {
                     hex::decode(values[idx]).unwrap(),
                 );
             }
-            let mut db = smt_db::InMemorySmtDB::new();
+            let mut db = smt_db::InMemorySmtDB::default();
             let result = tree.commit(&mut db, &mut data).unwrap();
 
             assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());
@@ -2123,7 +2106,7 @@ mod tests {
                     hex::decode(values[idx]).unwrap(),
                 );
             }
-            let mut db = smt_db::InMemorySmtDB::new();
+            let mut db = smt_db::InMemorySmtDB::default();
             let result = tree.commit(&mut db, &mut data).unwrap();
 
             assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());

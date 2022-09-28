@@ -6,3 +6,5 @@ pub const PREFIX_DIFF: &[u8] = &[2];
 
 pub const KEY_LENGTH: KeyLength = KeyLength(38);
 pub const SUBTREE_HEIGHT: SubtreeHeight = SubtreeHeight(SubtreeHeightKind::Eight);
+
+pub static PREFIX_BRANCH_HASH: &[u8] = &[1];

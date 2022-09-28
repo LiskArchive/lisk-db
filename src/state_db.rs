@@ -1,22 +1,24 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
-use std::cell::RefCell;
 use std::cmp;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
 use thiserror::Error;
 
 use crate::batch;
+use crate::common_db::{
+    JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithContext, Options as DBOptions, DB,
+};
 use crate::consts;
 use crate::diff;
 use crate::options;
 use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
-use crate::types::{DatabaseOptions, Height, KVPair, KeyLength, NestedVec, SharedVec};
+use crate::types::{ArcMutex, Height, KVPair, KeyLength, NestedVec, SharedVec};
 use crate::utils;
 
-type SharedStateDB = JsBox<RefCell<StateDB>>;
+type SharedStateDB = JsBoxRef<StateDB>;
 
 #[derive(Error, Debug)]
 pub enum DataStoreError {
@@ -27,7 +29,7 @@ pub enum DataStoreError {
 }
 
 struct Commit {
-    db_options: DatabaseOptions,
+    db_options: DBOptions,
     check_expected: bool,
     expected: Vec<u8>,
 }
@@ -43,12 +45,12 @@ struct CommitResultInfo {
 }
 
 pub struct StateDB {
-    tx: mpsc::Sender<options::DbMessage>,
-    options: DatabaseOptions,
+    common: DB,
+    options: DBOptions,
 }
 
 impl Commit {
-    fn new(expected: Vec<u8>, db_options: DatabaseOptions, check_expected: bool) -> Self {
+    fn new(expected: Vec<u8>, db_options: DBOptions, check_expected: bool) -> Self {
         Self {
             db_options,
             check_expected,
@@ -69,117 +71,26 @@ impl CommitResultInfo {
     }
 }
 
-impl Finalize for StateDB {}
-
-impl StateDB {
-    fn new<'a, C>(
+impl NewDBWithContext for StateDB {
+    fn new_db_with_context<'a, C>(
         ctx: &mut C,
         path: String,
-        db_options: DatabaseOptions,
+        db_options: DBOptions,
+        k: DBKind,
     ) -> Result<Self, rocksdb::Error>
     where
         C: Context<'a>,
     {
-        // Channel for sending callbacks to execute on the sqlite connection thread
-        let (tx, rx) = mpsc::channel::<options::DbMessage>();
-
-        let channel = ctx.channel();
-
-        let mut options = rocksdb::Options::default();
-        options.create_if_missing(true);
-
-        let mut opened: rocksdb::DB;
-        if db_options.readonly {
-            opened = rocksdb::DB::open_for_read_only(&options, path, false)?;
-        } else {
-            opened = rocksdb::DB::open(&options, path)?;
-        }
-
-        thread::spawn(move || {
-            while let Ok(message) = rx.recv() {
-                match message {
-                    options::DbMessage::Callback(f) => {
-                        f(&mut opened, &channel);
-                    },
-                    options::DbMessage::Close => break,
-                }
-            }
-        });
-
         Ok(Self {
-            tx,
+            common: DB::new_db_with_context(ctx, path, db_options, k)?,
             options: db_options,
         })
     }
+}
 
-    // Idiomatic rust would take an owned `self` to prevent use after close
-    // However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    fn close(&self) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.tx.send(options::DbMessage::Close)
-    }
-
-    fn send(
-        &self,
-        callback: impl FnOnce(&mut rocksdb::DB, &Channel) + Send + 'static,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.tx
-            .send(options::DbMessage::Callback(Box::new(callback)))
-    }
-
-    fn get_by_key(&self, key: Vec<u8>, cb: Root<JsFunction>) -> Result<(), DataStoreError> {
-        self.send(move |conn, channel| {
-            let result = conn.get([consts::PREFIX_STATE, &key].concat());
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(Some(val)) => {
-                        let buffer = JsBuffer::external(&mut ctx, val);
-                        vec![ctx.null().upcast(), buffer.upcast()]
-                    },
-                    Ok(None) => vec![ctx.error("No data")?.upcast()],
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
-        .map_err(|err| DataStoreError::Unknown(err.to_string()))
-    }
-
-    fn exists(&self, key: &[u8], cb: Root<JsFunction>) -> Result<(), DataStoreError> {
-        let key = key.to_vec();
-        self.send(move |conn, channel| {
-            let key_with_prefix = [consts::PREFIX_STATE, &key].concat();
-            let exist = conn.key_may_exist(&key_with_prefix);
-            let result = if exist {
-                conn.get(&key_with_prefix).map(|res| res.is_some())
-            } else {
-                Ok(false)
-            };
-
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let converted = ctx.boolean(val);
-                        vec![ctx.null().upcast(), converted.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
-        .map_err(|err| DataStoreError::Unknown(err.to_string()))
-    }
-
+impl JsNewWithBoxRef for StateDB {}
+impl Finalize for StateDB {}
+impl StateDB {
     fn get_revert_result(
         conn: &rocksdb::DB,
         height: Height,
@@ -224,7 +135,7 @@ impl StateDB {
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         let key_length = self.options.key_length;
-        self.send(move |conn, channel| {
+        self.common.send(move |conn, channel| {
             let result = StateDB::get_revert_result(conn, height, &state_root, key_length);
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
@@ -284,12 +195,12 @@ impl StateDB {
 
     fn commit(
         &mut self,
-        writer: Arc<Mutex<state_writer::StateWriter>>,
+        writer: ArcMutex<state_writer::StateWriter>,
         d: CommitData,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         let key_length = self.options.key_length;
-        self.send(move |conn, channel| {
+        self.common.send(move |conn, channel| {
             let w = writer.lock().unwrap();
             let mut data = smt::UpdateData::new_with_hash(w.get_updated());
             let mut smtdb = smt_db::SmtDB::new(conn);
@@ -324,45 +235,47 @@ impl StateDB {
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.options.key_length;
-        self.send(move |conn, channel| {
-            let mut tree = smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_HEIGHT);
-            let mut smtdb = smt_db::SmtDB::new(conn);
-            let result = tree.prove(&mut smtdb, &queries);
+        self.common
+            .send(move |conn, channel| {
+                let mut tree =
+                    smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_HEIGHT);
+                let mut smtdb = smt_db::SmtDB::new(conn);
+                let result = tree.prove(&mut smtdb, &queries);
 
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let obj: Handle<JsObject> = ctx.empty_object();
-                        let sibling_hashes = ctx.empty_array();
-                        for (i, h) in val.sibling_hashes.iter().enumerate() {
-                            let val_res = JsBuffer::external(&mut ctx, h.to_vec());
-                            sibling_hashes.set(&mut ctx, i as u32, val_res)?;
-                        }
-                        obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
-                        let queries = ctx.empty_array();
-                        for (i, v) in val.queries.iter().enumerate() {
-                            let obj = ctx.empty_object();
-                            let key = JsBuffer::external(&mut ctx, v.key_as_vec());
-                            obj.set(&mut ctx, "key", key)?;
-                            let value = JsBuffer::external(&mut ctx, v.value_as_vec());
-                            obj.set(&mut ctx, "value", value)?;
-                            let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
-                            obj.set(&mut ctx, "bitmap", bitmap)?;
+                channel.send(move |mut ctx| {
+                    let callback = cb.into_inner(&mut ctx);
+                    let this = ctx.undefined();
+                    let args: Vec<Handle<JsValue>> = match result {
+                        Ok(val) => {
+                            let obj: Handle<JsObject> = ctx.empty_object();
+                            let sibling_hashes = ctx.empty_array();
+                            for (i, h) in val.sibling_hashes.iter().enumerate() {
+                                let val_res = JsBuffer::external(&mut ctx, h.to_vec());
+                                sibling_hashes.set(&mut ctx, i as u32, val_res)?;
+                            }
+                            obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
+                            let queries = ctx.empty_array();
+                            for (i, v) in val.queries.iter().enumerate() {
+                                let obj = ctx.empty_object();
+                                let key = JsBuffer::external(&mut ctx, v.key_as_vec());
+                                obj.set(&mut ctx, "key", key)?;
+                                let value = JsBuffer::external(&mut ctx, v.value_as_vec());
+                                obj.set(&mut ctx, "value", value)?;
+                                let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
+                                obj.set(&mut ctx, "bitmap", bitmap)?;
 
-                            queries.set(&mut ctx, i as u32, obj)?;
-                        }
-                        vec![ctx.null().upcast(), obj.upcast()]
-                    },
-                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
+                                queries.set(&mut ctx, i as u32, obj)?;
+                            }
+                            vec![ctx.null().upcast(), obj.upcast()]
+                        },
+                        Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                    };
+                    callback.call(&mut ctx, this, args)?;
 
-                Ok(())
-            });
-        })
-        .map_err(|err| DataStoreError::Unknown(err.to_string()))
+                    Ok(())
+                });
+            })
+            .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
     fn clean_diff_until(
@@ -373,45 +286,43 @@ impl StateDB {
         if height.is_equal_to(0) {
             return Ok(());
         }
-        self.send(move |conn, channel| {
-            let zero: u32 = 0;
-            let start = [consts::PREFIX_DIFF, zero.to_be_bytes().as_slice()].concat();
-            let end = [consts::PREFIX_DIFF, &height.sub(1).as_u32_to_be_bytes()].concat();
-            let mut batch = rocksdb::WriteBatch::default();
+        self.common
+            .send(move |conn, channel| {
+                let zero: u32 = 0;
+                let start = [consts::PREFIX_DIFF, zero.to_be_bytes().as_slice()].concat();
+                let end = [consts::PREFIX_DIFF, &height.sub(1).as_u32_to_be_bytes()].concat();
+                let mut batch = rocksdb::WriteBatch::default();
 
-            let iter = conn.iterator(rocksdb::IteratorMode::From(
-                end.as_ref(),
-                rocksdb::Direction::Reverse,
-            ));
+                let iter = conn.iterator(rocksdb::IteratorMode::From(
+                    end.as_ref(),
+                    rocksdb::Direction::Reverse,
+                ));
 
-            for (key, _) in iter {
-                if utils::compare(&key, &start) == cmp::Ordering::Less {
-                    break;
+                for (key, _) in iter {
+                    if utils::compare(&key, &start) == cmp::Ordering::Less {
+                        break;
+                    }
+                    batch.delete(&key);
                 }
-                batch.delete(&key);
-            }
 
-            let result = conn.write(batch);
+                let result = conn.write(batch);
 
-            channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(_) => {
-                        vec![ctx.null().upcast()]
-                    },
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-                callback.call(&mut ctx, this, args)?;
+                channel.send(move |mut ctx| {
+                    let callback = cb.into_inner(&mut ctx);
+                    let this = ctx.undefined();
+                    let args: Vec<Handle<JsValue>> = match result {
+                        Ok(_) => {
+                            vec![ctx.null().upcast()]
+                        },
+                        Err(err) => vec![ctx.error(&err)?.upcast()],
+                    };
+                    callback.call(&mut ctx, this, args)?;
 
-                Ok(())
-            });
-        })
-        .map_err(|err| DataStoreError::Unknown(err.to_string()))
+                    Ok(())
+                });
+            })
+            .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
-}
-
-impl StateDB {
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
         let mut sibling_hashes = NestedVec::new();
@@ -469,22 +380,15 @@ impl StateDB {
 
         Ok(parsed_query_keys)
     }
+}
 
-    pub fn js_new(mut ctx: FunctionContext) -> JsResult<SharedStateDB> {
-        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let options = ctx.argument_opt(1);
-        let db_opts = DatabaseOptions::new_with_context(&mut ctx, options)?;
-        let db = StateDB::new(&mut ctx, path, db_opts).or_else(|err| ctx.throw_error(&err))?;
-        let ref_db = RefCell::new(db);
-
-        return Ok(ctx.boxed(ref_db));
-    }
-
+impl StateDB {
     pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         ctx.this()
             .downcast_or_throw::<SharedStateDB, _>(&mut ctx)?
             .borrow()
+            .common
             .close()
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -498,7 +402,8 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
-        db.get_by_key(key, cb)
+        db.common
+            .get_by_key(key, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -511,7 +416,8 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
-        db.exists(&key, cb)
+        db.common
+            .exists(key, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -542,37 +448,38 @@ impl StateDB {
         let db = db.borrow_mut();
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
-        db.send(move |conn, channel| {
-            let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], true));
-            for (counter, (key, val)) in iter.enumerate() {
-                if utils::is_key_out_of_range(&options, &key, counter as i64, true) {
-                    break;
+        db.common
+            .send(move |conn, channel| {
+                let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], true));
+                for (counter, (key, val)) in iter.enumerate() {
+                    if utils::is_key_out_of_range(&options, &key, counter as i64, true) {
+                        break;
+                    }
+                    let c = Arc::clone(&a_cb_on_data);
+                    channel.send(move |mut ctx| {
+                        let obj = ctx.empty_object();
+                        let (_, key_without_prefix) = key.split_first().unwrap();
+                        let key_res = JsBuffer::external(&mut ctx, key_without_prefix.to_vec());
+                        let val_res = JsBuffer::external(&mut ctx, val);
+                        obj.set(&mut ctx, "key", key_res)?;
+                        obj.set(&mut ctx, "value", val_res)?;
+                        let cb = c.lock().unwrap().to_inner(&mut ctx);
+                        let this = ctx.undefined();
+                        let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];
+                        cb.call(&mut ctx, this, args)?;
+                        Ok(())
+                    });
                 }
-                let c = Arc::clone(&a_cb_on_data);
                 channel.send(move |mut ctx| {
-                    let obj = ctx.empty_object();
-                    let (_, key_without_prefix) = key.split_first().unwrap();
-                    let key_res = JsBuffer::external(&mut ctx, key_without_prefix.to_vec());
-                    let val_res = JsBuffer::external(&mut ctx, val);
-                    obj.set(&mut ctx, "key", key_res)?;
-                    obj.set(&mut ctx, "value", val_res)?;
-                    let cb = c.lock().unwrap().to_inner(&mut ctx);
+                    let cb_2 = cb_done.into_inner(&mut ctx);
                     let this = ctx.undefined();
-                    let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];
-                    cb.call(&mut ctx, this, args)?;
+                    let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast()];
+                    cb_2.call(&mut ctx, this, args)?;
+
                     Ok(())
                 });
-            }
-            channel.send(move |mut ctx| {
-                let cb_2 = cb_done.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast()];
-                cb_2.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
+            })
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
     }
@@ -586,7 +493,7 @@ impl StateDB {
     // @params 5 check_root
     // @params 6 callback
     pub fn js_commit(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let writer = ctx.argument::<JsBox<state_writer::SendableStateWriter>>(0)?;
+        let writer = ctx.argument::<state_writer::SendableStateWriter>(0)?;
 
         let key_length = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
 
@@ -605,7 +512,7 @@ impl StateDB {
         if db.options.readonly {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
-        let db_options = DatabaseOptions {
+        let db_options = DBOptions {
             key_length,
             readonly,
         };

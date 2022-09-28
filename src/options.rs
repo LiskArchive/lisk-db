@@ -1,8 +1,9 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
+use crate::common_db::{Options as DBOptions, OptionsWithContext};
 use crate::consts;
-use crate::types::{DatabaseOptions, KeyLength, VecOption};
+use crate::types::{KeyLength, VecOption};
 
 pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
 
@@ -22,15 +23,8 @@ pub struct IterationOption {
     pub lte: VecOption,
 }
 
-impl DatabaseOptions {
-    fn new() -> Self {
-        Self {
-            readonly: false,
-            key_length: consts::KEY_LENGTH,
-        }
-    }
-
-    pub fn new_with_context<'a, C>(
+impl OptionsWithContext for DBOptions {
+    fn new_with_context<'a, C>(
         ctx: &mut C,
         input: Option<Handle<JsValue>>,
     ) -> Result<Self, neon::result::Throw>
@@ -63,6 +57,15 @@ impl DatabaseOptions {
             readonly,
             key_length,
         })
+    }
+}
+
+impl DBOptions {
+    fn new() -> Self {
+        Self {
+            readonly: false,
+            key_length: consts::KEY_LENGTH,
+        }
     }
 }
 
