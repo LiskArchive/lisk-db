@@ -174,11 +174,11 @@ describe('statedb', () => {
 
             expect(values).toEqual([]);
         });
-    
+
         it('should get empty buffer multiple times', async () => {
-                const writer = db.newReadWriter();
-                const val = await writer.get(initState[7].key);
-                expect(val).toEqual(Buffer.alloc(0));
+            const writer = db.newReadWriter();
+            const val = await writer.get(initState[7].key);
+            expect(val).toEqual(Buffer.alloc(0));
         });
 
         describe('commit', () => {
@@ -357,6 +357,37 @@ describe('statedb', () => {
             it('should not have del', () => {
                 const reader = db.newReader();
                 expect(reader.del).toBeUndefined();
+            });
+        });
+
+        describe('checkpoint', () => {
+            let tmpPath;
+            beforeEach(() => {
+                tmpPath = fs.mkdtempSync("");
+            });
+            afterEach(() => {
+                fs.rmSync(tmpPath, { recursive: true, force: true });
+            });
+
+            it('should create checkpoint', async () => {
+                await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                await expect(db.get(initState[1].key)).resolves.toEqual(initState[1].value);
+                await expect(db.get(initState[2].key)).resolves.toEqual(initState[2].value);
+
+                await db.checkpoint(tmpPath + '/test_db');
+
+                db = new StateDB(tmpPath + '/test_db');
+                await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                await expect(db.get(initState[1].key)).resolves.toEqual(initState[1].value);
+                await expect(db.get(initState[2].key)).resolves.toEqual(initState[2].value);
+            });
+
+            it('should failed to create checkpoint because directory is not empty', async () => {
+                await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                await expect(db.get(initState[1].key)).resolves.toEqual(initState[1].value);
+                await expect(db.get(initState[2].key)).resolves.toEqual(initState[2].value);
+
+                await expect(db.checkpoint(tmpPath)).rejects.toThrow();
             });
         });
     });

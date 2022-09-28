@@ -24,6 +24,7 @@ const {
     state_db_prove,
     state_db_verify,
     state_db_clean_diff_until,
+    state_db_checkpoint,
     state_writer_new,
     state_writer_get,
     state_writer_update,
@@ -58,9 +59,9 @@ class StateReader {
                 // If result is empty, force to use different memory space from what's given from binding
                 // Issue: https://github.com/nodejs/node/issues/32463
                 if (result.length === 0) {
-					resolve(Buffer.alloc(0));
-					return;
-				}
+                    resolve(Buffer.alloc(0));
+                    return;
+                }
                 resolve(result);
             });
         });
@@ -116,9 +117,9 @@ class StateReadWriter {
                 // If result is empty, force to use different memory space from what's given from binding
                 // Issue: https://github.com/nodejs/node/issues/32463
                 if (result.length === 0) {
-					resolve(Buffer.alloc(0));
-					return;
-				}
+                    resolve(Buffer.alloc(0));
+                    return;
+                }
                 resolve(result);
             });
         });
@@ -279,9 +280,9 @@ class StateDB {
                 // If result is empty, force to use different memory space from what's given from binding
                 // Issue: https://github.com/nodejs/node/issues/32463
                 if (result.length === 0) {
-					resolve(Buffer.alloc(0));
-					return;
-				}
+                    resolve(Buffer.alloc(0));
+                    return;
+                }
                 resolve(result);
             });
         });
@@ -376,6 +377,17 @@ class StateDB {
 
     close() {
         state_db_close.call(this._db);
+    }
+
+    async checkpoint(path) {
+        return new Promise((resolve, reject) => {
+            state_db_checkpoint.call(this._db, path, err => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve();
+            });
+        });
     }
 }
 

@@ -356,6 +356,54 @@ describe('database', () => {
                 });
             });
         });
+
+        describe('checkpoint', () => {
+            let tmpPath;
+            beforeEach(() => {
+                tmpPath = fs.mkdtempSync("");
+            });
+            afterEach(() => {
+                fs.rmSync(tmpPath, { recursive: true, force: true });
+            });
+
+            it('should create checkpoint', async () => {
+                const pairs = [
+                    { key: getRandomBytes(), value: getRandomBytes() },
+                    { key: getRandomBytes(), value: getRandomBytes() },
+                ];
+                const batch = new Batch();
+                for (const kv of pairs) {
+                    batch.set(kv.key, kv.value);
+                }
+                await db.write(batch);
+
+                await expect(db.has(pairs[0].key)).resolves.toEqual(true);
+                await expect(db.has(pairs[1].key)).resolves.toEqual(true);
+
+                await db.checkpoint(tmpPath + '/test_db');
+
+                db = new Database(tmpPath + '/test_db');
+                await expect(db.has(pairs[0].key)).resolves.toEqual(true);
+                await expect(db.has(pairs[1].key)).resolves.toEqual(true);
+            });
+
+            it('should failed to create checkpoint because directory is not empty', async () => {
+                const pairs = [
+                    { key: getRandomBytes(), value: getRandomBytes() },
+                    { key: getRandomBytes(), value: getRandomBytes() },
+                ];
+                const batch = new Batch();
+                for (const kv of pairs) {
+                    batch.set(kv.key, kv.value);
+                }
+                await db.write(batch);
+
+                await expect(db.has(pairs[0].key)).resolves.toEqual(true);
+                await expect(db.has(pairs[1].key)).resolves.toEqual(true);
+
+                await expect(db.checkpoint(tmpPath)).rejects.toThrow();
+            });
+        });
     });
 
     describe('InMemoryDatabase', () => {

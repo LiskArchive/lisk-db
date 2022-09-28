@@ -225,4 +225,18 @@ impl Database {
 
         Ok(ctx.undefined())
     }
+
+    pub fn js_checkpoint(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
+        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+
+        let db = ctx
+            .this()
+            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+
+        db.checkpoint(path, cb)
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
 }

@@ -23,6 +23,7 @@ const {
     db_del,
     db_write,
     db_iterate,
+    db_checkpoint,
     batch_new,
     batch_set,
     batch_del,
@@ -186,6 +187,17 @@ class Database {
 
     close() {
         db_close.call(this._db);
+    }
+
+    async checkpoint(path) {
+        return new Promise((resolve, reject) => {
+            db_checkpoint.call(this._db, path, err => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve();
+            });
+        });
     }
 }
 

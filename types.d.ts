@@ -49,6 +49,7 @@ export class Database {
     clear(options?: IterateOptions): Promise<void>;
     close(): void;
     newReader(): DatabaseReader;
+    checkpoint(path: string): Promise<void>;
 }
 
 export class InMemoryDatabase {
@@ -116,6 +117,7 @@ export class StateDB {
     newReader(): StateReader;
     newReadWriter(): StateReadWriter;
     close(): void;
+    checkpoint(path: string): Promise<void>;
 }
 
 export class SparseMerkleTree {
