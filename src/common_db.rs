@@ -8,6 +8,7 @@ use neon::event::Channel;
 use neon::handle::{Handle, Root};
 use neon::result::JsResult;
 use neon::types::{Finalize, JsBox, JsBuffer, JsFunction, JsNumber, JsString, JsValue};
+use rocksdb::checkpoint::Checkpoint;
 
 use crate::consts;
 use crate::options::DbMessage;
@@ -246,6 +247,46 @@ impl DB {
 
                 Ok(())
             });
+        })
+    }
+
+    pub fn checkpoint(
+        &self,
+        path: String,
+        cb: Root<JsFunction>,
+    ) -> Result<(), mpsc::SendError<DbMessage>> {
+        self.send(move |conn, channel| {
+            let result = Checkpoint::new(conn);
+
+            if result.is_err() {
+                let err = result.err().unwrap();
+                channel.send(move |mut ctx| {
+                    let callback = cb.into_inner(&mut ctx);
+                    let this = ctx.undefined();
+                    let args = vec![ctx.error(&err)?.upcast()];
+
+                    callback.call(&mut ctx, this, args)?;
+
+                    Ok(())
+                });
+            } else if let Ok(checkpoint) = result {
+                let result = checkpoint.create_checkpoint(&path);
+
+                channel.send(move |mut ctx| {
+                    let callback = cb.into_inner(&mut ctx);
+                    let this = ctx.undefined();
+                    let args: Vec<Handle<JsValue>> = match result {
+                        Ok(()) => {
+                            vec![ctx.null().upcast()]
+                        },
+                        Err(err) => vec![ctx.error(&err)?.upcast()],
+                    };
+
+                    callback.call(&mut ctx, this, args)?;
+
+                    Ok(())
+                });
+            }
         })
     }
 }

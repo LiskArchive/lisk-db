@@ -32,6 +32,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("db_del", db::Database::js_del)?;
     cx.export_function("db_write", db::Database::js_write)?;
     cx.export_function("db_iterate", db::Database::js_iterate)?;
+    cx.export_function("db_checkpoint", db::Database::js_checkpoint)?;
 
     cx.export_function(
         "batch_new",
@@ -56,6 +57,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
         "state_db_clean_diff_until",
         state_db::StateDB::js_clean_diff_until,
     )?;
+    cx.export_function("state_db_checkpoint", state_db::StateDB::js_checkpoint)?;
 
     cx.export_function(
         "state_writer_new",
