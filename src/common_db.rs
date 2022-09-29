@@ -170,7 +170,7 @@ impl NewDBWithContext for DB {
 impl Kind {
     pub fn key(&self, key: Vec<u8>) -> Vec<u8> {
         match self {
-            Kind::State => [consts::PREFIX_STATE, &key].concat(),
+            Kind::State => [consts::Prefix::STATE, &key].concat(),
             _ => key,
         }
     }

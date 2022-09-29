@@ -103,6 +103,11 @@ interface Proof {
     }[];
 }
 
+interface CurrentState {
+    root: Buffer;
+    version: number;
+}
+
 export class StateDB {
     constructor(path: string, option?: StateDBOptions);
     get(key: Buffer): Promise<Buffer>;
@@ -118,6 +123,7 @@ export class StateDB {
     newReadWriter(): StateReadWriter;
     close(): void;
     checkpoint(path: string): Promise<void>;
+    currentState(): Promise<CurrentState>;
 }
 
 export class SparseMerkleTree {

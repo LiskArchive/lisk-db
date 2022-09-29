@@ -22,7 +22,7 @@ pub fn get_iteration_mode<'a>(
             .clone()
             .unwrap_or_else(|| vec![255; options.gte.as_ref().unwrap().len()]);
         *opt = if has_prefix {
-            [consts::PREFIX_STATE, lte.as_slice()].concat()
+            [consts::Prefix::STATE, lte.as_slice()].concat()
         } else {
             lte
         };
@@ -33,7 +33,7 @@ pub fn get_iteration_mode<'a>(
             .clone()
             .unwrap_or_else(|| vec![0; options.lte.as_ref().unwrap().len()]);
         *opt = if has_prefix {
-            [consts::PREFIX_STATE, gte.as_slice()].concat()
+            [consts::Prefix::STATE, gte.as_slice()].concat()
         } else {
             gte
         };
@@ -53,7 +53,7 @@ pub fn is_key_out_of_range(
     if options.reverse {
         if let Some(gte) = &options.gte {
             let cmp = if has_prefix {
-                [consts::PREFIX_STATE, gte].concat()
+                [consts::Prefix::STATE, gte].concat()
             } else {
                 gte.to_vec()
             };
@@ -63,7 +63,7 @@ pub fn is_key_out_of_range(
         }
     } else if let Some(lte) = &options.lte {
         let cmp = if has_prefix {
-            [consts::PREFIX_STATE, lte].concat()
+            [consts::Prefix::STATE, lte].concat()
         } else {
             lte.to_vec()
         };

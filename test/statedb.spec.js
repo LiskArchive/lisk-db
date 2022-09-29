@@ -16,6 +16,7 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { StateDB, NotFoundError } = require('../main');
 const { getRandomBytes } = require('./utils');
 
@@ -57,6 +58,18 @@ describe('statedb', () => {
 
     let db;
     let root;
+
+    it('if current state dose not exist, it should return emptyHash with zero version', async () => {
+        const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
+        fs.mkdirSync(dbPath, { recursive: true });
+        const temp_db = new StateDB(dbPath);
+        const res = await temp_db.getCurrentState();
+        expect(res.version).toEqual(0);
+        const hasher = crypto.createHash('sha256');
+        hasher.update(Buffer.alloc(0));
+        const emptyHash = hasher.digest();
+        expect(res.root).toEqual(emptyHash);
+    });
 
     beforeAll(async () => {
         const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
@@ -181,6 +194,50 @@ describe('statedb', () => {
             expect(val).toEqual(Buffer.alloc(0));
         });
 
+        describe('currentState', () => {
+            it('should return initiate values at the beginning', async () => {
+                const res = await db.getCurrentState();
+                expect(res.version).toEqual(0);
+                expect(res.root).toEqual(root);
+            });
+
+            it('should not update state and root if readonly is specified', async () => {
+                const writer = db.newReadWriter();
+                await writer.set(initState[0].key, getRandomBytes());
+                await db.commit(writer, 0, Buffer.alloc(0), { readonly: true });
+                const afterCommit = await db.getCurrentState();
+                expect(afterCommit.version).toEqual(0);
+                expect(afterCommit.root).toEqual(root);
+            });
+
+            it('should not update if commit is rejected', async () => {
+                const writer = db.newReadWriter();
+                await writer.set(initState[0].key, getRandomBytes());
+                await expect(db.commit(writer, 1, root, { readonly: true, checkRoot: true, expectedRoot: getRandomBytes() }))
+                    .rejects.toThrow('Invalid state root `Not matching with expected`');
+                const currentState = await db.getCurrentState();
+                expect(currentState.version).toEqual(0);
+                expect(currentState.root).toEqual(root);
+            });
+
+            it('check commit and then revert', async () => {
+                const writer = db.newReadWriter();
+                const newValue = getRandomBytes();
+                await writer.set(initState[0].key, newValue);
+
+                const nextRoot = await db.commit(writer, 1, root);
+                const afterCommit = await db.getCurrentState();
+                expect(afterCommit.version).toEqual(1);
+                expect(afterCommit.root).toEqual(nextRoot);
+                await expect(db.get(initState[0].key)).resolves.toEqual(newValue);
+
+                await db.revert(nextRoot, 1);
+                const afterRevert = await db.getCurrentState();
+                expect(afterRevert.version).toEqual(0);
+                expect(afterRevert.root).toEqual(root);
+            });
+        });
+
         describe('commit', () => {
             it('should not update state if readonly is specified', async () => {
                 const writer = db.newReadWriter();
@@ -245,11 +302,19 @@ describe('statedb', () => {
                     const writer = db.newReadWriter();
                     await writer.set(getRandomBytes(), getRandomBytes());
                     root = await db.commit(writer, i + 2, root);
+                    // current state should be updated after each commit
+                    const afterCommit = await db.getCurrentState();
+                    expect(afterCommit.version).toEqual(i + 2);
+                    expect(afterCommit.root).toEqual(root);
                 }
 
                 await expect(db.finalize(11)).resolves.toBeUndefined();
                 root = await db.revert(root, 11);
                 await expect(db.revert(root, 10)).rejects.toThrow('Diff not found for height: `10`');
+                // current state should be updated after revert
+                const after_revert = await db.getCurrentState();
+                expect(after_revert.version).toEqual(10);
+                expect(after_revert.root).toEqual(root);
             });
         });
 
