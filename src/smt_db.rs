@@ -14,7 +14,7 @@ pub struct InMemorySmtDB {
 
 impl Actions for SmtDB<'_> {
     fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error> {
-        let result = self.db.get([consts::PREFIX_SMT, key].concat())?;
+        let result = self.db.get([consts::Prefix::SMT, key].concat())?;
         Ok(result)
     }
 

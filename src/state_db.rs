@@ -125,7 +125,7 @@ impl StateDB {
         key_length: KeyLength,
     ) -> Result<SharedVec, DataStoreError> {
         let diff_bytes = conn
-            .get(&[consts::PREFIX_DIFF, &height.as_u32_to_be_bytes()].concat())
+            .get(&[consts::Prefix::DIFF, &height.as_u32_to_be_bytes()].concat())
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
             .ok_or_else(|| DataStoreError::DiffNotFound(height.into()))?;
 
@@ -140,13 +140,13 @@ impl StateDB {
 
         let mut write_batch = batch::PrefixWriteBatch::new();
         // Insert state batch with diff
-        write_batch.set_prefix(&consts::PREFIX_STATE);
+        write_batch.set_prefix(&consts::Prefix::STATE);
         d.revert_commit(&mut write_batch);
-        write_batch.set_prefix(&consts::PREFIX_DIFF);
+        write_batch.set_prefix(&consts::Prefix::DIFF);
         write_batch.delete(&height.as_u32_to_be_bytes());
 
         // insert SMT batch
-        write_batch.set_prefix(&consts::PREFIX_SMT);
+        write_batch.set_prefix(&consts::Prefix::SMT);
         smtdb.batch.iterate(&mut write_batch);
         // insert diff
         conn.write(write_batch.batch)
@@ -167,7 +167,7 @@ impl StateDB {
             if result.is_ok() {
                 let value = (**result.as_ref().unwrap().lock().unwrap()).clone();
                 let state_info = CurrentState::new(&value, height.sub(1).into());
-                conn.put(consts::PREFIX_CURRENT_STATE, state_info.to_bytes())
+                conn.put(consts::Prefix::CURRENT_STATE, state_info.to_bytes())
                     .expect("Update state info should not be failed");
             }
             channel.send(move |mut ctx| {
@@ -209,14 +209,14 @@ impl StateDB {
         // Create global batch
         let mut write_batch = batch::PrefixWriteBatch::new();
         // Insert state batch with diff
-        write_batch.set_prefix(&consts::PREFIX_STATE);
+        write_batch.set_prefix(&consts::Prefix::STATE);
         let diff = writer.commit(&mut write_batch);
-        write_batch.set_prefix(&consts::PREFIX_DIFF);
+        write_batch.set_prefix(&consts::Prefix::DIFF);
         let key = info.data.db_options.key_length.as_u32_to_be_bytes();
         write_batch.put(&key, diff.encode().as_ref());
 
         // insert SMT batch
-        write_batch.set_prefix(&consts::PREFIX_SMT);
+        write_batch.set_prefix(&consts::Prefix::SMT);
         smtdb.batch.iterate(&mut write_batch);
         // insert diff
         let result = conn.write(write_batch.batch);
@@ -225,7 +225,7 @@ impl StateDB {
             Ok(_) => {
                 let value = (**root.as_ref().lock().unwrap()).clone();
                 let state_info = CurrentState::new(&value, height);
-                conn.put(consts::PREFIX_CURRENT_STATE, state_info.to_bytes())
+                conn.put(consts::Prefix::CURRENT_STATE, state_info.to_bytes())
                     .expect("Update state info should not be failed");
                 Ok(root)
             },
@@ -329,8 +329,8 @@ impl StateDB {
         self.common
             .send(move |conn, channel| {
                 let zero: u32 = 0;
-                let start = [consts::PREFIX_DIFF, zero.to_be_bytes().as_slice()].concat();
-                let end = [consts::PREFIX_DIFF, &height.sub(1).as_u32_to_be_bytes()].concat();
+                let start = [consts::Prefix::DIFF, zero.to_be_bytes().as_slice()].concat();
+                let end = [consts::Prefix::DIFF, &height.sub(1).as_u32_to_be_bytes()].concat();
                 let mut batch = rocksdb::WriteBatch::default();
 
                 let iter = conn.iterator(rocksdb::IteratorMode::From(
@@ -426,7 +426,7 @@ impl StateDB {
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
         self.common.send(move |conn, channel| {
-            let result = conn.get(consts::PREFIX_CURRENT_STATE);
+            let result = conn.get(consts::Prefix::CURRENT_STATE);
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
