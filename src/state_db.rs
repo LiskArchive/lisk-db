@@ -1,8 +1,10 @@
-use neon::prelude::*;
-use neon::types::buffer::TypedArray;
 use std::cmp;
+use std::convert::TryInto;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
+
+use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 use thiserror::Error;
 
 use crate::batch;
@@ -15,7 +17,9 @@ use crate::options;
 use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
-use crate::types::{ArcMutex, Height, KVPair, KeyLength, NestedVec, SharedVec};
+use crate::types::{
+    ArcMutex, BlockHeight, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec, SharedVec,
+};
 use crate::utils;
 
 type SharedStateDB = JsBoxRef<StateDB>;
@@ -26,6 +30,12 @@ pub enum DataStoreError {
     Unknown(String),
     #[error("Diff not found for height: `{0}`")]
     DiffNotFound(usize),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CurrentState<'a> {
+    root: &'a [u8],
+    version: BlockHeight,
 }
 
 struct Commit {
@@ -47,6 +57,23 @@ struct CommitResultInfo {
 pub struct StateDB {
     common: DB,
     options: DBOptions,
+}
+
+impl<'a> CurrentState<'a> {
+    fn new(root: &'a [u8], version: BlockHeight) -> Self {
+        Self { root, version }
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        [self.root, &self.version.to_be_bytes()].concat()
+    }
+
+    fn from_bytes(bytes: &'a [u8]) -> Self {
+        let version_point = bytes.len() - 4;
+        let root = &bytes[..version_point];
+        let version = u32::from_be_bytes(bytes[version_point..].try_into().unwrap()).into();
+        Self { root, version }
+    }
 }
 
 impl Commit {
@@ -137,6 +164,12 @@ impl StateDB {
         let key_length = self.options.key_length;
         self.common.send(move |conn, channel| {
             let result = StateDB::get_revert_result(conn, height, &state_root, key_length);
+            if result.is_ok() {
+                let value = (**result.as_ref().unwrap().lock().unwrap()).clone();
+                let state_info = CurrentState::new(&value, height.sub(1).into());
+                conn.put(consts::PREFIX_CURRENT_STATE, state_info.to_bytes())
+                    .expect("Update state info should not be failed");
+            }
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -187,8 +220,15 @@ impl StateDB {
         smtdb.batch.iterate(&mut write_batch);
         // insert diff
         let result = conn.write(write_batch.batch);
+        let height = info.data.db_options.key_length.into();
         match result {
-            Ok(_) => Ok(root),
+            Ok(_) => {
+                let value = (**root.as_ref().lock().unwrap()).clone();
+                let state_info = CurrentState::new(&value, height);
+                conn.put(consts::PREFIX_CURRENT_STATE, state_info.to_bytes())
+                    .expect("Update state info should not be failed");
+                Ok(root)
+            },
             Err(err) => Err(smt::SMTError::Unknown(err.to_string())),
         }
     }
@@ -380,6 +420,40 @@ impl StateDB {
 
         Ok(parsed_query_keys)
     }
+
+    fn get_current_state(
+        &self,
+        cb: Root<JsFunction>,
+    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+        self.common.send(move |conn, channel| {
+            let result = conn.get(consts::PREFIX_CURRENT_STATE);
+            channel.send(move |mut ctx| {
+                let callback = cb.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        let value: Vec<u8>;
+                        let empty_hash = vec![].hash_with_kind(HashKind::Empty);
+                        let current_state_info = if let Some(val) = val {
+                            value = val;
+                            CurrentState::from_bytes(&value)
+                        } else {
+                            CurrentState::new(&empty_hash, BlockHeight(0))
+                        };
+                        let root = JsBuffer::external(&mut ctx, current_state_info.root.to_vec());
+                        let version = ctx.number::<u32>(current_state_info.version.into());
+                        let object = ctx.empty_object();
+                        object.set(&mut ctx, "root", root)?;
+                        object.set(&mut ctx, "version", version)?;
+                        vec![ctx.null().upcast(), object.upcast()]
+                    },
+                    Err(err) => vec![ctx.error(&err)?.upcast()],
+                };
+                callback.call(&mut ctx, this, args)?;
+                Ok(())
+            });
+        })
+    }
 }
 
 impl StateDB {
@@ -404,6 +478,17 @@ impl StateDB {
         let db = db.borrow_mut();
         db.common
             .get_by_key(key, cb)
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
+
+    pub fn js_get_current_state(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let cb = ctx.argument::<JsFunction>(0)?.root(&mut ctx);
+        // Get the `this` value as a `JsBox<Database>`
+        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
+        let db = db.borrow();
+        db.get_current_state(cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -609,5 +694,42 @@ impl StateDB {
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{BlockHeight, HashKind, HashWithKind};
+
+    #[test]
+    fn test_current_state_convert() {
+        let block_zero = BlockHeight(0);
+        let block_ten = BlockHeight(10);
+        let block_hundred = BlockHeight(100);
+        let root = Vec::with_capacity(30);
+        let empty_hash = vec![].hash_with_kind(HashKind::Empty);
+        let test_data = vec![
+            (
+                CurrentState::new(&[], block_zero),
+                [vec![], block_zero.to_be_bytes().to_vec()].concat(),
+            ),
+            (
+                CurrentState::new(&[1, 2, 3, 4], block_ten),
+                [vec![1, 2, 3, 4], block_ten.to_be_bytes().to_vec()].concat(),
+            ),
+            (
+                CurrentState::new(&root, block_hundred),
+                [root.clone(), block_hundred.to_be_bytes().to_vec()].concat(),
+            ),
+            (
+                CurrentState::new(&empty_hash, block_zero),
+                [empty_hash.clone(), block_zero.to_be_bytes().to_vec()].concat(),
+            ),
+        ];
+        for (state_as_struct, state_as_bytes) in test_data {
+            assert_eq!(state_as_struct.to_bytes(), state_as_bytes);
+            assert_eq!(CurrentState::from_bytes(&state_as_bytes), state_as_struct);
+        }
     }
 }

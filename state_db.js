@@ -17,6 +17,7 @@ const {
     state_db_new,
     state_db_close,
     state_db_get,
+    state_db_get_current_state,
     state_db_exists,
     state_db_iterate,
     state_db_revert,
@@ -284,6 +285,20 @@ class StateDB {
                     return;
                 }
                 resolve(result);
+            });
+        });
+    }
+
+    async getCurrentState() {
+        return new Promise((resolve, reject) => {
+            state_db_get_current_state.call(this._db, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve({
+                    root: result.root,
+                    version: result.version,
+                });
             });
         });
     }

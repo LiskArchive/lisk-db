@@ -45,6 +45,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
         "state_db_new",
         state_db::StateDB::js_new_with_box_ref::<common_db::Options, state_db::StateDB>,
     )?;
+    cx.export_function(
+        "state_db_get_current_state",
+        state_db::StateDB::js_get_current_state,
+    )?;
     cx.export_function("state_db_close", state_db::StateDB::js_close)?;
     cx.export_function("state_db_get", state_db::StateDB::js_get)?;
     cx.export_function("state_db_exists", state_db::StateDB::js_exists)?;

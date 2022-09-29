@@ -20,6 +20,10 @@ pub type ArcMutex<T> = Arc<Mutex<T>>;
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct Height(pub u16);
 
+// Strong type of block height
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub struct BlockHeight(pub u32);
+
 // Strong type of structure position in Subtree with max value 2 ^ SUBTREE_SIZE
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct StructurePosition(pub u16);
@@ -153,6 +157,34 @@ impl From<f64> for KeyLength {
     #[inline]
     fn from(value: f64) -> KeyLength {
         Self(value as u16)
+    }
+}
+
+impl From<KeyLength> for BlockHeight {
+    #[inline]
+    fn from(value: KeyLength) -> BlockHeight {
+        Self(value.0 as u32)
+    }
+}
+
+impl From<u32> for BlockHeight {
+    #[inline]
+    fn from(value: u32) -> BlockHeight {
+        BlockHeight(value)
+    }
+}
+
+impl From<BlockHeight> for u32 {
+    #[inline]
+    fn from(value: BlockHeight) -> u32 {
+        value.0
+    }
+}
+
+impl From<Height> for BlockHeight {
+    #[inline]
+    fn from(value: Height) -> BlockHeight {
+        BlockHeight(value.0 as u32)
     }
 }
 
@@ -313,6 +345,13 @@ impl Height {
     #[inline]
     pub fn as_u32_to_be_bytes(self) -> [u8; 4] {
         (self.0 as u32).to_be_bytes()
+    }
+}
+
+impl BlockHeight {
+    #[inline]
+    pub fn to_be_bytes(self) -> [u8; 4] {
+        self.0.to_be_bytes()
     }
 }
 
