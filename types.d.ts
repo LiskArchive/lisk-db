@@ -123,7 +123,7 @@ export class StateDB {
     newReadWriter(): StateReadWriter;
     close(): void;
     checkpoint(path: string): Promise<void>;
-    currentState(): Promise<CurrentState>;
+    getCurrentState(): Promise<CurrentState>;
 }
 
 export class SparseMerkleTree {
