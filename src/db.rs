@@ -147,7 +147,9 @@ impl Database {
     }
 
     pub fn js_write(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let batch = ctx.argument::<batch::SendableWriteBatch>(0)?;
+        let batch = ctx
+            .argument::<batch::SendableWriteBatch>(0)?
+            .downcast_or_throw::<batch::SendableWriteBatch, _>(&mut ctx)?;
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
         let db = ctx

@@ -27,13 +27,10 @@ const {
     state_db_clean_diff_until,
     state_db_checkpoint,
     state_writer_new,
-    state_writer_get,
-    state_writer_update,
-    state_writer_del,
-    state_writer_is_cached,
-    state_writer_get_range,
-    state_writer_cache_new,
-    state_writer_cache_existing,
+    state_db_js_upsert_key_with_writer,
+    state_db_js_delete_key_with_writer,
+    state_db_js_get_key_with_writer,
+    state_db_range_with_writer,
     state_writer_snapshot,
     state_writer_restore_snapshot,
 } = require("./bin-package/index.node");
@@ -41,7 +38,6 @@ const {
 const { NotFoundError } = require('./error');
 const { Iterator } = require("./iterator");
 const { getOptionsWithDefault } = require('./options');
-
 
 class StateReader {
     constructor(db) {
@@ -99,20 +95,9 @@ class StateReadWriter {
     }
 
     async get(key) {
-        const { value, deleted, exists } = state_writer_get.call(this._writer, key);
-        if (exists && !deleted) {
-            return value;
-        }
-        if (deleted) {
-            throw new NotFoundError(`Key ${key.toString('hex')} does not exist.`);
-        }
-
-        const fetched = await new Promise((resolve, reject) => {
-            state_db_get.call(this._db, key, (err, result) => {
+        const value = await new Promise((resolve, reject) => {
+            state_db_js_get_key_with_writer.call(this._db, this.writer, key, (err, result) => {
                 if (err) {
-                    if (err.message === 'No data') {
-                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
-                    }
                     return reject(err);
                 }
                 // If result is empty, force to use different memory space from what's given from binding
@@ -124,8 +109,7 @@ class StateReadWriter {
                 resolve(result);
             });
         });
-        state_writer_cache_existing.call(this._writer, key, fetched);
-        return fetched;
+        return value;
     }
 
     async has(key) {
@@ -141,78 +125,37 @@ class StateReadWriter {
     }
 
     async set(key, value) {
-        const cached = state_writer_is_cached.call(this._writer, key);
-        if (cached) {
-            state_writer_update.call(this._writer, key, value);
-            return;
-        }
-        const dataExist = await this._ensureCache(key);
-        if (dataExist) {
-            state_writer_update.call(this._writer, key, value);
-            return;
-        }
-        state_writer_cache_new.call(this._writer, key, value);
+        await new Promise((resolve, reject) => {
+            state_db_js_upsert_key_with_writer.call(this._db, this.writer, key, value, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
     }
 
     async del(key) {
-        const cached = state_writer_is_cached.call(this._writer, key);
-        if (!cached) {
-            await this._ensureCache(key);
-        }
-        state_writer_del.call(this._writer, key);
+        await new Promise((resolve, reject) => {
+            state_db_js_delete_key_with_writer.call(this._db, this.writer, key, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
+            });
+        });
     }
 
     async range(options = {}) {
         const defaultOptions = getOptionsWithDefault(options);
-        const stream = new Iterator(this._db, state_db_iterate, defaultOptions);
-        const storedData = await new Promise((resolve, reject) => {
-            const values = [];
-            stream
-                .on('data', ({ key, value }) => {
-                    const { value: cachedValue, deleted, exists } = state_writer_get.call(this._writer, key);
-                    // if key is already stored in cache, return cached value
-                    if (exists && !deleted) {
-                        values.push({
-                            key,
-                            value: cachedValue,
-                        });
-                        return;
-                    }
-                    // if deleted in cache, do not include
-                    if (deleted) {
-                        return;
-                    }
-                    state_writer_cache_existing.call(this._writer, key, value);
-                    values.push({
-                        key,
-                        value,
-                    });
-                })
-                .on('error', error => {
-                    reject(error);
-                })
-                .on('end', () => {
-                    resolve(values);
-                });
-        });
-        const cachedValues = state_writer_get_range.call(this._writer, defaultOptions.gte, defaultOptions.lte);
-        const existingKey = {};
-        const result = [];
-        for (const data of cachedValues) {
-            existingKey[data.key.toString('binary')] = true;
-            result.push({
-                key: data.key,
-                value: data.value,
-            });
-        }
-        for (const data of storedData) {
-            if (existingKey[data.key.toString('binary')] === undefined) {
-                result.push({
-                    key: data.key,
-                    value: data.value,
-                });
+        const result = await new Promise((resolve, reject) => {
+            state_db_range_with_writer.call(this._db, this.writer, defaultOptions, (err, result) => {
+            if (err) {
+                return reject(err);
             }
-        }
+            resolve(result);
+            });
+        });
         result.sort((a, b) => {
             if (options.reverse) {
                 return b.key.compare(a.key);
@@ -232,35 +175,6 @@ class StateReadWriter {
 
     restoreSnapshot(index = 0) {
         state_writer_restore_snapshot.call(this._writer, index);
-    }
-
-    async _ensureCache(key) {
-        try {
-            const value = await new Promise((resolve, reject) => {
-                state_db_get.call(this._db, key, (err, result) => {
-                    if (err) {
-                        if (err.message === 'No data') {
-                            return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
-                        }
-                        return reject(err);
-                    }
-                    // If result is empty, force to use different memory space from what's given from binding
-                    // Issue: https://github.com/nodejs/node/issues/32463
-                    if (result.length === 0) {
-                        resolve(Buffer.alloc(0));
-                        return;
-                    }
-                    resolve(result);
-                });
-            });
-            state_writer_cache_existing.call(this._writer, key, value);
-            return true;
-        } catch (error) {
-            if (error instanceof NotFoundError) {
-                return false;
-            }
-            throw error;
-        }
     }
 }
 
