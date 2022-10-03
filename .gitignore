@@ -6,6 +6,7 @@ index.node
 npm-debug.log*
 .tmp
 .tmp-state
+callgrind.out
 .vscode
 .idea
 *.log

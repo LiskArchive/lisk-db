@@ -6,7 +6,11 @@ edition = "2018"
 exclude = ["index.node"]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "bench_smt"
+path = "benchmark/rust/bench_smt.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,5 +30,12 @@ features = ["napi-6", "event-queue-api", "try-catch-api"]
 [dependencies.rocksdb]
 version = "0.18"
 
-[dev-dependencies.hex]
+[dependencies.hex]
 version = "0.4.3"
+
+[dependencies.tempdir]
+version = "0.3"
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
