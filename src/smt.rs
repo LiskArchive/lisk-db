@@ -17,6 +17,10 @@ const PREFIX_INT_LEAF_HASH: u8 = 0;
 const PREFIX_INT_BRANCH_HASH: u8 = 1;
 const PREFIX_INT_EMPTY: u8 = 2;
 const HASH_SIZE: usize = 32;
+pub const EMPTY_HASH: [u8; 32] = [
+    227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228,
+    100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85,
+];
 static PREFIX_LEAF_HASH: &[u8] = &[0];
 static PREFIX_EMPTY: &[u8] = &[2];
 
@@ -522,7 +526,7 @@ impl QueryProofWithProof {
         sibling_hashes: &[Vec<u8>],
     ) -> Self {
         let hashed_key = if pair.is_empty_value() {
-            vec![].hash_with_kind(HashKind::Empty)
+            EMPTY_HASH.to_vec()
         } else {
             pair.hash()
         };
@@ -625,11 +629,10 @@ impl Node {
     }
 
     fn new_empty() -> Self {
-        let h = vec![].hash_with_kind(HashKind::Empty);
         let data = [PREFIX_EMPTY].concat();
         Self {
             kind: NodeKind::Empty,
-            hash: KVPair::new(&data, &h),
+            hash: KVPair::new(&data, &EMPTY_HASH),
             key: vec![],
             index: 0,
         }
@@ -1352,7 +1355,7 @@ impl SparseMerkleTree {
                 let sibling = sorted_queries.pop_front().unwrap();
                 sibling_hash = Some(sibling.hash);
             } else if !query.binary_bitmap[0] {
-                sibling_hash = Some(vec![].hash_with_kind(HashKind::Empty));
+                sibling_hash = Some(EMPTY_HASH.to_vec());
             } else if query.binary_bitmap[0] {
                 sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
                 next_sibling_hash += 1;
@@ -1378,7 +1381,7 @@ impl SparseMerkleTree {
     pub fn new(root: &[u8], key_length: KeyLength, subtree_height: SubtreeHeight) -> Self {
         let max_number_of_nodes = 1 << subtree_height.u16();
         let r = if root.is_empty() {
-            vec![].hash_with_kind(HashKind::Empty)
+            EMPTY_HASH.to_vec()
         } else {
             root.to_vec()
         };

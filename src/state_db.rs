@@ -12,12 +12,12 @@ use crate::common_db::{JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithConte
 use crate::consts;
 use crate::diff;
 use crate::options;
-use crate::smt;
+use crate::smt::{self, EMPTY_HASH};
 use crate::smt_db;
 use crate::state_writer;
 use crate::types::{
-    ArcMutex, BlockHeight, Cache, CommitOptions, DbOptions, HashKind, HashWithKind, KVPair,
-    KeyLength, NestedVec, SharedKVPair, SharedVec,
+    ArcMutex, BlockHeight, Cache, CommitOptions, DbOptions, KVPair, KeyLength, NestedVec,
+    SharedKVPair, SharedVec,
 };
 use crate::utils;
 
@@ -429,13 +429,12 @@ impl StateDB {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(value) => {
-                        let empty_hash = vec![].hash_with_kind(HashKind::Empty);
                         let temp_value: Vec<u8>;
                         let current_state_info = if let Some(value) = value {
                             temp_value = value;
                             CurrentState::from_bytes(&temp_value)
                         } else {
-                            CurrentState::new(&empty_hash, BlockHeight(0))
+                            CurrentState::new(&EMPTY_HASH, BlockHeight(0))
                         };
                         let root = JsBuffer::external(&mut ctx, current_state_info.root.to_vec());
                         let version = ctx.number::<u32>(current_state_info.version.into());
@@ -971,7 +970,7 @@ impl StateDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{BlockHeight, HashKind, HashWithKind};
+    use crate::types::BlockHeight;
 
     #[test]
     fn test_current_state_convert() {
@@ -979,7 +978,7 @@ mod tests {
         let block_ten = BlockHeight(10);
         let block_hundred = BlockHeight(100);
         let root = Vec::with_capacity(30);
-        let empty_hash = vec![].hash_with_kind(HashKind::Empty);
+
         let test_data = vec![
             (
                 CurrentState::new(&[], block_zero),
@@ -994,8 +993,8 @@ mod tests {
                 [root.clone(), block_hundred.to_be_bytes().to_vec()].concat(),
             ),
             (
-                CurrentState::new(&empty_hash, block_zero),
-                [empty_hash.clone(), block_zero.to_be_bytes().to_vec()].concat(),
+                CurrentState::new(&EMPTY_HASH, block_zero),
+                [EMPTY_HASH.to_vec(), block_zero.to_be_bytes().to_vec()].concat(),
             ),
         ];
         for (state_as_struct, state_as_bytes) in test_data {

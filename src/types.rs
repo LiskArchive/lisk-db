@@ -57,7 +57,6 @@ pub enum HashKind {
     Key,
     Value,
     Branch,
-    Empty,
 }
 
 #[derive(Clone, Debug)]
@@ -246,7 +245,6 @@ impl HashWithKind for Vec<u8> {
                 hasher.update(PREFIX_BRANCH_HASH);
                 hasher.update(self);
             },
-            HashKind::Empty => {},
         };
         let result = hasher.finalize();
         if kind == HashKind::Key {

@@ -4,7 +4,7 @@ use bitvec::prelude::*;
 
 use crate::consts;
 use crate::options;
-use crate::types::{HashKind, HashWithKind};
+use crate::smt::EMPTY_HASH;
 
 pub fn get_iteration_mode<'a>(
     options: &options::IterationOption,
@@ -105,7 +105,7 @@ pub fn is_bytes_equal(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn is_empty_hash(a: &[u8]) -> bool {
-    compare(a, &vec![].hash_with_kind(HashKind::Empty)) == cmp::Ordering::Equal
+    compare(a, &EMPTY_HASH) == cmp::Ordering::Equal
 }
 
 pub fn is_bools_equal(a: &[bool], b: &[bool]) -> bool {
