@@ -135,3 +135,9 @@ impl<'a> PrefixWriteBatch<'a> {
         self.batch.delete([self.prefix.unwrap(), key].concat());
     }
 }
+
+impl<'a> Default for PrefixWriteBatch<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}

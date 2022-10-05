@@ -36,7 +36,6 @@ pub struct SubtreeHeight(pub SubtreeHeightKind);
 pub struct KeyLength(pub u16);
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum SubtreeHeightKind {
     Four = 4,
     Eight = 8,
@@ -288,7 +287,6 @@ impl<'a> SharedKVPair<'a> {
         Self(key, value)
     }
 
-    #[allow(dead_code)]
     #[inline]
     pub fn key(&self) -> &[u8] {
         self.0
@@ -302,6 +300,11 @@ impl<'a> SharedKVPair<'a> {
     #[inline]
     pub fn key_as_vec(&self) -> Vec<u8> {
         self.0.to_vec()
+    }
+
+    #[inline]
+    pub fn value_as_vec(&self) -> Vec<u8> {
+        self.1.to_vec()
     }
 }
 

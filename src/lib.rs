@@ -1,22 +1,25 @@
 use neon::prelude::*;
 
 use crate::common_db::{JsNewWithArcMutex, JsNewWithBox, JsNewWithBoxRef};
+pub use crate::types::{Cache, KeyLength, NestedVec, SharedKVPair};
 
-mod batch;
+pub mod batch;
 mod codec;
 mod common_db;
-mod consts;
+pub mod consts;
 mod db;
 mod diff;
 mod in_memory_db;
 mod in_memory_smt;
 mod options;
-mod smt;
-mod smt_db;
+pub mod smt;
+pub mod smt_db;
 mod state_db;
 mod state_writer;
 mod types;
 mod utils;
+
+extern crate tempdir;
 
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {

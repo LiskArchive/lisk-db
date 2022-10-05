@@ -455,7 +455,6 @@ impl QueryProof {
         self.pair.key()
     }
 
-    #[allow(dead_code)]
     #[inline]
     pub fn value(&self) -> &[u8] {
         self.pair.value()
@@ -490,6 +489,10 @@ impl UpdateData {
             }
         }
         Self { data: new_data }
+    }
+
+    pub fn insert(&mut self, kv: SharedKVPair) {
+        self.data.insert(kv.key_as_vec(), kv.value_as_vec());
     }
 
     pub fn entries(&self) -> (SharedNestedVec, SharedNestedVec) {
