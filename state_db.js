@@ -274,7 +274,7 @@ class StateDB {
         });
     }
 
-    async prove(root, queries, proof) {
+    async verify(root, queries, proof) {
         return new Promise((resolve, reject) => {
             state_db_verify.call(this._db, root, queries, proof, (err, result) => {
                 if (err) {
