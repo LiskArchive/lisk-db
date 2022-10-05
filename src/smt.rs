@@ -1,7 +1,8 @@
-use sha2::{Digest, Sha256};
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::common_db::Actions;
@@ -166,8 +167,8 @@ fn tree_hasher(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -
     let mut height = height;
 
     while node_hashes.len() != 1 {
-        let mut next_hashes = vec![];
-        let mut next_structure = vec![];
+        let mut next_hashes: Vec<Arc<Vec<u8>>> = Vec::with_capacity(node_hashes.len());
+        let mut next_structure: Vec<u8> = Vec::with_capacity(node_hashes.len());
         let mut i = 0;
 
         while i < node_hashes.len() {
@@ -256,8 +257,8 @@ fn calculate_subtree(
     let mut height = height;
 
     while !height.is_equal_to(0) {
-        let mut next_layer_nodes: Vec<SharedNode> = vec![];
-        let mut next_layer_structure: Vec<u8> = vec![];
+        let mut next_layer_nodes: Vec<SharedNode> = Vec::with_capacity(layer_nodes.len());
+        let mut next_layer_structure: Vec<u8> = Vec::with_capacity(layer_nodes.len());
         let mut i = 0;
         while i < layer_nodes.len() {
             if layer_structure[i] != height.into() {
@@ -496,13 +497,11 @@ impl UpdateData {
     }
 
     pub fn entries(&self) -> (SharedNestedVec, SharedNestedVec) {
-        let mut kv_pair = vec![];
-        for (k, v) in self.data.iter() {
-            kv_pair.push(SharedKVPair(k, v));
-        }
+        let mut kv_pair: Vec<SharedKVPair> =
+            self.data.iter().map(|(k, v)| SharedKVPair(k, v)).collect();
         kv_pair.sort_by(|a, b| a.0.cmp(b.0));
-        let mut keys = vec![];
-        let mut values = vec![];
+        let mut keys = Vec::with_capacity(kv_pair.len());
+        let mut values = Vec::with_capacity(kv_pair.len());
         for kv in kv_pair {
             keys.push(kv.0);
             values.push(kv.1);
@@ -549,7 +548,9 @@ impl QueryProofWithProof {
     }
 
     fn binary_path(&self) -> Vec<bool> {
-        utils::bytes_to_bools(self.query_proof.key())[..self.height()].to_vec()
+        let mut binary_path = utils::bytes_to_bools(self.query_proof.key());
+        binary_path.truncate(self.height());
+        binary_path
     }
 
     fn binary_key(&self) -> Vec<bool> {
@@ -643,7 +644,7 @@ impl SubTree {
         let node_length: usize = data[0] as usize + 1;
         let structure = &data[1..node_length + 1];
         let node_data = &data[node_length + 1..];
-        let mut nodes: Vec<SharedNode> = vec![];
+        let mut nodes: Vec<SharedNode> = Vec::with_capacity(node_data.len());
         let mut idx = 0;
 
         let key_length: usize = key_length.into();
@@ -801,13 +802,13 @@ impl<'a> UpdateNodeInfo<'a> {
 
 impl SparseMerkleTree {
     fn proof_queries(&self, query_with_proofs: &[QueryProofWithProof]) -> Vec<QueryProof> {
-        let mut proof_queries = vec![];
-        for query in query_with_proofs {
-            proof_queries.push(QueryProof {
+        let proof_queries: Vec<QueryProof> = query_with_proofs
+            .iter()
+            .map(|query| QueryProof {
                 pair: Arc::clone(&query.query_proof.pair),
                 bitmap: Arc::clone(&query.query_proof.bitmap),
-            });
-        }
+            })
+            .collect();
 
         proof_queries
     }
@@ -817,9 +818,9 @@ impl SparseMerkleTree {
         db: &mut impl Actions,
         queries: &[Vec<u8>],
     ) -> Result<(Vec<QueryProofWithProof>, NestedVec), SMTError> {
-        let mut query_with_proofs: Vec<QueryProofWithProof> = vec![];
+        let mut query_with_proofs: Vec<QueryProofWithProof> = Vec::with_capacity(queries.len());
         let mut root = self.get_subtree(db, &self.root.lock().unwrap())?;
-        let mut ancestor_hashes = vec![];
+        let mut ancestor_hashes = Vec::with_capacity(queries.len());
         for query in queries {
             let query_proof = self.generate_query_proof(db, &mut root, query, Height(0))?;
             query_with_proofs.push(query_proof.clone());
@@ -893,13 +894,9 @@ impl SparseMerkleTree {
         value_bin: &'a [&'a [u8]],
         height: Height,
     ) -> Result<Bins<'a>, SMTError> {
-        let mut keys = vec![];
-        let mut values = vec![];
+        let mut keys: Vec<Vec<&[u8]>> = vec![vec![]; self.max_number_of_nodes];
+        let mut values: Vec<Vec<&[u8]>> = vec![vec![]; self.max_number_of_nodes];
 
-        for _ in 0..self.max_number_of_nodes {
-            keys.push(vec![]);
-            values.push(vec![]);
-        }
         let b = height.div_to_usize(8);
         for i in 0..key_bin.len() {
             let k = key_bin[i];
@@ -1397,7 +1394,7 @@ impl SparseMerkleTree {
     pub fn commit(
         &mut self,
         db: &mut impl Actions,
-        data: &mut UpdateData,
+        data: &UpdateData,
     ) -> Result<SharedVec, SMTError> {
         if data.is_empty() {
             return Ok(Arc::clone(&self.root));
@@ -1504,9 +1501,9 @@ mod tests {
     #[test]
     fn test_empty_tree() {
         let mut tree = SparseMerkleTree::new(&[], KeyLength(32), Default::default());
-        let mut data = UpdateData { data: Cache::new() };
+        let data = UpdateData { data: Cache::new() };
         let mut db = smt_db::InMemorySmtDB::default();
-        let result = tree.commit(&mut db, &mut data);
+        let result = tree.commit(&mut db, &data);
 
         assert_eq!(
             **result.unwrap().lock().unwrap(),
@@ -1533,7 +1530,7 @@ mod tests {
                 );
             }
             let mut db = smt_db::InMemorySmtDB::default();
-            let result = tree.commit(&mut db, &mut data);
+            let result = tree.commit(&mut db, &data);
 
             assert_eq!(
                 **result.unwrap().lock().unwrap(),
@@ -1566,7 +1563,7 @@ mod tests {
                 );
             }
             let mut db = smt_db::InMemorySmtDB::default();
-            let result = tree.commit(&mut db, &mut data);
+            let result = tree.commit(&mut db, &data);
 
             assert_eq!(
                 **result.unwrap().lock().unwrap(),
@@ -1607,7 +1604,7 @@ mod tests {
                 );
             }
             let mut db = smt_db::InMemorySmtDB::default();
-            let result = tree.commit(&mut db, &mut data);
+            let result = tree.commit(&mut db, &data);
 
             assert_eq!(
                 **result.unwrap().lock().unwrap(),
@@ -1656,7 +1653,7 @@ mod tests {
                 );
             }
             let mut db = smt_db::InMemorySmtDB::default();
-            let result = tree.commit(&mut db, &mut data);
+            let result = tree.commit(&mut db, &data);
 
             assert_eq!(
                 **result.unwrap().lock().unwrap(),
@@ -1847,7 +1844,7 @@ mod tests {
                 );
             }
             let mut db = smt_db::InMemorySmtDB::default();
-            let result = tree.commit(&mut db, &mut data).unwrap();
+            let result = tree.commit(&mut db, &data).unwrap();
 
             assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());
 
@@ -2110,7 +2107,7 @@ mod tests {
                 );
             }
             let mut db = smt_db::InMemorySmtDB::default();
-            let result = tree.commit(&mut db, &mut data).unwrap();
+            let result = tree.commit(&mut db, &data).unwrap();
 
             assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());
 

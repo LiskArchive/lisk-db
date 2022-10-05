@@ -226,7 +226,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let rocks_db = DB::open(&opts, temp_dir.path())?;
         let mut db = smt_db::SmtDB::new(&rocks_db);
 
-        let root = tree.commit(&mut db, &mut data)?;
+        let root = tree.commit(&mut db, &data)?;
 
         // write batch to RocksDB
         let mut write_batch = PrefixWriteBatch::new();

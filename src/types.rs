@@ -199,7 +199,7 @@ impl From<BlockHeight> for usize {
 impl Default for SubtreeHeight {
     #[inline]
     fn default() -> Self {
-        SubtreeHeight(SubtreeHeightKind::Eight)
+        SubtreeHeight(SubtreeHeightKind::Four)
     }
 }
 

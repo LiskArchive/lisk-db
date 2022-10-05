@@ -130,11 +130,11 @@ impl StateDB {
 
         let d = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
-        let mut data = smt::UpdateData::new_with_hash(d.revert_update());
+        let data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SmtDB::new(conn);
         let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_HEIGHT);
         let prev_root = tree
-            .commit(&mut smtdb, &mut data)
+            .commit(&mut smtdb, &data)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
 
         let mut write_batch = batch::PrefixWriteBatch::new();
@@ -241,11 +241,11 @@ impl StateDB {
         let key_length = self.options.key_length();
         self.common.send(move |conn, channel| {
             let w = writer.lock().unwrap();
-            let mut data = smt::UpdateData::new_with_hash(w.get_updated());
+            let data = smt::UpdateData::new_with_hash(w.get_updated());
             let mut smtdb = smt_db::SmtDB::new(conn);
             let mut tree =
                 smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_HEIGHT);
-            let root = tree.commit(&mut smtdb, &mut data);
+            let root = tree.commit(&mut smtdb, &data);
             let result_info = CommitResultInfo::new(root, d.data);
             let result = StateDB::handle_commit_result(conn, &smtdb, w, result_info);
 
@@ -360,22 +360,23 @@ impl StateDB {
     }
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(ctx, "siblingHashes")?
             .to_vec(ctx)?;
-        for key in raw_sibling_hashes.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
-                .as_slice(ctx)
-                .to_vec();
-            sibling_hashes.push(key);
-        }
+        let sibling_hashes = raw_sibling_hashes
+            .iter()
+            .map(|key| {
+                Ok(key
+                    .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                    .as_slice(ctx)
+                    .to_vec())
+            })
+            .collect::<NeonResult<Vec<Vec<u8>>>>()?;
 
-        let mut queries: Vec<smt::QueryProof> = vec![];
         let raw_queries = raw_proof
             .get::<JsArray, _, _>(ctx, "queries")?
             .to_vec(ctx)?;
+        let mut queries: Vec<smt::QueryProof> = Vec::with_capacity(raw_queries.len());
         for key in raw_queries.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(ctx)?;
             let key = obj
@@ -404,14 +405,15 @@ impl StateDB {
 
     fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<NestedVec> {
         let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
-        let mut parsed_query_keys = NestedVec::new();
-        for key in query_keys.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
-                .as_slice(ctx)
-                .to_vec();
-            parsed_query_keys.push(key);
-        }
+        let parsed_query_keys = query_keys
+            .iter()
+            .map(|key| {
+                Ok(key
+                    .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                    .as_slice(ctx)
+                    .to_vec())
+            })
+            .collect::<NeonResult<Vec<Vec<u8>>>>()?;
 
         Ok(parsed_query_keys)
     }

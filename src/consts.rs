@@ -1,7 +1,7 @@
 use crate::types::{KeyLength, SubtreeHeight, SubtreeHeightKind};
 
 pub const KEY_LENGTH: KeyLength = KeyLength(38);
-pub const SUBTREE_HEIGHT: SubtreeHeight = SubtreeHeight(SubtreeHeightKind::Eight);
+pub const SUBTREE_HEIGHT: SubtreeHeight = SubtreeHeight(SubtreeHeightKind::Four);
 
 pub static PREFIX_BRANCH_HASH: &[u8] = &[1];
 

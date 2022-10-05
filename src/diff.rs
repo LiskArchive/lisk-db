@@ -38,17 +38,15 @@ impl Diff {
         let mut reader = codec::Reader::new(val);
         let created = reader.read_bytes_slice(1)?;
         let updated_bytes = reader.read_bytes_slice(2)?;
-        let mut updated = vec![];
-        for value in updated_bytes.iter() {
-            let kv = KVPair::decode(value)?;
-            updated.push(kv);
-        }
+        let updated: Vec<KVPair> = updated_bytes
+            .iter()
+            .map(|value| KVPair::decode(value).unwrap())
+            .collect();
         let deleted_bytes = reader.read_bytes_slice(3)?;
-        let mut deleted = vec![];
-        for value in deleted_bytes.iter() {
-            let kv = KVPair::decode(value)?;
-            deleted.push(kv);
-        }
+        let deleted: Vec<KVPair> = deleted_bytes
+            .iter()
+            .map(|value| KVPair::decode(value).unwrap())
+            .collect();
         Ok(Self {
             created,
             updated,

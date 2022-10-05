@@ -1,7 +1,9 @@
-use crate::consts;
-use crate::options;
 use std::cmp;
 
+use bitvec::prelude::*;
+
+use crate::consts;
+use crate::options;
 use crate::types::{HashKind, HashWithKind};
 
 pub fn get_iteration_mode<'a>(
@@ -136,13 +138,10 @@ pub fn bools_to_bytes(a: &[bool]) -> Vec<u8> {
 }
 
 pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
-    let mut result = vec![false; a.len() * 8];
-    for (i, x) in a.iter().enumerate() {
-        for j in 0..8 {
-            result[8 * i + j] = (x << j) & 0x80 == 0x80;
-        }
-    }
-    result
+    a.view_bits::<Msb0>()
+        .iter()
+        .by_vals()
+        .collect::<Vec<bool>>()
 }
 
 pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {
