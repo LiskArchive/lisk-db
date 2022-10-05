@@ -462,6 +462,7 @@ describe('database', () => {
         describe('iteration', () => {
             let pairs;
             beforeAll(async () => {
+                await db.clear();
                 pairs = [
                     {
                         key: Buffer.from([0, 0, 0]),
