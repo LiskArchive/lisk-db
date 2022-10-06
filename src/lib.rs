@@ -1,7 +1,7 @@
 use neon::prelude::*;
 
 use crate::common_db::{JsNewWithArcMutex, JsNewWithBox, JsNewWithBoxRef};
-pub use crate::types::{Cache, KeyLength, NestedVec, SharedKVPair};
+pub use crate::types::{Cache, DbOptions, KeyLength, NestedVec, SharedKVPair};
 
 pub mod batch;
 mod codec;
@@ -25,7 +25,7 @@ extern crate tempdir;
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function(
         "db_new",
-        db::Database::js_new_with_box::<common_db::Options, db::Database>,
+        db::Database::js_new_with_box::<DbOptions, db::Database>,
     )?;
     cx.export_function("db_clear", db::Database::js_clear)?;
     cx.export_function("db_close", db::Database::js_close)?;
@@ -46,7 +46,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 
     cx.export_function(
         "state_db_new",
-        state_db::StateDB::js_new_with_box_ref::<common_db::Options, state_db::StateDB>,
+        state_db::StateDB::js_new_with_box_ref::<DbOptions, state_db::StateDB>,
     )?;
     cx.export_function(
         "state_db_get_current_state",
@@ -92,10 +92,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
         state_writer::StateWriter::js_restore_snapshot,
     )?;
 
-    cx.export_function(
-        "in_memory_db_new",
-        in_memory_db::Database::js_new_with_box_ref::<common_db::Options, in_memory_db::Database>,
-    )?;
+    cx.export_function("in_memory_db_new", in_memory_db::Database::js_new)?;
     cx.export_function("in_memory_db_clone", in_memory_db::Database::js_clone)?;
     cx.export_function("in_memory_db_get", in_memory_db::Database::js_get)?;
     cx.export_function("in_memory_db_set", in_memory_db::Database::js_set)?;

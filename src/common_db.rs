@@ -12,7 +12,7 @@ use rocksdb::checkpoint::Checkpoint;
 
 use crate::consts;
 use crate::options::DbMessage;
-use crate::types::{ArcMutex, KVPair, KeyLength, New, VecOption};
+use crate::types::{ArcMutex, DbOptions, KVPair, KeyLength, VecOption};
 
 pub type JsBoxRef<T> = JsBox<RefCell<T>>;
 pub type JsArcMutex<T> = JsBoxRef<ArcMutex<T>>;
@@ -25,13 +25,6 @@ pub enum Kind {
     StateWriter,
     Batch,
     InMemorySMT,
-    InMemoryDB,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct Options {
-    pub readonly: bool,
-    pub key_length: KeyLength,
 }
 
 pub struct DB {
@@ -57,7 +50,7 @@ pub trait OptionsWithContext {
     fn new_with_context<'a, C>(
         ctx: &mut C,
         input: Option<Handle<JsValue>>,
-    ) -> Result<Options, neon::result::Throw>
+    ) -> Result<DbOptions, neon::result::Throw>
     where
         C: Context<'a>,
         Self: Sized;
@@ -67,7 +60,7 @@ pub trait NewDBWithContext {
     fn new_db_with_context<'a, C>(
         ctx: &mut C,
         path: String,
-        opts: Options,
+        opts: DbOptions,
         db_kind: Kind,
     ) -> Result<Self, rocksdb::Error>
     where
@@ -118,20 +111,11 @@ pub trait JsNewWithArcMutex {
     }
 }
 
-impl New for Options {
-    fn new() -> Self {
-        Self {
-            readonly: false,
-            key_length: KeyLength(0),
-        }
-    }
-}
-
 impl NewDBWithContext for DB {
     fn new_db_with_context<'a, C>(
         ctx: &mut C,
         path: String,
-        opts: Options,
+        opts: DbOptions,
         db_kind: Kind,
     ) -> Result<Self, rocksdb::Error>
     where
@@ -146,7 +130,7 @@ impl NewDBWithContext for DB {
         option.create_if_missing(true);
 
         let mut opened: rocksdb::DB;
-        if opts.readonly {
+        if opts.is_readonly() {
             opened = rocksdb::DB::open_for_read_only(&option, path, false)?;
         } else {
             opened = rocksdb::DB::open(&option, path)?;

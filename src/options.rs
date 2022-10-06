@@ -1,9 +1,9 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
-use crate::common_db::{Options as DBOptions, OptionsWithContext};
+use crate::common_db::OptionsWithContext;
 use crate::consts;
-use crate::types::{KeyLength, VecOption};
+use crate::types::{DbOptions, KeyLength, VecOption};
 
 pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
 
@@ -23,7 +23,7 @@ pub struct IterationOption {
     pub lte: VecOption,
 }
 
-impl OptionsWithContext for DBOptions {
+impl OptionsWithContext for DbOptions {
     fn new_with_context<'a, C>(
         ctx: &mut C,
         input: Option<Handle<JsValue>>,
@@ -32,7 +32,7 @@ impl OptionsWithContext for DBOptions {
         C: Context<'a>,
     {
         if input.is_none() {
-            return Ok(Self::new());
+            return Ok(Self::default());
         }
         let obj = input.unwrap().downcast_or_throw::<JsObject, _>(ctx)?;
         let readonly = obj
@@ -53,19 +53,13 @@ impl OptionsWithContext for DBOptions {
                 .unwrap_or_else(|| consts::KEY_LENGTH.into()),
         );
 
-        Ok(Self {
-            readonly,
-            key_length,
-        })
+        Ok(Self::new(readonly, key_length))
     }
 }
 
-impl DBOptions {
-    fn new() -> Self {
-        Self {
-            readonly: false,
-            key_length: consts::KEY_LENGTH,
-        }
+impl Default for DbOptions {
+    fn default() -> Self {
+        Self::new(false, consts::KEY_LENGTH)
     }
 }
 
