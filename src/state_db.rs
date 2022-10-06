@@ -455,16 +455,12 @@ impl StateDB {
     fn parse_update_result<'a, C: Context<'a>>(
         ctx: &mut C,
         result: Result<(), state_writer::StateWriterError>,
-        value: u8,
     ) -> NeonResult<Vec<Handle<'a, JsValue>>> {
         if result.is_err() {
             let err = result.err().unwrap().to_string();
             Ok(vec![ctx.error(err)?.upcast()])
         } else {
-            Ok(vec![
-                ctx.null().upcast(),
-                JsNumber::new(ctx, value).upcast(),
-            ])
+            Ok(vec![ctx.null().upcast()])
         }
     }
 
@@ -486,7 +482,7 @@ impl StateDB {
                     if cached {
                         //  if the key already in cache so update it and returns
                         let result = writer.update(&KVPair::new(&key, &new_value));
-                        Self::parse_update_result(&mut ctx, result, 1)?
+                        Self::parse_update_result(&mut ctx, result)?
                     } else if let Ok(value) = &value {
                         // if found the value of the key then insert into cache and update it
                         if value.is_some() {
@@ -494,11 +490,11 @@ impl StateDB {
                             let pair = SharedKVPair::new(&key, &temp_value);
                             writer.cache_existing(&pair);
                             let result = writer.update(&KVPair::new(&key, &new_value));
-                            Self::parse_update_result(&mut ctx, result, 2)?
+                            Self::parse_update_result(&mut ctx, result)?
                         } else {
                             // if there is no key then make a new pair and insert into cache
                             writer.cache_new(&SharedKVPair::new(&key, &new_value));
-                            vec![ctx.null().upcast(), JsNumber::new(&mut ctx, 3).upcast()]
+                            vec![ctx.null().upcast()]
                         }
                     } else {
                         let err = value.err().unwrap();
