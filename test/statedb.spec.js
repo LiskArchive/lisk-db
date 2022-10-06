@@ -531,5 +531,29 @@ describe('statedb', () => {
                 await expect(db.checkpoint(tmpPath)).rejects.toThrow();
             });
         });
+
+        describe('proof', () => {
+            it('should generate proof and verify that a result is not correct', async () => {
+                const queries = [getRandomBytes(38), getRandomBytes(38)];
+                const proof = await db.prove(root, queries);
+
+                const result = await db.verify(root, queries, proof);
+
+                expect(result).toEqual(false);
+            });
+
+            it('should generate proof and verify that a result is correct', async () => {
+                const queries = [
+                    Buffer.concat([initState[0].key.slice(0, 6), crypto.createHash('sha256').update(initState[0].key.slice(6)).digest()]),
+                    Buffer.concat([initState[1].key.slice(0, 6), crypto.createHash('sha256').update(initState[1].key.slice(6)).digest()]),
+                    Buffer.concat([initState[2].key.slice(0, 6), crypto.createHash('sha256').update(initState[2].key.slice(6)).digest()])
+                ];
+                const proof = await db.prove(root, queries);
+
+                const result = await db.verify(root, queries, proof);
+
+                expect(result).toEqual(true);
+            });
+        });
     });
 });
