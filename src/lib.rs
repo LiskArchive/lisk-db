@@ -60,6 +60,19 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_db_commit", state_db::StateDB::js_commit)?;
     cx.export_function("state_db_prove", state_db::StateDB::js_prove)?;
     cx.export_function("state_db_verify", state_db::StateDB::js_verify)?;
+    cx.export_function("state_db_range_with_writer", state_db::StateDB::js_range)?;
+    cx.export_function(
+        "state_db_js_upsert_key_with_writer",
+        state_db::StateDB::js_upsert_key,
+    )?;
+    cx.export_function(
+        "state_db_js_delete_key_with_writer",
+        state_db::StateDB::js_delete_key,
+    )?;
+    cx.export_function(
+        "state_db_js_get_key_with_writer",
+        state_db::StateDB::js_get_key,
+    )?;
     cx.export_function(
         "state_db_clean_diff_until",
         state_db::StateDB::js_clean_diff_until,
@@ -69,25 +82,6 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function(
         "state_writer_new",
         state_writer::StateWriter::js_new_with_arc_mutx::<state_writer::StateWriter>,
-    )?;
-    cx.export_function("state_writer_get", state_writer::StateWriter::js_get)?;
-    cx.export_function("state_writer_update", state_writer::StateWriter::js_update)?;
-    cx.export_function("state_writer_del", state_writer::StateWriter::js_del)?;
-    cx.export_function(
-        "state_writer_is_cached",
-        state_writer::StateWriter::js_is_cached,
-    )?;
-    cx.export_function(
-        "state_writer_get_range",
-        state_writer::StateWriter::js_get_range,
-    )?;
-    cx.export_function(
-        "state_writer_cache_new",
-        state_writer::StateWriter::js_cache_new,
-    )?;
-    cx.export_function(
-        "state_writer_cache_existing",
-        state_writer::StateWriter::js_cache_existing,
     )?;
     cx.export_function(
         "state_writer_snapshot",

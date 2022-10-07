@@ -59,18 +59,6 @@ describe('statedb', () => {
     let db;
     let root;
 
-    it('if current state dose not exist, it should return emptyHash with zero version', async () => {
-        const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
-        fs.mkdirSync(dbPath, { recursive: true });
-        const temp_db = new StateDB(dbPath);
-        const res = await temp_db.getCurrentState();
-        expect(res.version).toEqual(0);
-        const hasher = crypto.createHash('sha256');
-        hasher.update(Buffer.alloc(0));
-        const emptyHash = hasher.digest();
-        expect(res.root).toEqual(emptyHash);
-    });
-
     beforeAll(async () => {
         const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
         fs.mkdirSync(dbPath, { recursive: true });
@@ -101,6 +89,10 @@ describe('statedb', () => {
 
         it('should get the value if exist', async () => {
             await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
+        });
+
+        it('should return zero buffer when value length is zero', async () => {
+            await expect(db.get(Buffer.from([0, 0, 0, 15, 0, 0]))).resolves.toEqual(Buffer.alloc(0));
         });
 
         it('should get the empty Buffer if exist but empty', async () => {
@@ -195,6 +187,18 @@ describe('statedb', () => {
         });
 
         describe('currentState', () => {
+            it('if current state dose not exist, it should return emptyHash with zero version', async () => {
+                const dbPath = path.join(os.tmpdir(), 'state', Date.now().toString());
+                fs.mkdirSync(dbPath, { recursive: true });
+                const temp_db = new StateDB(dbPath);
+                const res = await temp_db.getCurrentState();
+                expect(res.version).toEqual(0);
+                const hasher = crypto.createHash('sha256');
+                hasher.update(Buffer.alloc(0));
+                const emptyHash = hasher.digest();
+                expect(res.root).toEqual(emptyHash);
+            });
+
             it('should return initiate values at the beginning', async () => {
                 const res = await db.getCurrentState();
                 expect(res.version).toEqual(0);
@@ -414,6 +418,8 @@ describe('statedb', () => {
         });
 
         describe('StateReader', () => {
+            const nonExistingKey = Buffer.from([255, 255]);
+
             it('should not have set', () => {
                 const reader = db.newReader();
                 expect(reader.set).toBeUndefined();
@@ -422,6 +428,76 @@ describe('statedb', () => {
             it('should not have del', () => {
                 const reader = db.newReader();
                 expect(reader.del).toBeUndefined();
+            });
+
+            it('should fail if DB does not have key', async () => {
+                const reader = db.newReader();
+                await expect(reader.get(nonExistingKey)).rejects.toThrow('does not exist');
+            });
+
+            it('should return zero buffer when value length is zero', async () => {
+                const reader = db.newReader();
+                await expect(reader.get(Buffer.from([0, 0, 0, 15, 0, 0]))).resolves.toEqual(Buffer.alloc(0));
+            });
+
+            it('should return associated value', async () => {
+                const reader = db.newReader();
+                await expect(reader.get(initState[0].key)).resolves.toEqual(initState[0].value);
+            });
+
+            it('should return true when called has if key exist', async () => {
+                const reader = db.newReader();
+                await expect(reader.has(initState[0].key)).resolves.toEqual(true);
+            });
+    
+            it('should iterate with specified range with limit', async () => {
+                const reader = db.newReader();
+                const stream = reader.iterate({
+                    gte: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 1]),
+                    lte: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
+                    limit: 2,
+                });
+    
+                const values = await new Promise((resolve, reject) => {
+                    const result = [];
+                    stream
+                        .on('data', kv => {
+                            result.push(kv);
+                        })
+                        .on('err', err => {
+                            reject(err);
+                        })
+                        .on('end', () => {
+                            resolve(result);
+                        });
+                });
+    
+                expect(values).toEqual(initState.slice(1, 3));
+            });
+
+            it('should create read stream with specified range with limit', async () => {
+                const reader = db.newReader();
+                const stream = reader.createReadStream({
+                    gte: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 1]),
+                    lte: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
+                    limit: 2,
+                });
+    
+                const values = await new Promise((resolve, reject) => {
+                    const result = [];
+                    stream
+                        .on('data', kv => {
+                            result.push(kv);
+                        })
+                        .on('err', err => {
+                            reject(err);
+                        })
+                        .on('end', () => {
+                            resolve(result);
+                        });
+                });
+    
+                expect(values).toEqual(initState.slice(1, 3));
             });
         });
 

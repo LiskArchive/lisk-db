@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use neon::prelude::*;
-use neon::types::buffer::TypedArray;
 use thiserror::Error;
 
 use crate::batch;
@@ -11,6 +10,7 @@ use crate::common_db::{
     DatabaseKind, JsArcMutex, JsNewWithArcMutex, Kind as DBKind, NewDBWithKeyLength,
 };
 use crate::diff;
+use crate::options::IterationOption;
 use crate::types::{Cache, KVPair, KeyLength, SharedKVPair, VecOption};
 use crate::utils;
 
@@ -112,16 +112,22 @@ impl StateWriter {
         self.cache.get(key).is_some()
     }
 
-    fn get_range(&self, start: &[u8], end: &[u8]) -> Vec<KVPair> {
+    pub fn get_range(&self, options: &IterationOption) -> Cache {
+        let start = options.gte.as_ref().unwrap();
+        let end = options.lte.as_ref().unwrap();
         self.cache
             .iter()
-            .filter(|(k, v)| {
-                utils::compare(k, start) != cmp::Ordering::Less
+            .filter_map(|(k, v)| {
+                if utils::compare(k, start) != cmp::Ordering::Less
                     && utils::compare(k, end) != cmp::Ordering::Greater
                     && !v.deleted
+                {
+                    Some((k.to_vec(), v.value.to_vec()))
+                } else {
+                    None
+                }
             })
-            .map(|(k, v)| KVPair::new(k, &v.value))
-            .collect()
+            .collect::<Cache>()
     }
 
     pub fn update(&mut self, pair: &KVPair) -> Result<(), StateWriterError> {
@@ -206,110 +212,6 @@ impl StateWriter {
 }
 
 impl StateWriter {
-    pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsObject> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        // Get the `this` value as a `JsBox<Database>`
-        let batch = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let writer = Arc::clone(&batch.borrow());
-        let inner_writer = writer.lock().unwrap();
-
-        let (value, deleted, exists) = inner_writer.get(&key);
-        let obj = ctx.empty_object();
-        let val_buf = JsBuffer::external(&mut ctx, value);
-        obj.set(&mut ctx, "value", val_buf)?;
-        let deleted_js = ctx.boolean(deleted);
-        obj.set(&mut ctx, "deleted", deleted_js)?;
-
-        let exists_js = ctx.boolean(exists);
-        obj.set(&mut ctx, "exists", exists_js)?;
-
-        Ok(obj)
-    }
-
-    pub fn js_update(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        // Get the `this` value as a `JsBox<Database>`
-        let batch = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let writer = Arc::clone(&batch.borrow());
-        let mut inner_writer = writer.lock().unwrap();
-
-        inner_writer
-            .update(&KVPair::new(&key, &value))
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_cache_new(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        // Get the `this` value as a `JsBox<Database>`
-        let batch = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let writer = Arc::clone(&batch.borrow());
-        let mut inner_writer = writer.lock().unwrap();
-
-        inner_writer.cache_new(&SharedKVPair::new(&key, &value));
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_cache_existing(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let pair = SharedKVPair::new(&key, &value);
-        // Get the `this` value as a `JsBox<Database>`
-        let batch = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let writer = Arc::clone(&batch.borrow());
-        let mut inner_writer = writer.lock().unwrap();
-
-        inner_writer.cache_existing(&pair);
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        // Get the `this` value as a `JsBox<Database>`
-        let writer = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let batch = Arc::clone(&writer.borrow());
-        let mut inner_writer = batch.lock().unwrap();
-
-        inner_writer.delete(&key);
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_is_cached(mut ctx: FunctionContext) -> JsResult<JsBoolean> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        // Get the `this` value as a `JsBox<Database>`
-        let batch = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let writer = Arc::clone(&batch.borrow());
-        let inner_writer = writer.lock().unwrap();
-
-        let cached = inner_writer.is_cached(&key);
-
-        Ok(ctx.boolean(cached))
-    }
-
     pub fn js_snapshot(mut ctx: FunctionContext) -> JsResult<JsNumber> {
         let writer = ctx
             .this()
@@ -336,31 +238,6 @@ impl StateWriter {
             Ok(()) => Ok(ctx.undefined()),
             Err(error) => ctx.throw_error(error.to_string())?,
         }
-    }
-
-    pub fn js_get_range(mut ctx: FunctionContext) -> JsResult<JsArray> {
-        let start = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let end = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        // Get the `this` value as a `JsBox<Database>`
-        let batch = ctx
-            .this()
-            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
-
-        let writer = Arc::clone(&batch.borrow());
-        let inner_writer = writer.lock().unwrap();
-
-        let results = inner_writer.get_range(&start, &end);
-        let arr = JsArray::new(&mut ctx, results.len() as u32);
-        for (i, kv) in results.iter().enumerate() {
-            let obj = ctx.empty_object();
-            let key = JsBuffer::external(&mut ctx, kv.key_as_vec());
-            let value = JsBuffer::external(&mut ctx, kv.value_as_vec());
-            obj.set(&mut ctx, "key", key)?;
-            obj.set(&mut ctx, "value", value)?;
-            arr.set(&mut ctx, i as u32, obj)?;
-        }
-
-        Ok(arr)
     }
 }
 
