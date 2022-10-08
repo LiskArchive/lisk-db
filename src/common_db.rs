@@ -98,7 +98,7 @@ pub trait JsNewWithBox {
 }
 
 pub trait JsNewWithArcMutex {
-    fn js_new_with_arc_mutx<T: NewDBWithKeyLength + Send + Finalize + DatabaseKind>(
+    fn js_new_with_arc_mutex<T: NewDBWithKeyLength + Send + Finalize + DatabaseKind>(
         mut ctx: FunctionContext,
     ) -> JsResult<JsArcMutex<T>> {
         let key_length = if T::db_kind() == Kind::InMemorySMT {

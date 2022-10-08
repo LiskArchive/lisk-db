@@ -358,6 +358,7 @@ impl StateDB {
             })
             .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
+
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
         let raw_sibling_hashes = raw_proof
