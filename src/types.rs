@@ -15,6 +15,8 @@ pub type Cache = HashMap<Vec<u8>, Vec<u8>>;
 pub type VecOption = Option<Vec<u8>>;
 pub type SharedVec = Arc<Mutex<Arc<Vec<u8>>>>;
 pub type ArcMutex<T> = Arc<Mutex<T>>;
+pub type CommitOptions = Options<BlockHeight>;
+pub type DbOptions = Options<KeyLength>;
 
 // Strong type of SMT with max value KEY_LENGTH * 8
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -34,6 +36,13 @@ pub struct SubtreeHeight(pub SubtreeHeightKind);
 
 #[derive(Clone, Debug, Copy)]
 pub struct KeyLength(pub u16);
+
+// Options is a base class for type CommitOptions and DbOptions
+#[derive(Debug, Copy, Clone)]
+pub struct Options<T> {
+    readonly: bool,
+    number: T,
+}
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum SubtreeHeightKind {
@@ -116,13 +125,6 @@ impl From<Height> for usize {
     }
 }
 
-impl From<f64> for Height {
-    #[inline]
-    fn from(value: f64) -> Height {
-        Self(value as u16)
-    }
-}
-
 impl Add for Height {
     type Output = Self;
     #[inline]
@@ -173,6 +175,13 @@ impl From<u32> for BlockHeight {
     }
 }
 
+impl From<f64> for BlockHeight {
+    #[inline]
+    fn from(value: f64) -> BlockHeight {
+        BlockHeight(value as u32)
+    }
+}
+
 impl From<BlockHeight> for u32 {
     #[inline]
     fn from(value: BlockHeight) -> u32 {
@@ -180,10 +189,10 @@ impl From<BlockHeight> for u32 {
     }
 }
 
-impl From<Height> for BlockHeight {
+impl From<BlockHeight> for usize {
     #[inline]
-    fn from(value: Height) -> BlockHeight {
-        BlockHeight(value.0 as u32)
+    fn from(value: BlockHeight) -> usize {
+        value.0 as usize
     }
 }
 
@@ -246,6 +255,32 @@ impl HashWithKind for Vec<u8> {
         } else {
             result.to_vec()
         }
+    }
+}
+
+impl<T> Options<T> {
+    #[inline]
+    pub fn new(readonly: bool, number: T) -> Self {
+        Self { readonly, number }
+    }
+
+    #[inline]
+    pub fn is_readonly(&self) -> bool {
+        self.readonly
+    }
+}
+
+impl DbOptions {
+    #[inline]
+    pub fn key_length(&self) -> KeyLength {
+        self.number
+    }
+}
+
+impl CommitOptions {
+    #[inline]
+    pub fn version(&self) -> BlockHeight {
+        self.number
     }
 }
 
@@ -320,16 +355,6 @@ impl Height {
     }
 
     #[inline]
-    pub fn add(self, value: u8) -> Self {
-        Height(self.0 + value as u16)
-    }
-
-    #[inline]
-    pub fn sub_to_usize(self, value: u8) -> usize {
-        (self.0 - value as u16) as usize
-    }
-
-    #[inline]
     pub fn div_to_usize(self, value: u16) -> usize {
         (self.0 / value) as usize
     }
@@ -338,23 +363,22 @@ impl Height {
     pub fn mod_to_u8(self, value: u16) -> u8 {
         (self.0 % value) as u8
     }
-
-    #[inline]
-    pub fn to_be_bytes(self) -> [u8; 2] {
-        self.0.to_be_bytes()
-    }
-
-    // Cast to u32 and returns with len(4) for JS API
-    #[inline]
-    pub fn as_u32_to_be_bytes(self) -> [u8; 4] {
-        (self.0 as u32).to_be_bytes()
-    }
 }
 
 impl BlockHeight {
     #[inline]
     pub fn to_be_bytes(self) -> [u8; 4] {
         self.0.to_be_bytes()
+    }
+
+    #[inline]
+    pub fn sub(self, value: u32) -> Self {
+        Self(self.0 - value)
+    }
+
+    #[inline]
+    pub fn is_equal_to(self, value: u32) -> bool {
+        self.0 == value
     }
 }
 

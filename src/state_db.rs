@@ -8,9 +8,7 @@ use neon::types::buffer::TypedArray;
 use thiserror::Error;
 
 use crate::batch;
-use crate::common_db::{
-    JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithContext, Options as DBOptions, DB,
-};
+use crate::common_db::{JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithContext, DB};
 use crate::consts;
 use crate::diff;
 use crate::options;
@@ -18,8 +16,8 @@ use crate::smt;
 use crate::smt_db;
 use crate::state_writer;
 use crate::types::{
-    ArcMutex, BlockHeight, Cache, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
-    SharedKVPair, SharedVec,
+    ArcMutex, BlockHeight, Cache, CommitOptions, DbOptions, HashKind, HashWithKind, KVPair,
+    KeyLength, NestedVec, SharedKVPair, SharedVec,
 };
 use crate::utils;
 
@@ -40,7 +38,7 @@ struct CurrentState<'a> {
 }
 
 struct Commit {
-    db_options: DBOptions,
+    options: CommitOptions,
     check_expected: bool,
     expected: Vec<u8>,
 }
@@ -57,7 +55,7 @@ struct CommitResultInfo {
 
 pub struct StateDB {
     common: DB,
-    options: DBOptions,
+    options: DbOptions,
 }
 
 impl<'a> CurrentState<'a> {
@@ -78,9 +76,9 @@ impl<'a> CurrentState<'a> {
 }
 
 impl Commit {
-    fn new(expected: Vec<u8>, db_options: DBOptions, check_expected: bool) -> Self {
+    fn new(expected: Vec<u8>, options: CommitOptions, check_expected: bool) -> Self {
         Self {
-            db_options,
+            options,
             check_expected,
             expected,
         }
@@ -103,7 +101,7 @@ impl NewDBWithContext for StateDB {
     fn new_db_with_context<'a, C>(
         ctx: &mut C,
         path: String,
-        db_options: DBOptions,
+        db_options: DbOptions,
         k: DBKind,
     ) -> Result<Self, rocksdb::Error>
     where
@@ -121,14 +119,14 @@ impl Finalize for StateDB {}
 impl StateDB {
     fn get_revert_result(
         conn: &rocksdb::DB,
-        height: Height,
+        version: BlockHeight,
         state_root: &[u8],
         key_length: KeyLength,
     ) -> Result<SharedVec, DataStoreError> {
         let diff_bytes = conn
-            .get(&[consts::Prefix::DIFF, &height.as_u32_to_be_bytes()].concat())
+            .get(&[consts::Prefix::DIFF, &version.to_be_bytes()].concat())
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
-            .ok_or_else(|| DataStoreError::DiffNotFound(height.into()))?;
+            .ok_or_else(|| DataStoreError::DiffNotFound(version.into()))?;
 
         let d = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
@@ -144,7 +142,7 @@ impl StateDB {
         write_batch.set_prefix(&consts::Prefix::STATE);
         d.revert_commit(&mut write_batch);
         write_batch.set_prefix(&consts::Prefix::DIFF);
-        write_batch.delete(&height.as_u32_to_be_bytes());
+        write_batch.delete(&version.to_be_bytes());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::Prefix::SMT);
@@ -158,16 +156,16 @@ impl StateDB {
 
     fn revert(
         &mut self,
-        height: Height,
+        version: BlockHeight,
         state_root: Vec<u8>,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let key_length = self.options.key_length;
+        let key_length = self.options.key_length();
         self.common.send(move |conn, channel| {
-            let result = StateDB::get_revert_result(conn, height, &state_root, key_length);
+            let result = StateDB::get_revert_result(conn, version, &state_root, key_length);
             if result.is_ok() {
                 let value = (**result.as_ref().unwrap().lock().unwrap()).clone();
-                let state_info = CurrentState::new(&value, height.sub(1).into());
+                let state_info = CurrentState::new(&value, version.sub(1));
                 conn.put(consts::Prefix::CURRENT_STATE, state_info.to_bytes())
                     .expect("Update state info should not be failed");
             }
@@ -204,7 +202,7 @@ impl StateDB {
                 "Not matching with expected",
             )));
         }
-        if info.data.db_options.readonly {
+        if info.data.options.is_readonly() {
             return Ok(root);
         }
         // Create global batch
@@ -213,7 +211,7 @@ impl StateDB {
         write_batch.set_prefix(&consts::Prefix::STATE);
         let diff = writer.commit(&mut write_batch);
         write_batch.set_prefix(&consts::Prefix::DIFF);
-        let key = info.data.db_options.key_length.as_u32_to_be_bytes();
+        let key = info.data.options.version().to_be_bytes();
         write_batch.put(&key, diff.encode().as_ref());
 
         // insert SMT batch
@@ -221,11 +219,11 @@ impl StateDB {
         smtdb.batch.iterate(&mut write_batch);
         // insert diff
         let result = conn.write(write_batch.batch);
-        let height = info.data.db_options.key_length.into();
+        let version = info.data.options.version();
         match result {
             Ok(_) => {
                 let value = (**root.as_ref().lock().unwrap()).clone();
-                let state_info = CurrentState::new(&value, height);
+                let state_info = CurrentState::new(&value, version);
                 conn.put(consts::Prefix::CURRENT_STATE, state_info.to_bytes())
                     .expect("Update state info should not be failed");
                 Ok(root)
@@ -240,7 +238,7 @@ impl StateDB {
         d: CommitData,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let key_length = self.options.key_length;
+        let key_length = self.options.key_length();
         self.common.send(move |conn, channel| {
             let w = writer.lock().unwrap();
             let mut data = smt::UpdateData::new_with_hash(w.get_updated());
@@ -275,7 +273,7 @@ impl StateDB {
         queries: NestedVec,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
-        let key_length = self.options.key_length;
+        let key_length = self.options.key_length();
         self.common
             .send(move |conn, channel| {
                 let mut tree =
@@ -317,17 +315,17 @@ impl StateDB {
 
     fn clean_diff_until(
         &self,
-        height: Height,
+        version: BlockHeight,
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
-        if height.is_equal_to(0) {
+        if version.is_equal_to(0) {
             return Ok(());
         }
         self.common
             .send(move |conn, channel| {
                 let zero: u32 = 0;
                 let start = [consts::Prefix::DIFF, zero.to_be_bytes().as_slice()].concat();
-                let end = [consts::Prefix::DIFF, &height.sub(1).as_u32_to_be_bytes()].concat();
+                let end = [consts::Prefix::DIFF, &version.sub(1).to_be_bytes()].concat();
                 let mut batch = rocksdb::WriteBatch::default();
 
                 let iter = conn.iterator(rocksdb::IteratorMode::From(
@@ -428,12 +426,12 @@ impl StateDB {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
-                    Ok(val) => {
-                        let value: Vec<u8>;
+                    Ok(value) => {
                         let empty_hash = vec![].hash_with_kind(HashKind::Empty);
-                        let current_state_info = if let Some(val) = val {
-                            value = val;
-                            CurrentState::from_bytes(&value)
+                        let temp_value: Vec<u8>;
+                        let current_state_info = if let Some(value) = value {
+                            temp_value = value;
+                            CurrentState::from_bytes(&temp_value)
                         } else {
                             CurrentState::new(&empty_hash, BlockHeight(0))
                         };
@@ -845,7 +843,7 @@ impl StateDB {
 
     // Commit
     // @params 0 writer (required)
-    // @params 1 height (required)
+    // @params 1 version (required)
     // @params 2 prev_root (required)
     // @params 3 readonly
     // @params 4 expected_root
@@ -854,7 +852,7 @@ impl StateDB {
     pub fn js_commit(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let writer = ctx.argument::<state_writer::SendableStateWriter>(0)?;
 
-        let key_length = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
+        let version = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
 
         let prev_root = ctx.argument::<JsTypedArray<u8>>(2)?.as_slice(&ctx).to_vec();
 
@@ -868,14 +866,11 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let mut db = db.borrow_mut();
-        if db.options.readonly {
+        if db.options.is_readonly() {
             return ctx.throw_error(String::from("Readonly DB cannot be committed."));
         }
-        let db_options = DBOptions {
-            key_length,
-            readonly,
-        };
-        let commit = Commit::new(expected, db_options, check_root);
+        let options = CommitOptions::new(readonly, version);
+        let commit = Commit::new(expected, options, check_root);
         let writer = Arc::clone(&writer.borrow());
         let commit_data = CommitData::new(commit, prev_root);
         db.commit(writer, commit_data, cb)
@@ -912,7 +907,7 @@ impl StateDB {
     pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
-        let key_length = db.options.key_length;
+        let key_length = db.options.key_length();
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
         let proof = Self::proof(&mut ctx)?;
@@ -946,11 +941,11 @@ impl StateDB {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
 
-        let height = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
+        let version = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
 
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
-        db.clean_diff_until(height, cb)
+        db.clean_diff_until(version, cb)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
