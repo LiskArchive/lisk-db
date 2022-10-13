@@ -24,7 +24,6 @@ pub const EMPTY_HASH: [u8; 32] = [
 static PREFIX_LEAF_HASH: &[u8] = &[0];
 static PREFIX_EMPTY: &[u8] = &[2];
 
-type Hasher = fn(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Arc<Vec<u8>>;
 type SharedNode = ArcMutex<Node>;
 
 trait SortDescending {
@@ -151,7 +150,13 @@ pub struct SparseMerkleTree {
     key_length: KeyLength,
     subtree_height: SubtreeHeight,
     max_number_of_nodes: usize,
-    hasher: Hasher,
+}
+
+#[derive(Clone)]
+struct Hasher {
+    node_hashes: Vec<Arc<Vec<u8>>>,
+    structure: Vec<u8>,
+    height: Height,
 }
 
 impl Hash256 for KVPair {
@@ -163,46 +168,6 @@ impl Hash256 for KVPair {
         let result = hasher.finalize();
         result.to_vec()
     }
-}
-
-fn tree_hasher(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Arc<Vec<u8>> {
-    let mut node_hashes: Vec<Arc<Vec<u8>>> = node_hashes.to_vec();
-    let mut structure: Vec<u8> = structure.to_vec();
-    let mut height = height;
-
-    while node_hashes.len() != 1 {
-        let mut next_hashes: Vec<Arc<Vec<u8>>> = Vec::with_capacity(node_hashes.len());
-        let mut next_structure: Vec<u8> = Vec::with_capacity(node_hashes.len());
-        let mut i = 0;
-
-        while i < node_hashes.len() {
-            if structure[i] == height.into() {
-                let branch = [
-                    (*node_hashes[i]).as_slice(),
-                    (*node_hashes[i + 1]).as_slice(),
-                ]
-                .concat();
-                let hash = branch.hash_with_kind(HashKind::Branch);
-                next_hashes.push(Arc::new(hash));
-                next_structure.push(structure[i] - 1);
-                i += 1;
-            } else {
-                next_hashes.push(Arc::clone(&node_hashes[i]));
-                next_structure.push(structure[i]);
-            }
-            i += 1;
-        }
-
-        if height.is_equal_to(1) {
-            return Arc::clone(&next_hashes[0]);
-        }
-
-        height = height.sub(1);
-        node_hashes = next_hashes;
-        structure = next_structure;
-    }
-
-    Arc::clone(&node_hashes[0])
 }
 
 fn parent_node(
@@ -254,7 +219,6 @@ fn calculate_subtree(
     layer_structure: &[u8],
     height: Height,
     tree_map: &mut VecDeque<(Vec<SharedNode>, Vec<u8>)>,
-    hasher: Hasher,
 ) -> Result<SubTree, SMTError> {
     let mut layer_nodes = layer_nodes.to_vec();
     let mut layer_structure = layer_structure.to_vec();
@@ -283,16 +247,16 @@ fn calculate_subtree(
                 let (nodes, structure) = tree_map.pop_front().ok_or_else(|| {
                     SMTError::Unknown(String::from("Subtree must exist for stub"))
                 })?;
-                return SubTree::from_data(&structure, &nodes, hasher);
+                return SubTree::from_data(&structure, &nodes);
             }
-            return SubTree::from_data(&[0], &next_layer_nodes, hasher);
+            return SubTree::from_data(&[0], &next_layer_nodes);
         }
         layer_nodes = next_layer_nodes;
         layer_structure = next_layer_structure;
         height = height.sub(1);
     }
 
-    SubTree::from_data(&[0], &layer_nodes, hasher)
+    SubTree::from_data(&[0], &layer_nodes)
 }
 
 fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
@@ -443,6 +407,52 @@ impl rocksdb::WriteBatchIterator for UpdateData {
     fn delete(&mut self, key: Box<[u8]>) {
         self.data
             .insert(key.into_vec().hash_with_kind(HashKind::Key), vec![]);
+    }
+}
+
+impl Hasher {
+    fn new(node_hashes: &[Arc<Vec<u8>>], structure: &[u8], height: Height) -> Self {
+        Self {
+            node_hashes: node_hashes.to_vec(),
+            structure: structure.to_vec(),
+            height,
+        }
+    }
+
+    fn run(&mut self) -> Arc<Vec<u8>> {
+        while self.node_hashes.len() != 1 {
+            let mut next_hashes: Vec<Arc<Vec<u8>>> = Vec::with_capacity(self.node_hashes.len());
+            let mut next_structure: Vec<u8> = Vec::with_capacity(self.node_hashes.len());
+            let mut i = 0;
+
+            while i < self.node_hashes.len() {
+                if self.structure[i] == self.height.into() {
+                    let branch = [
+                        (*self.node_hashes[i]).as_slice(),
+                        (*self.node_hashes[i + 1]).as_slice(),
+                    ]
+                    .concat();
+                    let hash = branch.hash_with_kind(HashKind::Branch);
+                    next_hashes.push(Arc::new(hash.to_vec()));
+                    next_structure.push(self.structure[i] - 1);
+                    i += 1;
+                } else {
+                    next_hashes.push(Arc::clone(&self.node_hashes[i]));
+                    next_structure.push(self.structure[i]);
+                }
+                i += 1;
+            }
+
+            if self.height.is_equal_to(1) {
+                return Arc::clone(&next_hashes[0]);
+            }
+
+            self.height = self.height.sub(1);
+            self.node_hashes = next_hashes;
+            self.structure = next_structure;
+        }
+
+        Arc::clone(&self.node_hashes[0])
     }
 }
 
@@ -640,7 +650,7 @@ impl Node {
 }
 
 impl SubTree {
-    pub fn new(data: &[u8], key_length: KeyLength, hasher: Hasher) -> Result<Self, SMTError> {
+    pub fn new(data: &[u8], key_length: KeyLength) -> Result<Self, SMTError> {
         if data.is_empty() {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
         }
@@ -682,24 +692,22 @@ impl SubTree {
             }
         }
 
-        SubTree::from_data(structure, &nodes, hasher)
+        SubTree::from_data(structure, &nodes)
     }
 
-    pub fn from_data(
-        structure: &[u8],
-        nodes: &[SharedNode],
-        hasher: Hasher,
-    ) -> Result<Self, SMTError> {
-        let height = structure
+    pub fn from_data(structure: &[u8], nodes: &[SharedNode]) -> Result<Self, SMTError> {
+        let height: Height = structure
             .iter()
             .max()
-            .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?;
+            .ok_or_else(|| SMTError::Unknown(String::from("Invalid structure")))?
+            .into();
 
         let node_hashes = nodes
             .iter()
             .map(|n| Arc::new(n.lock().unwrap().hash.value_as_vec()))
             .collect::<Vec<Arc<Vec<u8>>>>();
-        let calculated = hasher(&node_hashes, structure, height.into());
+        let mut hasher = Hasher::new(&node_hashes, structure, height);
+        let calculated = hasher.run();
 
         Ok(Self {
             structure: structure.to_vec(),
@@ -888,7 +896,7 @@ impl SparseMerkleTree {
             .map_err(|err| SMTError::Unknown(err.to_string()))?
             .ok_or_else(|| SMTError::NotFound(String::from("node_hash does not exist")))?;
 
-        SubTree::new(&value, self.key_length, self.hasher)
+        SubTree::new(&value, self.key_length)
     }
 
     fn calc_bins<'a>(
@@ -1006,7 +1014,6 @@ impl SparseMerkleTree {
             &updated.structures,
             max_structure.into(),
             &mut tree_map,
-            self.hasher,
         )?;
         let value = new_subtree.encode();
         db.set(&KVPair::new(&new_subtree.root, &value))
@@ -1070,9 +1077,7 @@ impl SparseMerkleTree {
             NodeKind::Empty => {
                 self.get_subtree(db, info.current_node.lock().unwrap().hash.value())?
             },
-            NodeKind::Leaf => {
-                SubTree::from_data(&[0], &[Arc::clone(&info.current_node)], self.hasher)?
-            },
+            NodeKind::Leaf => SubTree::from_data(&[0], &[Arc::clone(&info.current_node)])?,
             _ => {
                 return Err(SMTError::Unknown(String::from("invalid node type")));
             },
@@ -1388,7 +1393,6 @@ impl SparseMerkleTree {
         Self {
             root: Arc::new(Mutex::new(Arc::new(r))),
             key_length,
-            hasher: tree_hasher,
             subtree_height,
             max_number_of_nodes,
         }
@@ -1480,7 +1484,7 @@ mod tests {
 
         for (data, hash, structure) in test_data {
             let decoded_data = hex::decode(data).unwrap();
-            let tree = SubTree::new(&decoded_data, KeyLength(32), tree_hasher).unwrap();
+            let tree = SubTree::new(&decoded_data, KeyLength(32)).unwrap();
             let decoded_hash = hex::decode(hash).unwrap();
             assert_eq!(tree.structure, structure);
             assert_eq!(*tree.root, decoded_hash);
@@ -1496,7 +1500,7 @@ mod tests {
 
         for (data, _, _) in test_data {
             let decoded_data = hex::decode(data).unwrap();
-            let tree = SubTree::new(&decoded_data, KeyLength(32), tree_hasher).unwrap();
+            let tree = SubTree::new(&decoded_data, KeyLength(32)).unwrap();
             assert_eq!(tree.encode(), decoded_data);
         }
     }
