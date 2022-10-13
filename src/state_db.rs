@@ -12,12 +12,12 @@ use crate::common_db::{JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithConte
 use crate::consts;
 use crate::diff;
 use crate::options;
-use crate::smt;
+use crate::smt::{self, EMPTY_HASH};
 use crate::smt_db;
 use crate::state_writer;
 use crate::types::{
-    ArcMutex, BlockHeight, Cache, CommitOptions, DbOptions, HashKind, HashWithKind, KVPair,
-    KeyLength, NestedVec, SharedKVPair, SharedVec,
+    ArcMutex, BlockHeight, Cache, CommitOptions, DbOptions, KVPair, KeyLength, NestedVec,
+    SharedKVPair, SharedVec,
 };
 use crate::utils;
 
@@ -130,11 +130,11 @@ impl StateDB {
 
         let d = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
-        let mut data = smt::UpdateData::new_with_hash(d.revert_update());
+        let data = smt::UpdateData::new_with_hash(d.revert_update());
         let mut smtdb = smt_db::SmtDB::new(conn);
         let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_HEIGHT);
         let prev_root = tree
-            .commit(&mut smtdb, &mut data)
+            .commit(&mut smtdb, &data)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
 
         let mut write_batch = batch::PrefixWriteBatch::new();
@@ -241,11 +241,11 @@ impl StateDB {
         let key_length = self.options.key_length();
         self.common.send(move |conn, channel| {
             let w = writer.lock().unwrap();
-            let mut data = smt::UpdateData::new_with_hash(w.get_updated());
+            let data = smt::UpdateData::new_with_hash(w.get_updated());
             let mut smtdb = smt_db::SmtDB::new(conn);
             let mut tree =
                 smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_HEIGHT);
-            let root = tree.commit(&mut smtdb, &mut data);
+            let root = tree.commit(&mut smtdb, &data);
             let result_info = CommitResultInfo::new(root, d.data);
             let result = StateDB::handle_commit_result(conn, &smtdb, w, result_info);
 
@@ -360,22 +360,23 @@ impl StateDB {
     }
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
-        let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(ctx, "siblingHashes")?
             .to_vec(ctx)?;
-        for key in raw_sibling_hashes.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
-                .as_slice(ctx)
-                .to_vec();
-            sibling_hashes.push(key);
-        }
+        let sibling_hashes = raw_sibling_hashes
+            .iter()
+            .map(|key| {
+                Ok(key
+                    .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                    .as_slice(ctx)
+                    .to_vec())
+            })
+            .collect::<NeonResult<NestedVec>>()?;
 
-        let mut queries: Vec<smt::QueryProof> = vec![];
         let raw_queries = raw_proof
             .get::<JsArray, _, _>(ctx, "queries")?
             .to_vec(ctx)?;
+        let mut queries: Vec<smt::QueryProof> = Vec::with_capacity(raw_queries.len());
         for key in raw_queries.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(ctx)?;
             let key = obj
@@ -404,14 +405,15 @@ impl StateDB {
 
     fn parse_query_keys(ctx: &mut FunctionContext) -> NeonResult<NestedVec> {
         let query_keys = ctx.argument::<JsArray>(1)?.to_vec(ctx)?;
-        let mut parsed_query_keys = NestedVec::new();
-        for key in query_keys.iter() {
-            let key = key
-                .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
-                .as_slice(ctx)
-                .to_vec();
-            parsed_query_keys.push(key);
-        }
+        let parsed_query_keys = query_keys
+            .iter()
+            .map(|key| {
+                Ok(key
+                    .downcast_or_throw::<JsTypedArray<u8>, _>(ctx)?
+                    .as_slice(ctx)
+                    .to_vec())
+            })
+            .collect::<NeonResult<NestedVec>>()?;
 
         Ok(parsed_query_keys)
     }
@@ -427,13 +429,12 @@ impl StateDB {
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(value) => {
-                        let empty_hash = vec![].hash_with_kind(HashKind::Empty);
                         let temp_value: Vec<u8>;
                         let current_state_info = if let Some(value) = value {
                             temp_value = value;
                             CurrentState::from_bytes(&temp_value)
                         } else {
-                            CurrentState::new(&empty_hash, BlockHeight(0))
+                            CurrentState::new(&EMPTY_HASH, BlockHeight(0))
                         };
                         let root = JsBuffer::external(&mut ctx, current_state_info.root.to_vec());
                         let version = ctx.number::<u32>(current_state_info.version.into());
@@ -969,7 +970,7 @@ impl StateDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{BlockHeight, HashKind, HashWithKind};
+    use crate::types::BlockHeight;
 
     #[test]
     fn test_current_state_convert() {
@@ -977,7 +978,7 @@ mod tests {
         let block_ten = BlockHeight(10);
         let block_hundred = BlockHeight(100);
         let root = Vec::with_capacity(30);
-        let empty_hash = vec![].hash_with_kind(HashKind::Empty);
+
         let test_data = vec![
             (
                 CurrentState::new(&[], block_zero),
@@ -992,8 +993,8 @@ mod tests {
                 [root.clone(), block_hundred.to_be_bytes().to_vec()].concat(),
             ),
             (
-                CurrentState::new(&empty_hash, block_zero),
-                [empty_hash.clone(), block_zero.to_be_bytes().to_vec()].concat(),
+                CurrentState::new(&EMPTY_HASH, block_zero),
+                [EMPTY_HASH.to_vec(), block_zero.to_be_bytes().to_vec()].concat(),
             ),
         ];
         for (state_as_struct, state_as_bytes) in test_data {

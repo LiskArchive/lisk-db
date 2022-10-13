@@ -1,8 +1,9 @@
-use neon::prelude::*;
-use neon::types::buffer::TypedArray;
 use std::cell::{RefCell, RefMut};
 use std::cmp;
 use std::sync::Arc;
+
+use neon::prelude::*;
+use neon::types::buffer::TypedArray;
 
 use crate::batch;
 use crate::common_db::JsBoxRef;
@@ -31,7 +32,7 @@ fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
 
 fn get_key_value_pairs(db: RefMut<Database>, options: &IterationOption) -> Vec<KVPair> {
     let no_range = options.gte.is_none() && options.lte.is_none();
-    let cached = if no_range {
+    let mut cached = if no_range {
         db.cache_all()
     } else {
         let gte = options
@@ -42,17 +43,12 @@ fn get_key_value_pairs(db: RefMut<Database>, options: &IterationOption) -> Vec<K
         db.cache_range(&gte, &lte)
     };
 
-    let mut results = vec![];
-    for kv in cached {
-        results.push(kv);
+    sort_kv_pair(&mut cached, options.reverse);
+    if options.limit != -1 && cached.len() > options.limit as usize {
+        cached = cached[..options.limit as usize].to_vec();
     }
 
-    sort_kv_pair(&mut results, options.reverse);
-    if options.limit != -1 && results.len() > options.limit as usize {
-        results = results[..options.limit as usize].to_vec();
-    }
-
-    results
+    cached
 }
 
 impl rocksdb::WriteBatchIterator for CacheData {

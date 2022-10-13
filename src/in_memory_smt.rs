@@ -91,13 +91,13 @@ impl JsFunctionContext<'_> {
         let channel = self.context.channel();
 
         thread::spawn(move || {
-            let mut update_data = UpdateData::new_from(data);
+            let update_data = UpdateData::new_from(data);
             let mut inner_smt = in_memory_smt.lock().unwrap();
 
             let mut tree =
                 SparseMerkleTree::new(&state_root, inner_smt.key_length, consts::SUBTREE_HEIGHT);
 
-            let result = tree.commit(&mut inner_smt.db, &mut update_data);
+            let result = tree.commit(&mut inner_smt.db, &update_data);
 
             channel.send(move |mut ctx| {
                 let callback = callback.into_inner(&mut ctx);
@@ -197,10 +197,10 @@ impl JsFunctionContext<'_> {
                 .to_vec();
             sibling_hashes.push(sibling_hash);
         }
-        let mut queries: Vec<QueryProof> = vec![];
         let raw_queries = raw_proof
             .get::<JsArray, _, _>(&mut self.context, "queries")?
             .to_vec(&mut self.context)?;
+        let mut queries: Vec<QueryProof> = Vec::with_capacity(raw_queries.len());
         for key in raw_queries.iter() {
             let obj = key.downcast_or_throw::<JsObject, _>(&mut self.context)?;
             let key = obj

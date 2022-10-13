@@ -9,7 +9,9 @@ use crate::consts::PREFIX_BRANCH_HASH;
 
 const PREFIX_SIZE: usize = 6;
 
-pub type NestedVec = Vec<Vec<u8>>;
+pub type NestedVecGeneric<T> = Vec<Vec<T>>;
+pub type NestedVec = NestedVecGeneric<u8>;
+pub type NestedVecOfSlices<'a> = NestedVecGeneric<&'a [u8]>;
 pub type SharedNestedVec<'a> = Vec<&'a [u8]>;
 pub type Cache = HashMap<Vec<u8>, Vec<u8>>;
 pub type VecOption = Option<Vec<u8>>;
@@ -57,7 +59,6 @@ pub enum HashKind {
     Key,
     Value,
     Branch,
-    Empty,
 }
 
 #[derive(Clone, Debug)]
@@ -199,7 +200,7 @@ impl From<BlockHeight> for usize {
 impl Default for SubtreeHeight {
     #[inline]
     fn default() -> Self {
-        SubtreeHeight(SubtreeHeightKind::Eight)
+        SubtreeHeight(SubtreeHeightKind::Four)
     }
 }
 
@@ -246,7 +247,6 @@ impl HashWithKind for Vec<u8> {
                 hasher.update(PREFIX_BRANCH_HASH);
                 hasher.update(self);
             },
-            HashKind::Empty => {},
         };
         let result = hasher.finalize();
         if kind == HashKind::Key {

@@ -19,8 +19,6 @@ mod state_writer;
 mod types;
 mod utils;
 
-extern crate tempdir;
-
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function(

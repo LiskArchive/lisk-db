@@ -1,8 +1,10 @@
-use crate::consts;
-use crate::options;
 use std::cmp;
 
-use crate::types::{HashKind, HashWithKind};
+use bitvec::prelude::*;
+
+use crate::consts;
+use crate::options;
+use crate::smt::EMPTY_HASH;
 
 pub fn get_iteration_mode<'a>(
     options: &options::IterationOption,
@@ -103,7 +105,7 @@ pub fn is_bytes_equal(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn is_empty_hash(a: &[u8]) -> bool {
-    compare(a, &vec![].hash_with_kind(HashKind::Empty)) == cmp::Ordering::Equal
+    compare(a, &EMPTY_HASH) == cmp::Ordering::Equal
 }
 
 pub fn is_bools_equal(a: &[bool], b: &[bool]) -> bool {
@@ -136,13 +138,10 @@ pub fn bools_to_bytes(a: &[bool]) -> Vec<u8> {
 }
 
 pub fn bytes_to_bools(a: &[u8]) -> Vec<bool> {
-    let mut result = vec![false; a.len() * 8];
-    for (i, x) in a.iter().enumerate() {
-        for j in 0..8 {
-            result[8 * i + j] = (x << j) & 0x80 == 0x80;
-        }
-    }
-    result
+    a.view_bits::<Msb0>()
+        .iter()
+        .by_vals()
+        .collect::<Vec<bool>>()
 }
 
 pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {
