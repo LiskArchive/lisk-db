@@ -301,6 +301,7 @@ impl StateDB {
 
                                 queries.set(&mut ctx, i as u32, obj)?;
                             }
+                            obj.set(&mut ctx, "queries", queries)?;
                             vec![ctx.null().upcast(), obj.upcast()]
                         },
                         Err(err) => vec![ctx.error(err.to_string())?.upcast()],
@@ -358,6 +359,7 @@ impl StateDB {
             })
             .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
+
     fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
         let raw_proof = ctx.argument::<JsObject>(2)?;
         let raw_sibling_hashes = raw_proof
@@ -888,12 +890,9 @@ impl StateDB {
 
         let input = ctx.argument::<JsArray>(1)?.to_vec(&mut ctx)?;
         let mut queries = NestedVec::new();
-        for key in input.iter() {
-            let obj = key.downcast_or_throw::<JsObject, _>(&mut ctx)?;
-            let key = obj
-                .get::<JsTypedArray<u8>, _, _>(&mut ctx, "key")?
-                .as_slice(&ctx)
-                .to_vec();
+        for item in input.iter() {
+            let obj = item.downcast_or_throw::<JsTypedArray<u8>, _>(&mut ctx)?;
+            let key = obj.as_slice(&ctx).to_vec();
             queries.push(key);
         }
 
@@ -913,7 +912,7 @@ impl StateDB {
 
         let proof = Self::proof(&mut ctx)?;
         let parsed_query_keys = Self::parse_query_keys(&mut ctx)?;
-        let cb = ctx.argument::<JsFunction>(4)?.root(&mut ctx);
+        let cb = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
         let channel = ctx.channel();
 
         thread::spawn(move || {

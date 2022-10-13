@@ -1241,9 +1241,10 @@ impl SparseMerkleTree {
 
         if d.current_node.kind == NodeKind::Leaf {
             ancestor_hashes.push_back(d.current_node.hash.value_as_vec());
+            let key_length: usize = self.key_length.into();
             let pair = Arc::new(KVPair::new(
                 &d.current_node.key,
-                &d.current_node.hash.key()[PREFIX_LEAF_HASH.len() + HASH_SIZE..],
+                &d.current_node.hash.key()[PREFIX_LEAF_HASH.len() + key_length..],
             ));
             return Ok(QueryProofWithProof::new_with_pair(
                 pair,

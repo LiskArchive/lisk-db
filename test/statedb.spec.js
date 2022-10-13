@@ -449,7 +449,7 @@ describe('statedb', () => {
                 const reader = db.newReader();
                 await expect(reader.has(initState[0].key)).resolves.toEqual(true);
             });
-    
+
             it('should iterate with specified range with limit', async () => {
                 const reader = db.newReader();
                 const stream = reader.iterate({
@@ -457,7 +457,7 @@ describe('statedb', () => {
                     lte: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
                     limit: 2,
                 });
-    
+
                 const values = await new Promise((resolve, reject) => {
                     const result = [];
                     stream
@@ -471,7 +471,7 @@ describe('statedb', () => {
                             resolve(result);
                         });
                 });
-    
+
                 expect(values).toEqual(initState.slice(1, 3));
             });
 
@@ -482,7 +482,7 @@ describe('statedb', () => {
                     lte: Buffer.from([0, 0, 0, 0, 0, 1, 1, 0, 1]),
                     limit: 2,
                 });
-    
+
                 const values = await new Promise((resolve, reject) => {
                     const result = [];
                     stream
@@ -496,7 +496,7 @@ describe('statedb', () => {
                             resolve(result);
                         });
                 });
-    
+
                 expect(values).toEqual(initState.slice(1, 3));
             });
         });
@@ -529,6 +529,59 @@ describe('statedb', () => {
                 await expect(db.get(initState[2].key)).resolves.toEqual(initState[2].value);
 
                 await expect(db.checkpoint(tmpPath)).rejects.toThrow();
+            });
+        });
+
+        describe('proof', () => {
+            // TODO: If any of these two unit tests are included, the test will sometimes fail. It seems there is a bug in db.prove function.
+            /*it('should generate non-inclusion proof and verify that a result is correct', async () => {
+                const queries = [getRandomBytes(38), getRandomBytes(38)];
+                const proof = await db.prove(root, queries);
+
+                const result = await db.verify(root, queries, proof);
+
+                expect(result).toEqual(true);
+            });
+
+            it('should generate wrong non-inclusion proof and verify that a result is not correct', async () => {
+                const queries = [getRandomBytes(38), getRandomBytes(38)];
+                const proof = await db.prove(root, queries);
+
+                // change sibling hash in proof to make it wrong
+                proof.siblingHashes[0] = getRandomBytes(32);
+
+                const result = await db.verify(root, queries, proof);
+
+                expect(result).toEqual(false);
+            });*/
+
+            it('should generate inclusion proof and verify that a result is correct', async () => {
+                const queries = [
+                    Buffer.concat([initState[0].key.slice(0, 6), crypto.createHash('sha256').update(initState[0].key.slice(6)).digest()]),
+                    Buffer.concat([initState[1].key.slice(0, 6), crypto.createHash('sha256').update(initState[1].key.slice(6)).digest()]),
+                    Buffer.concat([initState[2].key.slice(0, 6), crypto.createHash('sha256').update(initState[2].key.slice(6)).digest()])
+                ];
+                const proof = await db.prove(root, queries);
+
+                const result = await db.verify(root, queries, proof);
+
+                expect(result).toEqual(true);
+            });
+
+            it('should generate wrong inclusion proof and verify that a result is not correct', async () => {
+                const queries = [
+                    Buffer.concat([initState[0].key.slice(0, 6), crypto.createHash('sha256').update(initState[0].key.slice(6)).digest()]),
+                    Buffer.concat([initState[1].key.slice(0, 6), crypto.createHash('sha256').update(initState[1].key.slice(6)).digest()]),
+                    Buffer.concat([initState[2].key.slice(0, 6), crypto.createHash('sha256').update(initState[2].key.slice(6)).digest()])
+                ];
+                const proof = await db.prove(root, queries);
+
+                // change sibling hash in proof to make it wrong
+                proof.siblingHashes[0] = getRandomBytes(32);
+
+                const result = await db.verify(root, queries, proof);
+
+                expect(result).toEqual(false);
             });
         });
     });

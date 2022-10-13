@@ -37,7 +37,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 
     cx.export_function(
         "batch_new",
-        batch::WriteBatch::js_new_with_arc_mutx::<batch::WriteBatch>,
+        batch::WriteBatch::js_new_with_arc_mutex::<batch::WriteBatch>,
     )?;
     cx.export_function("batch_set", batch::WriteBatch::js_set)?;
     cx.export_function("batch_del", batch::WriteBatch::js_del)?;
@@ -79,7 +79,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 
     cx.export_function(
         "state_writer_new",
-        state_writer::StateWriter::js_new_with_arc_mutx::<state_writer::StateWriter>,
+        state_writer::StateWriter::js_new_with_arc_mutex::<state_writer::StateWriter>,
     )?;
     cx.export_function(
         "state_writer_snapshot",
@@ -101,7 +101,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 
     cx.export_function(
         "in_memory_smt_new",
-        in_memory_smt::InMemorySMT::js_new_with_arc_mutx::<in_memory_smt::InMemorySMT>,
+        in_memory_smt::InMemorySMT::js_new_with_arc_mutex::<in_memory_smt::InMemorySMT>,
     )?;
     cx.export_function(
         "in_memory_smt_update",
