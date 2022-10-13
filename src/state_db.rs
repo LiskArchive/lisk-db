@@ -371,7 +371,7 @@ impl StateDB {
                     .as_slice(ctx)
                     .to_vec())
             })
-            .collect::<NeonResult<Vec<Vec<u8>>>>()?;
+            .collect::<NeonResult<NestedVec>>()?;
 
         let raw_queries = raw_proof
             .get::<JsArray, _, _>(ctx, "queries")?
@@ -413,7 +413,7 @@ impl StateDB {
                     .as_slice(ctx)
                     .to_vec())
             })
-            .collect::<NeonResult<Vec<Vec<u8>>>>()?;
+            .collect::<NeonResult<NestedVec>>()?;
 
         Ok(parsed_query_keys)
     }

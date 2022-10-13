@@ -9,7 +9,9 @@ use crate::consts::PREFIX_BRANCH_HASH;
 
 const PREFIX_SIZE: usize = 6;
 
-pub type NestedVec = Vec<Vec<u8>>;
+pub type NestedVecGeneric<T> = Vec<Vec<T>>;
+pub type NestedVec = NestedVecGeneric<u8>;
+pub type NestedVecOfSlices<'a> = NestedVecGeneric<&'a [u8]>;
 pub type SharedNestedVec<'a> = Vec<&'a [u8]>;
 pub type Cache = HashMap<Vec<u8>, Vec<u8>>;
 pub type VecOption = Option<Vec<u8>>;

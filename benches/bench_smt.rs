@@ -32,8 +32,8 @@ fn get_data() -> UpdateData {
     data
 }
 
-fn get_query_keys() -> Vec<Vec<u8>> {
-    let mut query_keys: Vec<Vec<u8>> = vec![];
+fn get_query_keys() -> NestedVec {
+    let mut query_keys: NestedVec = vec![];
 
     for i in 0..QUERY_LEN {
         let mut hasher = Sha256::new();

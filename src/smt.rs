@@ -9,7 +9,8 @@ use crate::common_db::Actions;
 use crate::consts::PREFIX_BRANCH_HASH;
 use crate::types::{
     ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
-    SharedKVPair, SharedNestedVec, SharedVec, StructurePosition, SubtreeHeight, VecOption,
+    NestedVecOfSlices, SharedKVPair, SharedNestedVec, SharedVec, StructurePosition, SubtreeHeight,
+    VecOption,
 };
 use crate::utils;
 
@@ -730,7 +731,7 @@ impl SubTree {
 
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
-        let node_hashes: Vec<Vec<u8>> = self
+        let node_hashes: NestedVec = self
             .nodes
             .iter()
             .map(|n| n.lock().unwrap().hash.key_as_vec())
@@ -905,8 +906,8 @@ impl SparseMerkleTree {
         value_bin: &'a [&'a [u8]],
         height: Height,
     ) -> Result<Bins<'a>, SMTError> {
-        let mut keys: Vec<Vec<&[u8]>> = vec![vec![]; self.max_number_of_nodes];
-        let mut values: Vec<Vec<&[u8]>> = vec![vec![]; self.max_number_of_nodes];
+        let mut keys: NestedVecOfSlices = vec![vec![]; self.max_number_of_nodes];
+        let mut values: NestedVecOfSlices = vec![vec![]; self.max_number_of_nodes];
 
         let b = height.div_to_usize(8);
         for i in 0..key_bin.len() {
