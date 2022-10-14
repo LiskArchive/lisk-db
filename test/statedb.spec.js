@@ -533,8 +533,7 @@ describe('statedb', () => {
         });
 
         describe('proof', () => {
-            // TODO: If any of these two unit tests are included, the test will sometimes fail. It seems there is a bug in db.prove function.
-            /*it('should generate non-inclusion proof and verify that a result is correct', async () => {
+            it('should generate non-inclusion proof and verify that a result is correct', async () => {
                 const queries = [getRandomBytes(38), getRandomBytes(38)];
                 const proof = await db.prove(root, queries);
 
@@ -553,7 +552,7 @@ describe('statedb', () => {
                 const result = await db.verify(root, queries, proof);
 
                 expect(result).toEqual(false);
-            });*/
+            });
 
             it('should generate inclusion proof and verify that a result is correct', async () => {
                 const queries = [

@@ -150,10 +150,10 @@ class StateReadWriter {
         const defaultOptions = getOptionsWithDefault(options);
         const result = await new Promise((resolve, reject) => {
             state_db_range_with_writer.call(this._db, this.writer, defaultOptions, (err, result) => {
-            if (err) {
-                return reject(err);
-            }
-            resolve(result);
+                if (err) {
+                    return reject(err);
+                }
+                resolve(result);
             });
         });
         result.sort((a, b) => {
@@ -268,6 +268,13 @@ class StateDB {
             state_db_prove.call(this._db, root, queries, (err, result) => {
                 if (err) {
                     return reject(err);
+                }
+                // If result is empty, force to use different memory space from what's given from binding
+                // Issue: https://github.com/nodejs/node/issues/32463
+                for (const query of result.queries) {
+                    if (query.value.length === 0) {
+                        query.value = Buffer.alloc(0);
+                    }
                 }
                 resolve(result);
             });
