@@ -1204,14 +1204,14 @@ impl SparseMerkleTree {
         query_key: &[u8],
         height: Height,
     ) -> Result<(SharedNode, Height), SMTError> {
-        let mut bin_offset = 0;
+        let mut bin_offset: usize = 0;
         let mut current_node: Option<SharedNode> = None;
-        let bin_idx = self.find_index(query_key, height)?;
+        let bin_idx: usize = self.find_index(query_key, height)?.into();
         let mut h = 0;
         for i in 0..current_subtree.nodes.len() {
             h = current_subtree.structure[i];
             current_node = Some(Arc::clone(&current_subtree.nodes[i]));
-            let new_offset = 1 << (self.subtree_height.sub_to_usize(h));
+            let new_offset: usize = 1 << (self.subtree_height.sub_to_usize(h));
             if bin_offset <= bin_idx && bin_idx < bin_offset + new_offset {
                 break;
             }
