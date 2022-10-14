@@ -1,114 +1,19 @@
-use std::cell::RefCell;
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::thread;
 
-use neon::context::{Context, FunctionContext};
+use neon::context::Context;
 use neon::event::Channel;
 use neon::handle::{Handle, Root};
-use neon::result::JsResult;
-use neon::types::{Finalize, JsBox, JsBuffer, JsFunction, JsNumber, JsString, JsValue};
+use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
 use rocksdb::checkpoint::Checkpoint;
 
-use crate::consts;
-use crate::options::DbMessage;
-use crate::types::{ArcMutex, DbOptions, KVPair, KeyLength, VecOption};
-
-pub type JsBoxRef<T> = JsBox<RefCell<T>>;
-pub type JsArcMutex<T> = JsBoxRef<ArcMutex<T>>;
-
-// Kind represented the kind of the database
-#[derive(PartialEq, Eq)]
-pub enum Kind {
-    Normal,
-    State,
-    StateWriter,
-    Batch,
-    InMemorySMT,
-}
+use crate::db::traits::NewDBWithContext;
+use crate::db::types::{DbMessage, DbOptions, Kind};
 
 pub struct DB {
     tx: mpsc::Sender<DbMessage>,
     db_kind: Kind,
-}
-
-pub trait Actions {
-    fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error>;
-    fn set(&mut self, pair: &KVPair) -> Result<(), rocksdb::Error>;
-    fn del(&mut self, key: &[u8]) -> Result<(), rocksdb::Error>;
-}
-
-pub trait NewDBWithKeyLength {
-    fn new_db_with_key_length(len: Option<KeyLength>) -> Self;
-}
-
-pub trait DatabaseKind {
-    fn db_kind() -> Kind;
-}
-
-pub trait OptionsWithContext {
-    fn new_with_context<'a, C>(
-        ctx: &mut C,
-        input: Option<Handle<JsValue>>,
-    ) -> Result<DbOptions, neon::result::Throw>
-    where
-        C: Context<'a>,
-        Self: Sized;
-}
-
-pub trait NewDBWithContext {
-    fn new_db_with_context<'a, C>(
-        ctx: &mut C,
-        path: String,
-        opts: DbOptions,
-        db_kind: Kind,
-    ) -> Result<Self, rocksdb::Error>
-    where
-        C: Context<'a>,
-        Self: Sized;
-}
-
-pub trait JsNewWithBoxRef {
-    fn js_new_with_box_ref<T: OptionsWithContext, U: NewDBWithContext + Send + Finalize>(
-        mut ctx: FunctionContext,
-    ) -> JsResult<JsBoxRef<U>> {
-        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let options = ctx.argument_opt(1);
-        let db_opts = T::new_with_context(&mut ctx, options)?;
-        let db = U::new_db_with_context(&mut ctx, path, db_opts, Kind::State)
-            .or_else(|err| ctx.throw_error(&err))?;
-        let ref_db = RefCell::new(db);
-
-        return Ok(ctx.boxed(ref_db));
-    }
-}
-
-pub trait JsNewWithBox {
-    fn js_new_with_box<T: OptionsWithContext, U: NewDBWithContext + Finalize + Send>(
-        mut ctx: FunctionContext,
-    ) -> JsResult<JsBox<U>> {
-        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let options = ctx.argument_opt(1);
-        let db_opts = T::new_with_context(&mut ctx, options)?;
-        let db = U::new_db_with_context(&mut ctx, path, db_opts, Kind::Normal)
-            .or_else(|err| ctx.throw_error(&err))?;
-
-        return Ok(ctx.boxed(db));
-    }
-}
-
-pub trait JsNewWithArcMutex {
-    fn js_new_with_arc_mutex<T: NewDBWithKeyLength + Send + Finalize + DatabaseKind>(
-        mut ctx: FunctionContext,
-    ) -> JsResult<JsArcMutex<T>> {
-        let key_length = if T::db_kind() == Kind::InMemorySMT {
-            Some(ctx.argument::<JsNumber>(0)?.value(&mut ctx).into())
-        } else {
-            None
-        };
-        let ref_tree = RefCell::new(Arc::new(Mutex::new(T::new_db_with_key_length(key_length))));
-        return Ok(ctx.boxed(ref_tree));
-    }
+    db: Arc<rocksdb::DB>,
 }
 
 impl NewDBWithContext for DB {
@@ -129,39 +34,37 @@ impl NewDBWithContext for DB {
         let mut option = rocksdb::Options::default();
         option.create_if_missing(true);
 
-        let mut opened: rocksdb::DB;
-        if opts.is_readonly() {
-            opened = rocksdb::DB::open_for_read_only(&option, path, false)?;
+        let db: rocksdb::DB = if opts.is_readonly() {
+            rocksdb::DB::open_for_read_only(&option, path, false)?
         } else {
-            opened = rocksdb::DB::open(&option, path)?;
-        }
+            rocksdb::DB::open(&option, path)?
+        };
 
         thread::spawn(move || {
             while let Ok(message) = rx.recv() {
                 match message {
                     DbMessage::Callback(f) => {
-                        f(&mut opened, &channel);
+                        f(&channel);
                     },
                     DbMessage::Close => return,
                 }
             }
         });
 
-        Ok(Self { tx, db_kind })
-    }
-}
-
-impl Kind {
-    pub fn key(&self, key: Vec<u8>) -> Vec<u8> {
-        match self {
-            Kind::State => [consts::Prefix::STATE, &key].concat(),
-            _ => key,
-        }
+        Ok(Self::new(db, tx, db_kind))
     }
 }
 
 impl Finalize for DB {}
 impl DB {
+    pub fn new(db: rocksdb::DB, tx: mpsc::Sender<DbMessage>, db_kind: Kind) -> Self {
+        Self {
+            tx,
+            db_kind,
+            db: Arc::new(db),
+        }
+    }
+
     // Idiomatic rust would take an owned `self` to prevent use after close
     // However, it's not possible to prevent JavaScript from continuing to hold a closed database
     pub fn close(&self) -> Result<(), mpsc::SendError<DbMessage>> {
@@ -170,7 +73,7 @@ impl DB {
 
     pub fn send(
         &self,
-        callback: impl FnOnce(&mut rocksdb::DB, &Channel) + Send + 'static,
+        callback: impl FnOnce(&Channel) + Send + 'static,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         self.tx.send(DbMessage::Callback(Box::new(callback)))
     }
@@ -181,9 +84,8 @@ impl DB {
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key = self.db_kind.key(key);
-        self.send(move |conn, channel| {
-            let result = conn.get(&key);
-
+        let result = self.db.get(&key);
+        self.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -209,13 +111,12 @@ impl DB {
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key = self.db_kind.key(key);
-        self.send(move |conn, channel| {
-            let result = if conn.key_may_exist(&key) {
-                conn.get(&key).map(|res| res.is_some())
-            } else {
-                Ok(false)
-            };
-
+        let result = if self.db.key_may_exist(&key) {
+            self.db.get(&key).map(|res| res.is_some())
+        } else {
+            Ok(false)
+        };
+        self.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -239,8 +140,9 @@ impl DB {
         path: String,
         cb: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
-        self.send(move |conn, channel| {
-            let result = Checkpoint::new(conn);
+        let conn = Arc::clone(&self.db);
+        self.send(move |channel| {
+            let result = Checkpoint::new(&conn);
 
             if result.is_err() {
                 let err = result.err().unwrap();
@@ -272,5 +174,76 @@ impl DB {
                 });
             }
         })
+    }
+
+    pub fn arc_clone(&self) -> Arc<rocksdb::DB> {
+        Arc::clone(&self.db)
+    }
+
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), rocksdb::Error> {
+        self.db.put(key, value)
+    }
+
+    pub fn delete(&self, key: &[u8]) -> Result<(), rocksdb::Error> {
+        self.db.delete(key)
+    }
+
+    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, rocksdb::Error> {
+        self.db.get(key)
+    }
+
+    pub fn write(&self, batch: rocksdb::WriteBatch) -> Result<(), rocksdb::Error> {
+        self.db.write(batch)
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        self.db.path()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use tempdir::TempDir;
+
+    use crate::types::KVPair;
+
+    use super::*;
+
+    fn temp_db() -> DB {
+        let temp_dir = TempDir::new("test_db").unwrap();
+        let rocks_db = rocksdb::DB::open_default(&temp_dir).unwrap();
+        let (tx, _) = mpsc::channel::<DbMessage>();
+        DB::new(rocks_db, tx, Kind::Normal)
+    }
+
+    #[test]
+    fn test_put_get_delete() {
+        let db = temp_db();
+        let key = &[1, 2, 3, 4];
+        let value = &[5, 6, 7, 8];
+        db.put(key, value).unwrap();
+        assert_eq!(db.get(key).unwrap().unwrap(), value);
+
+        db.delete(key).unwrap();
+        assert_eq!(db.get(key).unwrap(), None);
+    }
+
+    #[test]
+    fn test_write_batch() {
+        let db = temp_db();
+        let pairs: Vec<KVPair> = vec![
+            KVPair(vec![], vec![]),
+            KVPair(vec![1, 2, 3, 4], vec![4, 5, 6, 7]),
+            KVPair(vec![1, 1, 2, 3], vec![5, 8, 13, 21]),
+        ];
+        let mut batch = rocksdb::WriteBatch::default();
+        for pair in &pairs {
+            batch.put(pair.key(), pair.value());
+        }
+        db.write(batch).unwrap();
+        for pair in pairs {
+            assert_eq!(db.get(pair.key()).unwrap().unwrap(), pair.value());
+        }
     }
 }

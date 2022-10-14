@@ -4,10 +4,9 @@ use std::thread;
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
-use crate::common_db::{
-    DatabaseKind, JsArcMutex, JsNewWithArcMutex, Kind as DBKind, NewDBWithKeyLength,
-};
 use crate::consts;
+use crate::db::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
+use crate::db::types::{JsArcMutex, Kind as DBKind};
 use crate::smt::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::smt_db;
 use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};

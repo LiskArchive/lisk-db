@@ -27,12 +27,19 @@ const {
     state_db_clean_diff_until,
     state_db_checkpoint,
     state_writer_new,
-    state_db_js_upsert_key_with_writer,
-    state_db_js_delete_key_with_writer,
-    state_db_js_get_key_with_writer,
-    state_db_range_with_writer,
     state_writer_snapshot,
     state_writer_restore_snapshot,
+    state_db_reader_new,
+    state_db_reader_close,
+    state_db_reader_get,
+    state_db_reader_exists,
+    state_db_reader_iterate,
+    state_db_read_writer_new,
+    state_db_read_writer_close,
+    state_db_read_writer_upsert_key,
+    state_db_read_writer_get_key,
+    state_db_read_writer_delete,
+    state_db_read_writer_range,
 } = require("./bin-package/index.node");
 
 const { NotFoundError } = require('./error');
@@ -41,12 +48,16 @@ const { getOptionsWithDefault } = require('./options');
 
 class StateReader {
     constructor(db) {
-        this._db = db;
+        this._db = state_db_reader_new(db);
+    }
+
+    destructor() {
+        state_db_reader_close.call(this._db);
     }
 
     async get(key) {
         return new Promise((resolve, reject) => {
-            state_db_get.call(this._db, key, (err, result) => {
+            state_db_reader_get.call(this._db, key, (err, result) => {
                 if (err) {
                     if (err.message === 'No data') {
                         return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
@@ -66,7 +77,7 @@ class StateReader {
 
     async has(key) {
         return new Promise((resolve, reject) => {
-            state_db_exists.call(this._db, key, (err, result) => {
+            state_db_reader_exists.call(this._db, key, (err, result) => {
                 if (err) {
                     return reject(err);
                 }
@@ -76,18 +87,22 @@ class StateReader {
     }
 
     iterate(options = {}) {
-        return new Iterator(this._db, state_db_iterate, getOptionsWithDefault(options));
+        return new Iterator(this._db, state_db_reader_iterate, getOptionsWithDefault(options));
     }
 
     createReadStream(options = {}) {
-        return new Iterator(this._db, state_db_iterate, getOptionsWithDefault(options));
+        return new Iterator(this._db, state_db_reader_iterate, getOptionsWithDefault(options));
     }
 }
 
 class StateReadWriter {
     constructor(db) {
-        this._db = db;
+        this._db = state_db_read_writer_new(db);
         this._writer = state_writer_new();
+    }
+
+    destructor() {
+        state_db_read_writer_close.call(this._db);
     }
 
     get writer() {
@@ -96,8 +111,11 @@ class StateReadWriter {
 
     async get(key) {
         const value = await new Promise((resolve, reject) => {
-            state_db_js_get_key_with_writer.call(this._db, this.writer, key, (err, result) => {
+            state_db_read_writer_get_key.call(this._db, this.writer, key, (err, result) => {
                 if (err) {
+                    if (err.message === 'No data') {
+                        return reject(new NotFoundError(`Key ${key.toString('hex')} does not exist.`));
+                    }
                     return reject(err);
                 }
                 // If result is empty, force to use different memory space from what's given from binding
@@ -126,7 +144,7 @@ class StateReadWriter {
 
     async set(key, value) {
         await new Promise((resolve, reject) => {
-            state_db_js_upsert_key_with_writer.call(this._db, this.writer, key, value, (err, result) => {
+            state_db_read_writer_upsert_key.call(this._db, this.writer, key, value, (err, result) => {
                 if (err) {
                     return reject(err);
                 }
@@ -137,7 +155,7 @@ class StateReadWriter {
 
     async del(key) {
         await new Promise((resolve, reject) => {
-            state_db_js_delete_key_with_writer.call(this._db, this.writer, key, (err, result) => {
+            state_db_read_writer_delete.call(this._db, this.writer, key, (err, result) => {
                 if (err) {
                     return reject(err);
                 }
@@ -149,7 +167,7 @@ class StateReadWriter {
     async range(options = {}) {
         const defaultOptions = getOptionsWithDefault(options);
         const result = await new Promise((resolve, reject) => {
-            state_db_range_with_writer.call(this._db, this.writer, defaultOptions, (err, result) => {
+            state_db_read_writer_range.call(this._db, this.writer, defaultOptions, (err, result) => {
                 if (err) {
                     return reject(err);
                 }

@@ -242,6 +242,42 @@ describe('statedb', () => {
             });
         });
 
+        describe('should not have same values for a snapshot and main db after commit or revert', () => {
+            it('check commit and then revert also check reader and readWriter after those functions', async () => {
+                const writer = db.newReadWriter();
+                const newValue = getRandomBytes();
+                await writer.set(initState[0].key, newValue);
+
+                const nextRoot = await db.commit(writer, 1, root);
+                await expect(writer.get(initState[0].key)).resolves.toEqual(newValue);
+                const afterCommit = await db.getCurrentState();
+                expect(afterCommit.version).toEqual(1);
+                const reader = db.newReader();
+                await expect(reader.get(initState[0].key)).resolves.toEqual(newValue);
+                expect(afterCommit.root).toEqual(nextRoot);
+                await expect(db.get(initState[0].key)).resolves.toEqual(newValue);
+
+                await db.revert(nextRoot, 1);
+                const afterRevert = await db.getCurrentState();
+                expect(afterRevert.version).toEqual(0);
+                // old reader and old writer should have the newValue
+                await expect(reader.get(initState[0].key)).resolves.toEqual(newValue);
+                await expect(writer.get(initState[0].key)).resolves.toEqual(newValue);
+                await expect(writer.has(initState[0].key)).resolves.toEqual(true);
+                await expect(writer.has(getRandomBytes())).resolves.toEqual(false);
+                expect(afterRevert.root).toEqual(root);
+                await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                // newReader should have the old value
+                const newReader = db.newReader();
+                await expect(newReader.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                // newWriter should have the old value
+                const newWriter = db.newReadWriter();
+                await expect(newWriter.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                reader.destructor();
+                writer.destructor();
+            });
+        });
+
         describe('commit', () => {
             it('should not update state if readonly is specified', async () => {
                 const writer = db.newReadWriter();

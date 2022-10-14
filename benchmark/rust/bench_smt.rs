@@ -1,13 +1,16 @@
 use std::error::Error;
+use std::sync::mpsc;
 
 use rocksdb::{Options, DB};
 use tempdir::TempDir;
 
 use lisk_db::batch::PrefixWriteBatch;
 use lisk_db::consts;
+use lisk_db::db::types::{DbMessage, Kind};
+use lisk_db::db::DB as LDB;
 use lisk_db::smt::{SparseMerkleTree, UpdateData};
 use lisk_db::smt_db;
-use lisk_db::{Cache, KeyLength, NestedVec, SharedKVPair};
+use lisk_db::types::{Cache, KeyLength, NestedVec, SharedKVPair};
 
 const KEYS: [&str; 90] = [
     "58f7b0780592032e4d8602a3e8690fb2c701b2e1dd546e703445aabd6469734d",
@@ -224,7 +227,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         let rocks_db = DB::open(&opts, temp_dir.path())?;
-        let mut db = smt_db::SmtDB::new(&rocks_db);
+        let (tx, _) = mpsc::channel::<DbMessage>();
+        let common_db = LDB::new(rocks_db, tx, Kind::Normal);
+        let mut db = smt_db::SmtDB::new(&common_db);
 
         let root = tree.commit(&mut db, &data)?;
 
@@ -232,7 +237,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut write_batch = PrefixWriteBatch::new();
         write_batch.set_prefix(&consts::Prefix::SMT);
         db.batch.iterate(&mut write_batch);
-        rocks_db.write(write_batch.batch)?;
+        common_db.write(write_batch.batch)?;
 
         let proof = tree.prove(
             &mut db,

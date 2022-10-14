@@ -8,20 +8,23 @@ use neon::types::buffer::TypedArray;
 use thiserror::Error;
 
 use crate::batch;
-use crate::common_db::{JsBoxRef, JsNewWithBoxRef, Kind as DBKind, NewDBWithContext, DB};
 use crate::consts;
+use crate::db::options;
+use crate::db::traits::{JsNewWithBoxRef, NewDBWithContext};
+use crate::db::types::{DbMessage, DbOptions, JsBoxRef, Kind};
+use crate::db::utils as DbUtils;
+use crate::db::utils::pair_to_js_object;
+use crate::db::DB;
 use crate::diff;
-use crate::options;
 use crate::smt::{self, EMPTY_HASH};
 use crate::smt_db;
 use crate::state_writer;
 use crate::types::{
-    ArcMutex, BlockHeight, Cache, CommitOptions, DbOptions, KVPair, KeyLength, NestedVec,
-    SharedKVPair, SharedVec,
+    ArcMutex, BlockHeight, CommitOptions, KVPair, KeyLength, NestedVec, SharedVec,
 };
 use crate::utils;
 
-type SharedStateDB = JsBoxRef<StateDB>;
+pub type SharedStateDB = JsBoxRef<StateDB>;
 
 #[derive(Error, Debug)]
 pub enum DataStoreError {
@@ -102,7 +105,7 @@ impl NewDBWithContext for StateDB {
         ctx: &mut C,
         path: String,
         db_options: DbOptions,
-        k: DBKind,
+        k: Kind,
     ) -> Result<Self, rocksdb::Error>
     where
         C: Context<'a>,
@@ -118,7 +121,7 @@ impl JsNewWithBoxRef for StateDB {}
 impl Finalize for StateDB {}
 impl StateDB {
     fn get_revert_result(
-        conn: &rocksdb::DB,
+        conn: &DB,
         version: BlockHeight,
         state_root: &[u8],
         key_length: KeyLength,
@@ -159,16 +162,17 @@ impl StateDB {
         version: BlockHeight,
         state_root: Vec<u8>,
         cb: Root<JsFunction>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+    ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key_length = self.options.key_length();
-        self.common.send(move |conn, channel| {
-            let result = StateDB::get_revert_result(conn, version, &state_root, key_length);
-            if result.is_ok() {
-                let value = (**result.as_ref().unwrap().lock().unwrap()).clone();
-                let state_info = CurrentState::new(&value, version.sub(1));
-                conn.put(consts::Prefix::CURRENT_STATE, state_info.to_bytes())
-                    .expect("Update state info should not be failed");
-            }
+        let result = StateDB::get_revert_result(&self.common, version, &state_root, key_length);
+        if result.is_ok() {
+            let value = (**result.as_ref().unwrap().lock().unwrap()).clone();
+            let state_info = CurrentState::new(&value, version - BlockHeight(1));
+            self.common
+                .put(consts::Prefix::CURRENT_STATE, &state_info.to_bytes())
+                .expect("Update state info should not be failed");
+        }
+        self.common.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -188,7 +192,7 @@ impl StateDB {
     }
 
     fn handle_commit_result(
-        conn: &rocksdb::DB,
+        conn: &DB,
         smtdb: &smt_db::SmtDB,
         writer: MutexGuard<state_writer::StateWriter>,
         info: CommitResultInfo,
@@ -224,7 +228,7 @@ impl StateDB {
             Ok(_) => {
                 let value = (**root.as_ref().lock().unwrap()).clone();
                 let state_info = CurrentState::new(&value, version);
-                conn.put(consts::Prefix::CURRENT_STATE, state_info.to_bytes())
+                conn.put(consts::Prefix::CURRENT_STATE, &state_info.to_bytes())
                     .expect("Update state info should not be failed");
                 Ok(root)
             },
@@ -237,18 +241,17 @@ impl StateDB {
         writer: ArcMutex<state_writer::StateWriter>,
         d: CommitData,
         cb: Root<JsFunction>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
+    ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key_length = self.options.key_length();
-        self.common.send(move |conn, channel| {
-            let w = writer.lock().unwrap();
-            let data = smt::UpdateData::new_with_hash(w.get_updated());
-            let mut smtdb = smt_db::SmtDB::new(conn);
-            let mut tree =
-                smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_HEIGHT);
-            let root = tree.commit(&mut smtdb, &data);
-            let result_info = CommitResultInfo::new(root, d.data);
-            let result = StateDB::handle_commit_result(conn, &smtdb, w, result_info);
-
+        let w = writer.lock().unwrap();
+        let data = smt::UpdateData::new_with_hash(w.get_updated());
+        let mut smtdb = smt_db::SmtDB::new(&self.common);
+        let mut tree =
+            smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_HEIGHT);
+        let root = tree.commit(&mut smtdb, &data);
+        let result_info = CommitResultInfo::new(root, d.data);
+        let result = StateDB::handle_commit_result(&self.common, &smtdb, w, result_info);
+        self.common.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -274,13 +277,12 @@ impl StateDB {
         cb: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.options.key_length();
-        self.common
-            .send(move |conn, channel| {
-                let mut tree =
-                    smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_HEIGHT);
-                let mut smtdb = smt_db::SmtDB::new(conn);
-                let result = tree.prove(&mut smtdb, &queries);
+        let mut tree = smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_HEIGHT);
+        let mut smtdb = smt_db::SmtDB::new(&self.common);
+        let result = tree.prove(&mut smtdb, &queries);
 
+        self.common
+            .send(move |channel| {
                 channel.send(move |mut ctx| {
                     let callback = cb.into_inner(&mut ctx);
                     let this = ctx.undefined();
@@ -295,7 +297,7 @@ impl StateDB {
                             obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
                             let queries = ctx.empty_array();
                             for (i, v) in val.queries.iter().enumerate() {
-                                let obj = Self::pair_to_js_object(&mut ctx, &v.pair)?;
+                                let obj = pair_to_js_object(&mut ctx, &v.pair)?;
                                 let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
                                 obj.set(&mut ctx, "bitmap", bitmap)?;
 
@@ -322,11 +324,13 @@ impl StateDB {
         if version.is_equal_to(0) {
             return Ok(());
         }
+        let conn = self.common.arc_clone();
         self.common
-            .send(move |conn, channel| {
+            .send(move |channel| {
                 let zero: u32 = 0;
                 let start = [consts::Prefix::DIFF, zero.to_be_bytes().as_slice()].concat();
-                let end = [consts::Prefix::DIFF, &version.sub(1).to_be_bytes()].concat();
+                let bytes = (version - BlockHeight(1)).to_be_bytes();
+                let end = [consts::Prefix::DIFF, &bytes].concat();
                 let mut batch = rocksdb::WriteBatch::default();
 
                 let iter = conn.iterator(rocksdb::IteratorMode::From(
@@ -422,12 +426,9 @@ impl StateDB {
         Ok(parsed_query_keys)
     }
 
-    fn get_current_state(
-        &self,
-        cb: Root<JsFunction>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.common.send(move |conn, channel| {
-            let result = conn.get(consts::Prefix::CURRENT_STATE);
+    fn get_current_state(&self, cb: Root<JsFunction>) -> Result<(), mpsc::SendError<DbMessage>> {
+        let result = self.common.get(consts::Prefix::CURRENT_STATE);
+        self.common.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -455,290 +456,12 @@ impl StateDB {
         })
     }
 
-    fn parse_update_result<'a, C: Context<'a>>(
-        ctx: &mut C,
-        result: Result<(), state_writer::StateWriterError>,
-    ) -> NeonResult<Vec<Handle<'a, JsValue>>> {
-        if result.is_err() {
-            let err = result.err().unwrap().to_string();
-            Ok(vec![ctx.error(err)?.upcast()])
-        } else {
-            Ok(vec![ctx.null().upcast()])
-        }
-    }
-
-    // update or insert the pair of key and value
-    fn upsert_key(
-        &self,
-        cb: Root<JsFunction>,
-        writer: ArcMutex<state_writer::StateWriter>,
-        key: Vec<u8>,
-        new_value: Vec<u8>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let state_db_key = DBKind::State.key(key.clone());
-        self.common.send(move |conn, channel| {
-            let value = conn.get(&state_db_key);
-            channel.send(move |mut ctx| {
-                let args = {
-                    let mut writer = writer.lock().unwrap();
-                    let cached = writer.is_cached(&key);
-                    if cached {
-                        //  if the key already in cache so update it and returns
-                        let result = writer.update(&KVPair::new(&key, &new_value));
-                        Self::parse_update_result(&mut ctx, result)?
-                    } else if let Ok(value) = &value {
-                        // if found the value of the key then insert into cache and update it
-                        if value.is_some() {
-                            let temp_value = value.as_ref().unwrap().to_vec();
-                            let pair = SharedKVPair::new(&key, &temp_value);
-                            writer.cache_existing(&pair);
-                            let result = writer.update(&KVPair::new(&key, &new_value));
-                            Self::parse_update_result(&mut ctx, result)?
-                        } else {
-                            // if there is no key then make a new pair and insert into cache
-                            writer.cache_new(&SharedKVPair::new(&key, &new_value));
-                            vec![ctx.null().upcast()]
-                        }
-                    } else {
-                        let err = value.err().unwrap();
-                        vec![ctx.error(&err)?.upcast()]
-                    }
-                };
-
-                let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
-                callback.call(&mut ctx, this, args)?;
-                Ok(())
-            });
-        })
-    }
-
-    fn delete_key(
-        &self,
-        cb: Root<JsFunction>,
-        writer: ArcMutex<state_writer::StateWriter>,
-        key: Vec<u8>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let state_db_key = DBKind::State.key(key.clone());
-        self.common.send(move |conn, channel| {
-            let value = conn.get(&state_db_key);
-            channel.send(move |mut ctx| {
-                let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
-                // the following scope use to release writer at the end of it
-                {
-                    let mut writer = writer.lock().unwrap();
-                    let cached = writer.is_cached(&key);
-                    if !cached {
-                        if let Ok(value) = &value {
-                            // if found the value of the key then insert into cache
-                            if value.is_some() {
-                                let temp_value = value.as_ref().unwrap().to_vec();
-                                let pair = SharedKVPair::new(&key, &temp_value);
-                                writer.cache_existing(&pair);
-                            }
-                        } else {
-                            let err = value.err().unwrap();
-                            let args = vec![ctx.error(&err)?.upcast()];
-                            callback.call(&mut ctx, this, args)?;
-                        }
-                    }
-                    writer.delete(&key);
-                }
-                let args = vec![ctx.null().upcast()];
-                callback.call(&mut ctx, this, args)?;
-                Ok(())
-            });
-        })
-    }
-
-    fn get_key_with_writer(
-        &self,
-        cb: Root<JsFunction>,
-        writer: ArcMutex<state_writer::StateWriter>,
-        key: Vec<u8>,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        let state_db_key = DBKind::State.key(key.clone());
-        self.common.send(move |conn, channel| {
-            let value = conn.get(&state_db_key);
-            channel.send(move |mut ctx| {
-                let args = {
-                    let mut writer = writer.lock().unwrap();
-                    let (cached_value, deleted, exists) = writer.get(&key);
-                    if exists && !deleted {
-                        let buffer = JsBuffer::external(&mut ctx, cached_value);
-                        vec![ctx.null().upcast(), buffer.upcast()]
-                    } else if deleted {
-                        vec![ctx.error("No data")?.upcast()]
-                    } else if let Ok(value) = &value {
-                        // if found the value of the key then insert into cache
-                        if value.is_some() {
-                            let temp_value = value.as_ref().unwrap().to_vec();
-                            let pair = SharedKVPair::new(&key, &temp_value);
-                            writer.cache_existing(&pair);
-                            let buffer = JsBuffer::external(&mut ctx, temp_value);
-                            vec![ctx.null().upcast(), buffer.upcast()]
-                        } else {
-                            vec![ctx.error("No data")?.upcast()]
-                        }
-                    } else {
-                        let err = value.err().unwrap();
-                        vec![ctx.error(&err)?.upcast()]
-                    }
-                };
-
-                let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
-                callback.call(&mut ctx, this, args)?;
-                Ok(())
-            });
-        })
-    }
-
-    fn cache_to_js_array<'a, C: Context<'a>>(
-        ctx: &mut C,
-        values: &Cache,
-    ) -> NeonResult<Handle<'a, JsArray>> {
-        let res_values = ctx.empty_array();
-        for (i, kv) in values.iter().enumerate() {
-            let temp_pair = KVPair::new(kv.0, kv.1);
-            let object = Self::pair_to_js_object(ctx, &temp_pair)?;
-            res_values.set(ctx, i as u32, object)?;
-        }
-
-        Ok(res_values)
-    }
-
-    fn pair_to_js_object<'a, C: Context<'a>>(
-        ctx: &mut C,
-        pair: &KVPair,
-    ) -> NeonResult<Handle<'a, JsObject>> {
-        let obj = ctx.empty_object();
-        let key = JsBuffer::external(ctx, pair.key_as_vec());
-        obj.set(ctx, "key", key)?;
-        let value = JsBuffer::external(ctx, pair.value_as_vec());
-        obj.set(ctx, "value", value)?;
-
-        Ok(obj)
-    }
-
-    fn range(
-        &self,
-        cb: Root<JsFunction>,
-        writer: ArcMutex<state_writer::StateWriter>,
-        options: options::IterationOption,
-    ) -> Result<(), mpsc::SendError<options::DbMessage>> {
-        self.common.send(move |conn, channel| {
-            let values = conn
-                .iterator(utils::get_iteration_mode(&options, &mut vec![], true))
-                .map(|key_val| {
-                    KVPair::new(&key_val.as_ref().unwrap().0.clone(), &key_val.unwrap().1)
-                })
-                .collect::<Vec<KVPair>>();
-            channel.send(move |mut ctx| {
-                let result = {
-                    let mut writer = writer.lock().unwrap();
-                    let mut result = writer.get_range(&options);
-                    for (counter, pair) in values.iter().enumerate() {
-                        if utils::is_key_out_of_range(&options, pair.key(), counter as i64, true) {
-                            break;
-                        }
-                        let (_, key_without_prefix) = pair.key().split_first().unwrap();
-                        let (cached_value, deleted, exists) = writer.get(key_without_prefix);
-                        if exists && !deleted {
-                            result.insert(key_without_prefix.to_vec(), cached_value);
-                        } else if deleted {
-                            continue;
-                        } else {
-                            let shared_pair = SharedKVPair::new(pair.key(), pair.value());
-                            writer.cache_existing(&shared_pair);
-                            result.insert(pair.key_as_vec(), pair.value_as_vec());
-                        }
-                    }
-                    Self::cache_to_js_array(&mut ctx, &result)?
-                };
-                let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
-                let args = vec![ctx.null().upcast(), result.upcast()];
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
-        })
+    pub fn arc_clone(&self) -> Arc<rocksdb::DB> {
+        self.common.arc_clone()
     }
 }
 
 impl StateDB {
-    pub fn js_range(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // Get the batch value as a `SendableStateWriter`
-        let batch = ctx
-            .argument::<state_writer::SendableStateWriter>(0)?
-            .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
-        let option_inputs = ctx.argument::<JsObject>(1)?;
-        let options = options::IterationOption::new(&mut ctx, option_inputs);
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedStateDB`
-        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
-        let db = db.borrow_mut();
-        let writer = Arc::clone(&batch.borrow_mut());
-        db.range(cb, writer, options)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_upsert_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // Get the batch value as a `SendableStateWriter`
-        let batch = ctx
-            .argument::<state_writer::SendableStateWriter>(0)?
-            .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
-        let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let value = ctx.argument::<JsTypedArray<u8>>(2)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
-        // Get the `this` value as a `SharedStateDB`
-        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
-        let db = db.borrow_mut();
-        let writer = Arc::clone(&batch.borrow_mut());
-        db.upsert_key(cb, writer, key, value)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_delete_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // Get the batch value as a `SendableStateWriter`
-        let batch = ctx
-            .argument::<state_writer::SendableStateWriter>(0)?
-            .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
-        let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedStateDB`
-        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
-        let db = db.borrow_mut();
-        let writer = Arc::clone(&batch.borrow_mut());
-        db.delete_key(cb, writer, key)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    pub fn js_get_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // Get the batch value as a `SendableStateWriter`
-        let batch = ctx
-            .argument::<state_writer::SendableStateWriter>(0)?
-            .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
-        let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedStateDB`
-        let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
-        let db = db.borrow_mut();
-        let writer = Arc::clone(&batch.borrow_mut());
-        db.get_key_with_writer(cb, writer, key)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
     pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         ctx.this()
@@ -815,11 +538,13 @@ impl StateDB {
         let db = db.borrow_mut();
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
+        let conn = db.common.arc_clone();
         db.common
-            .send(move |conn, channel| {
-                let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], true));
+            .send(move |channel| {
+                let conn = conn;
+                let iter = conn.iterator(DbUtils::get_iteration_mode(&options, &mut vec![], true));
                 for (counter, key_val) in iter.enumerate() {
-                    if utils::is_key_out_of_range(
+                    if DbUtils::is_key_out_of_range(
                         &options,
                         &(key_val.as_ref().unwrap().0),
                         counter as i64,
@@ -833,7 +558,7 @@ impl StateDB {
                             key_val.as_ref().unwrap().0.split_first().unwrap();
                         let temp_pair =
                             KVPair::new(key_without_prefix, &(key_val.as_ref().unwrap().1));
-                        let obj = Self::pair_to_js_object(&mut ctx, &temp_pair)?;
+                        let obj = pair_to_js_object(&mut ctx, &temp_pair)?;
                         let cb = c.lock().unwrap().to_inner(&mut ctx);
                         let this = ctx.undefined();
                         let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];

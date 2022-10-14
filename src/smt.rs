@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::common_db::Actions;
 use crate::consts::PREFIX_BRANCH_HASH;
+use crate::db::traits::Actions;
 use crate::types::{
     ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
     NestedVecOfSlices, SharedKVPair, SharedNestedVec, SharedVec, StructurePosition, SubtreeHeight,
@@ -254,7 +254,7 @@ fn calculate_subtree(
         }
         layer_nodes = next_layer_nodes;
         layer_structure = next_layer_structure;
-        height = height.sub(1);
+        height = height - Height(1);
     }
 
     SubTree::from_data(&[0], &layer_nodes)
@@ -317,7 +317,7 @@ fn calculate_query_hashes(mut info: QueryHashesInfo) {
             i += 2;
         }
         let new_extra = QueryHashesExtraInfo::new(
-            info.extra.height.sub(1),
+            info.extra.height - Height(1),
             next_info.target_id,
             info.extra.max_index + i + 1,
         );
@@ -448,7 +448,7 @@ impl Hasher {
                 return Arc::clone(&next_hashes[0]);
             }
 
-            self.height = self.height.sub(1);
+            self.height = self.height - Height(1);
             self.node_hashes = next_hashes;
             self.structure = next_structure;
         }
@@ -1164,7 +1164,7 @@ impl SparseMerkleTree {
             left_node,
             info.length_base,
             info.height,
-            info.structure_pos.add(1),
+            info.structure_pos + StructurePosition(1),
         );
         let (mut left_nodes, mut left_heights) = self.update_node(db, left_info)?;
         let right_info = UpdateNodeInfo::new(
@@ -1174,7 +1174,7 @@ impl SparseMerkleTree {
             right_node,
             info.length_bins[idx - 1],
             info.height,
-            info.structure_pos.add(1),
+            info.structure_pos + StructurePosition(1),
         );
         let (right_nodes, right_heights) = self.update_node(db, right_info)?;
 

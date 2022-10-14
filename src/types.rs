@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ops::Add;
+use std::ops::{Add, Sub};
 use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
@@ -18,7 +18,6 @@ pub type VecOption = Option<Vec<u8>>;
 pub type SharedVec = Arc<Mutex<Arc<Vec<u8>>>>;
 pub type ArcMutex<T> = Arc<Mutex<T>>;
 pub type CommitOptions = Options<BlockHeight>;
-pub type DbOptions = Options<KeyLength>;
 
 // Strong type of SMT with max value KEY_LENGTH * 8
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -43,7 +42,7 @@ pub struct KeyLength(pub u16);
 #[derive(Debug, Copy, Clone)]
 pub struct Options<T> {
     readonly: bool,
-    number: T,
+    pub number: T,
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -134,6 +133,14 @@ impl Add for Height {
     }
 }
 
+impl Sub for Height {
+    type Output = Self;
+    #[inline]
+    fn sub(self, other: Self) -> Self {
+        Self(self.0 - other.0)
+    }
+}
+
 impl From<KeyLength> for u16 {
     #[inline]
     fn from(value: KeyLength) -> u16 {
@@ -183,6 +190,14 @@ impl From<f64> for BlockHeight {
     }
 }
 
+impl Sub for BlockHeight {
+    type Output = Self;
+    #[inline]
+    fn sub(self, other: Self) -> Self {
+        Self(self.0 - other.0)
+    }
+}
+
 impl From<BlockHeight> for u32 {
     #[inline]
     fn from(value: BlockHeight) -> u32 {
@@ -201,6 +216,14 @@ impl Default for SubtreeHeight {
     #[inline]
     fn default() -> Self {
         SubtreeHeight(SubtreeHeightKind::Four)
+    }
+}
+
+impl Add for StructurePosition {
+    type Output = Self;
+    #[inline]
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
     }
 }
 
@@ -267,13 +290,6 @@ impl<T> Options<T> {
     #[inline]
     pub fn is_readonly(&self) -> bool {
         self.readonly
-    }
-}
-
-impl DbOptions {
-    #[inline]
-    pub fn key_length(&self) -> KeyLength {
-        self.number
     }
 }
 
@@ -350,11 +366,6 @@ impl Height {
     }
 
     #[inline]
-    pub fn sub(self, value: u16) -> Self {
-        Self(self.0 - value)
-    }
-
-    #[inline]
     pub fn div_to_usize(self, value: u16) -> usize {
         (self.0 / value) as usize
     }
@@ -369,11 +380,6 @@ impl BlockHeight {
     #[inline]
     pub fn to_be_bytes(self) -> [u8; 4] {
         self.0.to_be_bytes()
-    }
-
-    #[inline]
-    pub fn sub(self, value: u32) -> Self {
-        Self(self.0 - value)
     }
 
     #[inline]
@@ -404,13 +410,6 @@ impl SubtreeHeight {
     #[inline]
     pub fn sub_to_usize(self, value: u8) -> usize {
         (self.u16() - value as u16) as usize
-    }
-}
-
-impl StructurePosition {
-    #[inline]
-    pub fn add(self, value: u16) -> Self {
-        StructurePosition(self.0 + value)
     }
 }
 
