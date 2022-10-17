@@ -26,8 +26,8 @@ impl Database {
         db.send(move |conn, channel| {
             let mut batch = rocksdb::WriteBatch::default();
             let iter = conn.iterator(rocksdb::IteratorMode::Start);
-            for (key, _) in iter {
-                batch.delete(&key);
+            for key_val in iter {
+                batch.delete(&(key_val.unwrap().0));
             }
             let result = conn.write(batch);
 
@@ -196,15 +196,21 @@ impl Database {
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
         db.send(move |conn, channel| {
             let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], false));
-            for (counter, (key, val)) in iter.enumerate() {
-                if utils::is_key_out_of_range(&options, &key, counter as i64, false) {
+            for (counter, key_val) in iter.enumerate() {
+                if utils::is_key_out_of_range(
+                    &options,
+                    &(key_val.as_ref().unwrap().0),
+                    counter as i64,
+                    false,
+                ) {
                     break;
                 }
                 let c = Arc::clone(&a_cb_on_data);
                 channel.send(move |mut ctx| {
                     let obj = ctx.empty_object();
-                    let key_res = JsBuffer::external(&mut ctx, key);
-                    let val_res = JsBuffer::external(&mut ctx, val);
+                    let key_res =
+                        JsBuffer::external(&mut ctx, key_val.as_ref().unwrap().0.clone());
+                    let val_res = JsBuffer::external(&mut ctx, key_val.unwrap().1);
                     obj.set(&mut ctx, "key", key_res)?;
                     obj.set(&mut ctx, "value", val_res)?;
                     let cb = c.lock().unwrap().to_inner(&mut ctx);
