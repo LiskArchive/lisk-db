@@ -334,11 +334,13 @@ impl StateDB {
                     rocksdb::Direction::Reverse,
                 ));
 
-                for (key, _) in iter {
-                    if utils::compare(&key, &start) == cmp::Ordering::Less {
+                for key_val in iter {
+                    if utils::compare(&(key_val.as_ref().unwrap().0), &start)
+                        == cmp::Ordering::Less
+                    {
                         break;
                     }
-                    batch.delete(&key);
+                    batch.delete(&(key_val.unwrap().0));
                 }
 
                 let result = conn.write(batch);
@@ -629,7 +631,9 @@ impl StateDB {
         self.common.send(move |conn, channel| {
             let values = conn
                 .iterator(utils::get_iteration_mode(&options, &mut vec![], true))
-                .map(|(k, v)| KVPair::new(&k, &v))
+                .map(|key_val| {
+                    KVPair::new(&key_val.as_ref().unwrap().0.clone(), &key_val.unwrap().1)
+                })
                 .collect::<Vec<KVPair>>();
             channel.send(move |mut ctx| {
                 let result = {
@@ -814,14 +818,21 @@ impl StateDB {
         db.common
             .send(move |conn, channel| {
                 let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], true));
-                for (counter, (key, val)) in iter.enumerate() {
-                    if utils::is_key_out_of_range(&options, &key, counter as i64, true) {
+                for (counter, key_val) in iter.enumerate() {
+                    if utils::is_key_out_of_range(
+                        &options,
+                        &(key_val.as_ref().unwrap().0),
+                        counter as i64,
+                        true,
+                    ) {
                         break;
                     }
                     let c = Arc::clone(&a_cb_on_data);
                     channel.send(move |mut ctx| {
-                        let (_, key_without_prefix) = key.split_first().unwrap();
-                        let temp_pair = KVPair::new(key_without_prefix, &val);
+                        let (_, key_without_prefix) =
+                            key_val.as_ref().unwrap().0.split_first().unwrap();
+                        let temp_pair =
+                            KVPair::new(key_without_prefix, &(key_val.as_ref().unwrap().1));
                         let obj = Self::pair_to_js_object(&mut ctx, &temp_pair)?;
                         let cb = c.lock().unwrap().to_inner(&mut ctx);
                         let this = ctx.undefined();
