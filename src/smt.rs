@@ -2154,4 +2154,273 @@ mod tests {
             .unwrap());
         }
     }
+
+    #[test]
+    fn test_update_data_new_from() {
+        let mut cache = Cache::new();
+        cache.insert(vec![1, 2, 3], vec![4, 5, 6]);
+
+        let mut data = UpdateData::new_from(cache);
+        assert_eq!(data.data.get(&vec![1, 2, 3]).unwrap(), &vec![4, 5, 6]);
+
+        data.insert(SharedKVPair(&[7, 8, 9], &[10, 11, 12]));
+        assert_eq!(data.data.get(&vec![7, 8, 9]).unwrap(), &vec![10, 11, 12]);
+    }
+
+    #[test]
+    fn test_update_data_new_with_hash() {
+        let test_data = vec![
+            (
+                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+                vec![4, 5, 6],
+                vec![
+                    8, 79, 237, 8, 185, 120, 100, 174, 10, 85, 175, 109, 20, 186, 226, 221, 213,
+                    152, 208, 206, 28, 136, 213, 68, 247, 175, 123, 58, 165, 185, 85, 84, 232,
+                    135, 165, 146, 179, 229,
+                ],
+                vec![
+                    120, 124, 121, 142, 57, 165, 188, 25, 16, 53, 91, 174, 109, 12, 216, 122, 54,
+                    178, 225, 15, 208, 32, 42, 131, 227, 187, 107, 0, 93, 168, 52, 114,
+                ],
+            ),
+            (
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                vec![],
+                vec![
+                    229, 45, 156, 80, 140, 80, 243, 18, 13, 123, 218, 140, 149, 81, 32, 198, 79,
+                    128, 242, 66, 193, 113, 167, 120, 215, 24, 182, 43, 79, 99, 118, 214, 214,
+                    172, 252, 124, 176, 184,
+                ],
+                vec![],
+            ),
+        ];
+
+        let mut cache = Cache::new();
+        for data in test_data.iter() {
+            cache.insert(hex::decode(data.0).unwrap(), data.1.clone());
+        }
+
+        let data = UpdateData::new_with_hash(cache);
+        let (keys, values) = data.entries();
+
+        test_data.iter().for_each(|data| {
+            assert!(keys.contains(&data.2.as_slice()));
+            assert!(values.contains(&data.3.as_slice()));
+        });
+    }
+
+    #[test]
+    fn test_query_proof_with_proof() {
+        let pair = Arc::new(KVPair(
+            hex::decode("e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71")
+                .unwrap(),
+            hex::decode("214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7")
+                .unwrap(),
+        ));
+        let binary_bitmap = [
+            true, false, false, false, true, false, true, true, false, true,
+        ];
+        let ancestor_hashes = vec![
+            hex::decode("120d7bda8c955120c64f80f242c171a778d718b62b4f6376d6d6acfc7cb0b8").unwrap(),
+            hex::decode("e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71")
+                .unwrap(),
+        ];
+        let sibling_hashes = vec![
+            hex::decode("084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5")
+                .unwrap(),
+            hex::decode("120d7bda8c955120c64f80f242c171a778d718b62b4f6376d6d6acfc7cb0b8").unwrap(),
+        ];
+        let proof = QueryProofWithProof::new_with_pair(
+            pair,
+            &binary_bitmap,
+            &ancestor_hashes,
+            &sibling_hashes,
+        );
+
+        assert_eq!(proof.binary_bitmap, binary_bitmap);
+        assert_eq!(proof.ancestor_hashes, ancestor_hashes);
+        assert_eq!(proof.sibling_hashes, sibling_hashes);
+        assert_eq!(
+            proof.hash,
+            vec![
+                66, 45, 41, 145, 103, 5, 104, 155, 141, 175, 233, 111, 240, 175, 104, 175, 246, 5,
+                12, 103, 117, 238, 39, 229, 97, 17, 76, 214, 97, 205, 49, 39
+            ]
+        );
+
+        assert_eq!(proof.height(), 10);
+        assert!(!proof.is_zero_height());
+    }
+
+    #[test]
+    fn test_query_proof_with_proof_slice_bitmap() {
+        let pair = Arc::new(KVPair(
+            hex::decode("e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71")
+                .unwrap(),
+            hex::decode("214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7")
+                .unwrap(),
+        ));
+        let binary_bitmap = [
+            true, false, false, false, true, false, true, true, false, true,
+        ];
+        let ancestor_hashes = vec![
+            hex::decode("120d7bda8c955120c64f80f242c171a778d718b62b4f6376d6d6acfc7cb0b8").unwrap(),
+            hex::decode("e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71")
+                .unwrap(),
+        ];
+        let sibling_hashes = vec![
+            hex::decode("084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5")
+                .unwrap(),
+            hex::decode("120d7bda8c955120c64f80f242c171a778d718b62b4f6376d6d6acfc7cb0b8").unwrap(),
+        ];
+        let mut proof = QueryProofWithProof::new_with_pair(
+            pair,
+            &binary_bitmap,
+            &ancestor_hashes,
+            &sibling_hashes,
+        );
+
+        proof.slice_bitmap();
+        assert_eq!(
+            proof.binary_bitmap,
+            [false, false, false, true, false, true, true, false, true]
+        );
+
+        proof.slice_bitmap();
+        assert_eq!(
+            proof.binary_bitmap,
+            [false, false, true, false, true, true, false, true]
+        );
+
+        proof.slice_bitmap();
+        assert_eq!(
+            proof.binary_bitmap,
+            [false, true, false, true, true, false, true]
+        );
+
+        proof.slice_bitmap();
+        assert_eq!(proof.binary_bitmap, [true, false, true, true, false, true]);
+
+        proof.slice_bitmap();
+        proof.slice_bitmap();
+        proof.slice_bitmap();
+        proof.slice_bitmap();
+        proof.slice_bitmap();
+        assert_eq!(proof.binary_bitmap, [true]);
+    }
+
+    #[test]
+    fn test_query_proof_with_proof_binary_path() {
+        let pair = Arc::new(KVPair(
+            hex::decode("e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71")
+                .unwrap(),
+            hex::decode("214e63bf41490e67d34476778f6707aa6c8d2c8dccdf78ae11e40ee9f91e89a7")
+                .unwrap(),
+        ));
+        let binary_bitmap = [
+            true, false, false, false, true, false, true, true, false, true,
+        ];
+        let ancestor_hashes = vec![
+            hex::decode("120d7bda8c955120c64f80f242c171a778d718b62b4f6376d6d6acfc7cb0b8").unwrap(),
+            hex::decode("e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71")
+                .unwrap(),
+        ];
+        let sibling_hashes = vec![
+            hex::decode("084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5")
+                .unwrap(),
+            hex::decode("120d7bda8c955120c64f80f242c171a778d718b62b4f6376d6d6acfc7cb0b8").unwrap(),
+        ];
+        let proof = QueryProofWithProof::new_with_pair(
+            pair,
+            &binary_bitmap,
+            &ancestor_hashes,
+            &sibling_hashes,
+        );
+
+        let path = proof.binary_path();
+        assert_eq!(
+            path,
+            vec![true, true, true, false, false, true, false, true, false, false]
+        );
+    }
+
+    #[test]
+    fn test_node_new_temp() {
+        let node = Node::new_temp();
+        assert_eq!(node.kind, NodeKind::Temp);
+        assert_eq!(node.hash, KVPair(vec![], vec![]));
+        assert_eq!(node.key, vec![]);
+        assert_eq!(node.index, 0);
+    }
+
+    #[test]
+    fn test_node_new_stub() {
+        let node = Node::new_stub(&EMPTY_HASH);
+        assert_eq!(node.kind, NodeKind::Stub);
+        assert_eq!(
+            node.hash,
+            KVPair(
+                vec![
+                    1, 227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36,
+                    39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85
+                ],
+                EMPTY_HASH.to_vec()
+            )
+        );
+        assert_eq!(node.key, vec![]);
+        assert_eq!(node.index, 0);
+    }
+
+    #[test]
+    fn test_node_new_branch() {
+        let node = Node::new_branch(&EMPTY_HASH, &EMPTY_HASH);
+        assert_eq!(node.kind, NodeKind::Stub);
+        assert_eq!(
+            node.hash,
+            KVPair(
+                vec![
+                    1, 227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36,
+                    39, 174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85, 227,
+                    176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39,
+                    174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85
+                ],
+                vec![
+                    166, 142, 231, 157, 193, 40, 19, 209, 52, 253, 3, 92, 115, 40, 247, 189, 94,
+                    230, 129, 135, 115, 95, 127, 13, 46, 69, 26, 234, 63, 246, 147, 15
+                ]
+            )
+        );
+        assert_eq!(node.key, vec![]);
+        assert_eq!(node.index, 0);
+    }
+
+    #[test]
+    fn test_node_new_leaf() {
+        let node = Node::new_leaf(&KVPair(
+            vec![10, 11, 12, 13, 14, 15],
+            vec![16, 17, 18, 19, 20],
+        ));
+        assert_eq!(node.kind, NodeKind::Leaf);
+        assert_eq!(
+            node.hash,
+            KVPair(
+                vec![0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+                vec![
+                    43, 229, 158, 19, 250, 79, 28, 157, 72, 165, 36, 43, 34, 34, 87, 103, 211, 82,
+                    228, 69, 120, 87, 21, 25, 144, 187, 39, 106, 15, 220, 240, 165
+                ]
+            )
+        );
+        assert_eq!(node.key, vec![10, 11, 12, 13, 14, 15]);
+        assert_eq!(node.index, 0);
+    }
+
+    #[test]
+    fn test_node_new_empty() {
+        let node = Node::new_empty();
+        assert_eq!(node.kind, NodeKind::Empty);
+        assert_eq!(node.hash, KVPair(vec![2], EMPTY_HASH.to_vec()));
+        assert_eq!(node.key, vec![]);
+        assert_eq!(node.index, 0);
+    }
 }

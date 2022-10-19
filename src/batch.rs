@@ -141,3 +141,45 @@ impl<'a> Default for PrefixWriteBatch<'a> {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use rocksdb::WriteBatchIterator;
+
+    use super::*;
+    use crate::consts;
+
+    #[test]
+    fn test_put_and_delete_for_write_batch() {
+        let mut write_batch = WriteBatch::new_db_with_key_length(None);
+        assert_eq!(write_batch.batch.len(), 0);
+
+        write_batch.put(Box::new([1, 2, 3, 4]), Box::new([5, 6, 7, 8]));
+        assert_eq!(write_batch.batch.len(), 1);
+
+        write_batch.delete(Box::new([1, 2, 3, 4]));
+        assert_eq!(write_batch.batch.len(), 2);
+    }
+
+    #[test]
+    fn test_put_and_delete_for_prefix_write_batch() {
+        let mut write_batch = PrefixWriteBatch::default();
+        write_batch.set_prefix(&consts::Prefix::STATE);
+        assert_eq!(write_batch.batch.len(), 0);
+
+        write_batch.put(&[1, 2, 3, 4], &[5, 6, 7, 8]);
+        assert_eq!(write_batch.batch.len(), 1);
+
+        write_batch.delete(&[1, 2, 3, 4]);
+        assert_eq!(write_batch.batch.len(), 2);
+    }
+
+    #[test]
+    fn test_set_prefix() {
+        let mut write_batch = PrefixWriteBatch::default();
+        assert_eq!(write_batch.prefix, None);
+
+        write_batch.set_prefix(&consts::Prefix::STATE);
+        assert_eq!(write_batch.prefix, Some(consts::Prefix::STATE));
+    }
+}

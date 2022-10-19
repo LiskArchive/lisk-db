@@ -225,3 +225,114 @@ impl Database {
         return Ok(ctx.boxed(ref_db));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_db_cache_range() {
+        let mut db = Database {
+            cache: CacheData { data: Cache::new() },
+        };
+        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_kv(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44]));
+        db.set_kv(&KVPair::new(&[5, 5, 5, 5], &[55, 55, 55, 55]));
+        db.set_kv(&KVPair::new(&[6, 6, 6, 6], &[66, 66, 66, 66]));
+        db.set_kv(&KVPair::new(&[7, 7, 7, 7], &[77, 77, 77, 77]));
+
+        let cached = db.cache_range(&[2], &[5]);
+
+        assert_eq!(cached.len(), 3);
+        assert!(cached.contains(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22])));
+        assert!(cached.contains(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33])));
+        assert!(cached.contains(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44])));
+    }
+
+    #[test]
+    fn test_db_cache_all() {
+        let mut db = Database {
+            cache: CacheData { data: Cache::new() },
+        };
+        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_kv(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44]));
+        db.set_kv(&KVPair::new(&[5, 5, 5, 5], &[55, 55, 55, 55]));
+        db.set_kv(&KVPair::new(&[6, 6, 6, 6], &[66, 66, 66, 66]));
+        db.set_kv(&KVPair::new(&[7, 7, 7, 7], &[77, 77, 77, 77]));
+
+        let cached = db.cache_all();
+
+        assert_eq!(cached.len(), 7);
+        for (key, value) in db.cache.data {
+            assert!(cached.contains(&KVPair::new(key.as_slice(), value.as_slice())));
+        }
+    }
+
+    #[test]
+    fn test_db_clear() {
+        let mut db = Database {
+            cache: CacheData { data: Cache::new() },
+        };
+        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        assert_eq!(db.cache.data.len(), 2);
+
+        db.clear();
+
+        assert_eq!(db.cache.data.len(), 0);
+    }
+
+    #[test]
+    fn test_db_set_kv() {
+        let mut db = Database {
+            cache: CacheData { data: Cache::new() },
+        };
+        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        assert_eq!(db.cache.data.len(), 2);
+
+        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        assert_eq!(db.cache.data.len(), 3);
+
+        assert_eq!(
+            db.cache.data.get(&[3, 3, 3, 3].to_vec()).unwrap(),
+            &[33, 33, 33, 33]
+        );
+    }
+
+    #[test]
+    fn test_db_delete_key() {
+        let mut db = Database {
+            cache: CacheData { data: Cache::new() },
+        };
+        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+
+        db.del(&[2, 2, 2, 2]);
+
+        assert_eq!(db.cache.data.len(), 2);
+        assert_eq!(db.cache.data.get(&[2, 2, 2, 2].to_vec()), None);
+    }
+
+    #[test]
+    fn test_db_clone() {
+        let mut db = Database {
+            cache: CacheData { data: Cache::new() },
+        };
+        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+
+        let cloned = db.clone();
+
+        assert_eq!(cloned.cache.data.len(), 3);
+        for key in cloned.cache.data.keys() {
+            assert!(db.cache.data.get(key).is_some());
+        }
+    }
+}

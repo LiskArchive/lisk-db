@@ -2,7 +2,7 @@ use crate::batch;
 use crate::codec;
 use crate::types::{Cache, KVPair, KVPairCodec, NestedVec};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diff {
     created: NestedVec,
     updated: Vec<KVPair>,
@@ -89,5 +89,81 @@ impl Diff {
         for key in self.created.iter() {
             batch.delete(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consts;
+
+    #[test]
+    fn test_kvpair_encode_decode() {
+        let kvpair = KVPair::new(b"test_key", b"test_value");
+
+        let encoded = kvpair.encode();
+        let decoded = KVPair::decode(&encoded).unwrap();
+
+        assert_eq!(kvpair, decoded);
+    }
+
+    #[test]
+    fn test_diff_new() {
+        let created = vec![b"test_key".to_vec()];
+        let updated = vec![KVPair::new(b"test_key", b"test_value")];
+        let deleted = vec![KVPair::new(b"test_key_deleted", b"test_value_deleted")];
+
+        let diff = Diff::new(created.clone(), updated.clone(), deleted.clone());
+        assert_eq!(diff.created, created);
+        assert_eq!(diff.updated, updated);
+        assert_eq!(diff.deleted, deleted);
+    }
+
+    #[test]
+    fn test_diff_encode_decode() {
+        let created = vec![b"test_key".to_vec()];
+        let updated = vec![KVPair::new(b"test_key", b"test_value")];
+        let deleted = vec![KVPair::new(b"test_key_deleted", b"test_value_deleted")];
+        let diff = Diff::new(created, updated, deleted);
+
+        let encoded = diff.encode();
+        let decoded = Diff::decode(&encoded).unwrap();
+
+        assert_eq!(diff, decoded);
+    }
+
+    #[test]
+    fn test_diff_revert_update() {
+        let created = vec![b"test_key".to_vec()];
+        let updated = vec![KVPair::new(b"test_key_updated", b"test_value_updated")];
+        let deleted = vec![KVPair::new(b"test_key_deleted", b"test_value_deleted")];
+        let diff = Diff::new(created, updated, deleted);
+
+        let cache = diff.revert_update();
+
+        assert_eq!(cache.get(&b"test_key".to_vec()), Some(&vec![]));
+        assert_eq!(
+            cache.get(&b"test_key_updated".to_vec()),
+            Some(&b"test_value_updated".to_vec())
+        );
+        assert_eq!(
+            cache.get(&b"test_key_deleted".to_vec()),
+            Some(&b"test_value_deleted".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_diff_revert_commit() {
+        let created = vec![b"test_key".to_vec()];
+        let updated = vec![KVPair::new(b"test_key_updated", b"test_value_updated")];
+        let deleted = vec![KVPair::new(b"test_key_deleted", b"test_value_deleted")];
+        let diff = Diff::new(created, updated, deleted);
+
+        let mut batch = batch::PrefixWriteBatch::new();
+        batch.set_prefix(&consts::Prefix::STATE);
+
+        diff.revert_commit(&mut batch);
+
+        assert_eq!(batch.batch.len(), 3);
     }
 }
