@@ -244,6 +244,7 @@ impl StateWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::Prefix;
 
     #[test]
     fn test_cache() {
@@ -266,5 +267,152 @@ mod tests {
         assert_eq!(value, &[]);
         assert!(!deleted);
         assert!(!exists)
+    }
+
+    #[test]
+    fn test_state_writer_clone() {
+        let mut writer = StateWriter::default();
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        writer.cache_new(&SharedKVPair::new(&[10, 20, 30, 40], &[50, 60, 70, 80]));
+
+        let cloned = writer.clone();
+
+        let (value, deleted, exists) = cloned.get(&[1, 2, 3, 4]);
+        assert_eq!(value, &[5, 6, 7, 8]);
+        assert!(!deleted);
+        assert!(exists);
+
+        let (value, deleted, exists) = cloned.get(&[10, 20, 30, 40]);
+        assert_eq!(value, &[50, 60, 70, 80]);
+        assert!(!deleted);
+        assert!(exists);
+    }
+
+    #[test]
+    fn test_state_writer_cache_new() {
+        let mut writer = StateWriter::default();
+        assert_eq!(writer.cache.len(), 0);
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        assert_eq!(writer.cache.len(), 1);
+        writer.cache_new(&SharedKVPair::new(&[10, 20, 30, 40], &[50, 60, 70, 80]));
+        assert_eq!(writer.cache.len(), 2);
+    }
+
+    #[test]
+    fn test_state_writer_cache_existing() {
+        let mut writer = StateWriter::default();
+        assert_eq!(writer.cache.len(), 0);
+        writer.cache_existing(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        assert_eq!(writer.cache.len(), 1);
+        writer.cache_existing(&SharedKVPair::new(&[10, 20, 30, 40], &[50, 60, 70, 80]));
+        assert_eq!(writer.cache.len(), 2);
+    }
+
+    #[test]
+    fn test_state_writer_is_cached() {
+        let mut writer = StateWriter::default();
+        assert!(!writer.is_cached(&[1, 2, 3, 4]));
+
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        assert!(writer.is_cached(&[1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_state_writer_get() {
+        let mut writer = StateWriter::default();
+
+        let result = writer.get(&[1, 2, 3, 4]);
+        assert_eq!(result.0, &[]);
+        assert!(!result.1);
+        assert!(!result.2);
+
+        writer.cache_existing(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+        let result = writer.get(&[1, 2, 3, 4]);
+        assert_eq!(result.0, &[5, 6, 7, 8]);
+        assert!(!result.1);
+        assert!(result.2);
+
+        writer.delete(&[1, 2, 3, 4]);
+        let result = writer.get(&[1, 2, 3, 4]);
+        assert_eq!(result.0, &[]);
+        assert!(result.1);
+        assert!(result.2);
+    }
+
+    #[test]
+    fn test_state_writer_update() {
+        let mut writer = StateWriter::default();
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+
+        writer
+            .update(&KVPair::new(&[1, 2, 3, 4], &[9, 10, 11, 12]))
+            .unwrap();
+
+        let result = writer.get_updated();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get(&[1, 2, 3, 4].to_vec()).unwrap(),
+            &[9, 10, 11, 12]
+        );
+    }
+
+    #[test]
+    fn test_state_writer_delete() {
+        let mut writer = StateWriter::default();
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+
+        writer.delete(&[1, 2, 3, 4]);
+        let result = writer.get(&[1, 2, 3, 4]);
+        assert_eq!(result.0, &[]);
+        assert!(!result.1);
+        assert!(!result.2);
+
+        let mut writer = StateWriter::default();
+        writer.cache_existing(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
+
+        writer.delete(&[1, 2, 3, 4]);
+        let result = writer.get(&[1, 2, 3, 4]);
+        assert_eq!(result.0, &[]);
+        assert!(result.1);
+        assert!(result.2);
+    }
+
+    #[test]
+    fn test_state_writer_snapshot() {
+        let mut writer = StateWriter::default();
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[10, 20, 30, 50]));
+        writer.cache_new(&SharedKVPair::new(&[5, 6, 7, 8], &[50, 60, 70, 80]));
+
+        writer.snapshot();
+        writer.cache_new(&SharedKVPair::new(&[9, 10, 11, 12], &[90, 100, 110, 120]));
+        writer.snapshot();
+        writer.cache_new(&SharedKVPair::new(&[13, 14, 15, 16], &[130, 140, 150, 160]));
+
+        assert_eq!(writer.cache.len(), 4);
+
+        writer.restore_snapshot(1).unwrap();
+        assert_eq!(writer.cache.len(), 3);
+    }
+
+    #[test]
+    fn test_state_writer_commit() {
+        let mut writer = StateWriter::default();
+        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[10, 20, 30, 50]));
+        writer.cache_existing(&SharedKVPair::new(&[5, 6, 7, 8], &[50, 60, 70, 80]));
+        writer.cache_existing(&SharedKVPair::new(&[9, 10, 11, 12], &[90, 100, 110, 120]));
+
+        writer.delete(&[5, 6, 7, 8]);
+        writer
+            .update(&KVPair::new(&[9, 10, 11, 12], &[130, 140, 150, 160]))
+            .unwrap();
+
+        let mut write_batch = batch::PrefixWriteBatch::new();
+        write_batch.set_prefix(&Prefix::STATE);
+        let diff = writer.commit(&mut write_batch);
+
+        let mut batch = batch::PrefixWriteBatch::new();
+        batch.set_prefix(&Prefix::STATE);
+        diff.revert_commit(&mut batch);
+        assert_eq!(batch.batch.len(), 3);
     }
 }

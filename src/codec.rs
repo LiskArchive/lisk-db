@@ -173,3 +173,97 @@ impl Writer {
         self.result.extend(val_bytes);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_reader() {
+        let reader = Reader::new(&[1, 2, 3, 4, 5]);
+        assert_eq!(reader.data, &[1, 2, 3, 4, 5]);
+        assert_eq!(reader.end, 5);
+        assert_eq!(reader.index, 0);
+    }
+
+    #[test]
+    fn test_reader_read_bytes_slice() {
+        let mut writer = Writer::new();
+        writer.write_bytes(1, &[1, 2, 3, 4, 5]);
+        writer.write_bytes(2, &[6, 7, 8, 9, 10]);
+        writer.write_bytes(3, &[11, 12, 13, 14, 15]);
+
+        let mut reader = Reader::new(writer.result());
+
+        let res = reader.read_bytes_slice(1).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0], [1, 2, 3, 4, 5].to_vec());
+
+        let res = reader.read_bytes_slice(2).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0], [6, 7, 8, 9, 10].to_vec());
+
+        let res = reader.read_bytes_slice(3).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0], [11, 12, 13, 14, 15].to_vec());
+    }
+
+    #[test]
+    fn test_reader_read_bytes() {
+        let mut writer = Writer::new();
+        writer.write_bytes(1, &[1, 2, 3, 4, 5]);
+        writer.write_bytes(1, &[6, 7, 8, 9, 10]);
+        writer.write_bytes(2, &[11, 12, 13, 14, 15]);
+
+        let mut reader = Reader::new(writer.result());
+
+        let res = reader.read_bytes(1).unwrap();
+        assert_eq!(res, [1, 2, 3, 4, 5].to_vec());
+
+        let res = reader.read_bytes(1).unwrap();
+        assert_eq!(res, [6, 7, 8, 9, 10].to_vec());
+
+        let res = reader.read_bytes(1).unwrap();
+        assert_eq!(res, vec![]);
+
+        let res = reader.read_bytes(2).unwrap();
+        assert_eq!(res, [11, 12, 13, 14, 15].to_vec());
+
+        let res = reader.read_bytes(2).unwrap();
+        assert_eq!(res, vec![]);
+    }
+
+    #[test]
+    fn test_new_writer() {
+        let writer = Writer::new();
+        assert_eq!(writer.result, vec![]);
+        assert_eq!(writer.size, 0);
+    }
+
+    #[test]
+    fn test_writer_write_bytes_slice() {
+        let mut writer = Writer::new();
+        writer.write_bytes_slice(1, &[vec![1, 2, 3, 4, 5], vec![6, 7, 8, 9, 10]]);
+        writer.write_bytes_slice(2, &[vec![11, 12, 13, 14, 15], vec![16, 17, 18, 19, 20]]);
+
+        let mut reader = Reader::new(writer.result());
+
+        let res = reader.read_bytes(1).unwrap();
+        assert_eq!(res, [1, 2, 3, 4, 5].to_vec());
+
+        let res = reader.read_bytes(1).unwrap();
+        assert_eq!(res, [6, 7, 8, 9, 10].to_vec());
+
+        let res = reader.read_bytes(1).unwrap();
+        assert_eq!(res, vec![]);
+
+        let res = reader.read_bytes(2).unwrap();
+        assert_eq!(res, [11, 12, 13, 14, 15].to_vec());
+
+        let res = reader.read_bytes(2).unwrap();
+        assert_eq!(res, [16, 17, 18, 19, 20].to_vec());
+
+        let res = reader.read_bytes(2).unwrap();
+        assert_eq!(res, vec![]);
+    }
+}

@@ -61,7 +61,7 @@ pub enum HashKind {
     Branch,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KVPair(pub Vec<u8>, pub Vec<u8>);
 
 #[derive(Clone, Debug)]
@@ -417,6 +417,44 @@ impl StructurePosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_hash_with_kind() {
+        let data = vec![
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+            0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,
+            0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+            0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+        ];
+
+        let hash = data.hash_with_kind(HashKind::Key);
+        assert_eq!(
+            hash,
+            vec![
+                0, 1, 2, 3, 4, 5, 10, 165, 4, 79, 85, 150, 61, 222, 215, 50, 50, 134, 228, 240,
+                180, 58, 75, 167, 243, 47, 247, 126, 21, 28, 34, 193, 134, 242, 138, 162, 150, 75
+            ]
+        );
+
+        let hash = data.hash_with_kind(HashKind::Value);
+        assert_eq!(
+            hash,
+            vec![
+                253, 234, 185, 172, 243, 113, 3, 98, 189, 38, 88, 205, 201, 162, 158, 143, 156,
+                117, 127, 207, 152, 17, 96, 58, 140, 68, 124, 209, 217, 21, 17, 8
+            ]
+        );
+
+        let hash = data.hash_with_kind(HashKind::Branch);
+        assert_eq!(
+            hash,
+            vec![
+                26, 55, 135, 4, 193, 125, 163, 30, 45, 5, 182, 209, 33, 194, 187, 44, 125, 118,
+                246, 238, 111, 168, 249, 131, 229, 150, 194, 208, 52, 150, 60, 87
+            ]
+        );
+    }
 
     #[test]
     fn test_values_subtree_height_kind() {
