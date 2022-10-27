@@ -2,7 +2,7 @@ use std::cmp;
 
 use bitvec::prelude::*;
 
-use crate::smt::EMPTY_HASH;
+use crate::sparse_merkle_tree::smt::EMPTY_HASH;
 
 fn find_longer<'a>(a: &'a [bool], b: &'a [bool]) -> (&'a [bool], &'a [bool]) {
     match a.len().cmp(&b.len()) {

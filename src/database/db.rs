@@ -4,10 +4,10 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::batch;
-use crate::db::options::IterationOption;
-use crate::db::traits::JsNewWithBox;
-use crate::db::utils;
-use crate::db::DB;
+use crate::database::options::IterationOption;
+use crate::database::traits::JsNewWithBox;
+use crate::database::utils;
+use crate::database::DB;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {

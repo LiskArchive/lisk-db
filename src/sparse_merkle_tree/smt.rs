@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::consts::{PREFIX_BRANCH_HASH, PREFIX_EMPTY, PREFIX_LEAF_HASH};
-use crate::db::traits::Actions;
+use crate::database::traits::Actions;
 use crate::types::{
     ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
     NestedVecOfSlices, SharedKVPair, SharedNestedVec, SharedVec, StructurePosition, SubtreeHeight,
@@ -1473,7 +1473,7 @@ impl SparseMerkleTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::smt_db;
+    use crate::sparse_merkle_tree::smt_db;
 
     #[test]
     fn test_subtree() {

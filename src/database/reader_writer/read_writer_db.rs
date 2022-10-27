@@ -6,10 +6,10 @@ use neon::object::Object;
 use neon::result::JsResult;
 use neon::types::{buffer::TypedArray, JsBuffer, JsFunction, JsObject, JsTypedArray, JsUndefined};
 
-use crate::db::options;
-use crate::db::types::{JsBoxRef, Kind, SnapshotMessage};
-use crate::db::utils::*;
-use crate::db::ReaderBase;
+use crate::database::options;
+use crate::database::reader_writer::ReaderBase;
+use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
+use crate::database::utils::*;
 use crate::state_writer;
 use crate::types::{ArcMutex, KVPair, SharedKVPair};
 

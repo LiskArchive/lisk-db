@@ -7,8 +7,8 @@ use neon::handle::{Handle, Root};
 use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
 use rocksdb::checkpoint::Checkpoint;
 
-use crate::db::traits::NewDBWithContext;
-use crate::db::types::{DbMessage, DbOptions, Kind};
+use crate::database::traits::NewDBWithContext;
+use crate::database::types::{DbMessage, DbOptions, Kind};
 
 pub struct DB {
     tx: mpsc::Sender<DbMessage>,

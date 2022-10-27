@@ -1,28 +1,28 @@
 use neon::prelude::*;
 
-use crate::db::traits::{JsNewWithArcMutex, JsNewWithBox, JsNewWithBoxRef};
-use crate::db::types::DbOptions;
+use crate::database::db;
+use crate::database::in_memory::in_memory_db;
+use crate::database::reader_writer::read_writer_db;
+use crate::database::reader_writer::reader_db;
+use crate::database::traits::{JsNewWithArcMutex, JsNewWithBox, JsNewWithBoxRef};
+use crate::database::types::DbOptions;
+use crate::sparse_merkle_tree::in_memory_smt;
+use crate::state::state_db;
+use crate::state::state_writer;
 
 pub mod batch;
 pub mod consts;
-pub mod db;
-pub mod smt;
-pub mod smt_db;
+pub mod database;
+pub mod sparse_merkle_tree;
+pub mod state;
 pub mod types;
 
 mod codec;
-mod database;
 mod diff;
-mod in_memory_db;
-mod in_memory_smt;
-mod read_writer_db;
-mod reader_db;
-mod state_db;
-mod state_writer;
 mod utils;
 
 use batch::WriteBatch;
-use database::Database;
+use db::Database;
 use in_memory_smt::InMemorySMT;
 use read_writer_db::ReadWriter;
 use state_db::StateDB;

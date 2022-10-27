@@ -8,7 +8,7 @@ use neon::handle::{Handle, Root};
 use neon::result::JsResult;
 use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
 
-use crate::db::types::{JsBoxRef, Kind, SnapshotMessage};
+use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
 use crate::state_db::SharedStateDB;
 
 pub struct ReaderBase {

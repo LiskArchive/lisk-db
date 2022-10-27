@@ -9,16 +9,16 @@ use thiserror::Error;
 
 use crate::batch;
 use crate::consts;
-use crate::db::options;
-use crate::db::traits::{JsNewWithBoxRef, NewDBWithContext};
-use crate::db::types::{DbMessage, DbOptions, JsBoxRef, Kind};
-use crate::db::utils as DbUtils;
-use crate::db::utils::pair_to_js_object;
-use crate::db::DB;
+use crate::database::options;
+use crate::database::traits::{JsNewWithBoxRef, NewDBWithContext};
+use crate::database::types::{DbMessage, DbOptions, JsBoxRef, Kind};
+use crate::database::utils as DbUtils;
+use crate::database::utils::pair_to_js_object;
+use crate::database::DB;
 use crate::diff;
-use crate::smt::{self, EMPTY_HASH};
-use crate::smt_db;
-use crate::state_writer;
+use crate::sparse_merkle_tree::smt::{self, EMPTY_HASH};
+use crate::sparse_merkle_tree::smt_db;
+use crate::state::state_writer;
 use crate::types::{
     ArcMutex, BlockHeight, CommitOptions, KVPair, KeyLength, NestedVec, SharedVec,
 };

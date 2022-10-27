@@ -6,8 +6,8 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::batch;
-use crate::db::options::IterationOption;
-use crate::db::types::JsBoxRef;
+use crate::database::options::IterationOption;
+use crate::database::types::JsBoxRef;
 use crate::types::{Cache, KVPair};
 use crate::utils;
 

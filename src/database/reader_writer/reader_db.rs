@@ -7,10 +7,10 @@ use neon::result::JsResult;
 use neon::types::buffer::TypedArray;
 use neon::types::{JsBoolean, JsFunction, JsObject, JsTypedArray, JsUndefined, JsValue};
 
-use crate::db::options::IterationOption;
-use crate::db::types::{JsBoxRef, Kind, SnapshotMessage};
-use crate::db::utils::*;
-use crate::db::ReaderBase;
+use crate::database::options::IterationOption;
+use crate::database::reader_writer::ReaderBase;
+use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
+use crate::database::utils::*;
 use crate::types::KVPair;
 
 pub type Reader = ReaderBase;

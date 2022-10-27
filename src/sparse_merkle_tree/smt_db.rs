@@ -1,6 +1,6 @@
 use crate::consts;
-use crate::db::traits::Actions;
-use crate::db::DB;
+use crate::database::traits::Actions;
+use crate::database::DB;
 use crate::types::{Cache, KVPair, VecOption};
 
 pub struct SmtDB<'a> {
@@ -65,8 +65,8 @@ mod tests {
     use tempdir::TempDir;
 
     use crate::batch::PrefixWriteBatch;
-    use crate::db::types::{DbMessage, Kind};
-    use crate::db::DB;
+    use crate::database::types::{DbMessage, Kind};
+    use crate::database::DB;
 
     use super::*;
 

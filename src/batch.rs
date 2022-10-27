@@ -1,8 +1,8 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
-use crate::db::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
-use crate::db::types::{JsArcMutex, Kind as DBKind};
+use crate::database::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
+use crate::database::types::{JsArcMutex, Kind as DBKind};
 use crate::types::{KVPair, KeyLength};
 
 pub type SendableWriteBatch = JsArcMutex<WriteBatch>;
