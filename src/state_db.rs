@@ -105,13 +105,13 @@ impl NewDBWithContext for StateDB {
         ctx: &mut C,
         path: String,
         db_options: DbOptions,
-        k: Kind,
+        kind: Kind,
     ) -> Result<Self, rocksdb::Error>
     where
         C: Context<'a>,
     {
         Ok(Self {
-            common: DB::new_db_with_context(ctx, path, db_options, k)?,
+            common: DB::new_db_with_context(ctx, path, db_options, kind)?,
             options: db_options,
         })
     }
@@ -131,25 +131,25 @@ impl StateDB {
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?
             .ok_or_else(|| DataStoreError::DiffNotFound(version.into()))?;
 
-        let d = diff::Diff::decode(&diff_bytes)
+        let diff = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
-        let data = smt::UpdateData::new_with_hash(d.revert_update());
-        let mut smtdb = smt_db::SmtDB::new(conn);
+        let data = smt::UpdateData::new_with_hash(diff.revert_update());
+        let mut smt_db = smt_db::SmtDB::new(conn);
         let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_HEIGHT);
         let prev_root = tree
-            .commit(&mut smtdb, &data)
+            .commit(&mut smt_db, &data)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
 
         let mut write_batch = batch::PrefixWriteBatch::new();
         // Insert state batch with diff
         write_batch.set_prefix(&consts::Prefix::STATE);
-        d.revert_commit(&mut write_batch);
+        diff.revert_commit(&mut write_batch);
         write_batch.set_prefix(&consts::Prefix::DIFF);
         write_batch.delete(&version.to_be_bytes());
 
         // insert SMT batch
         write_batch.set_prefix(&consts::Prefix::SMT);
-        smtdb.batch.iterate(&mut write_batch);
+        smt_db.batch.iterate(&mut write_batch);
         // insert diff
         conn.write(write_batch.batch)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
@@ -161,7 +161,7 @@ impl StateDB {
         &mut self,
         version: BlockHeight,
         state_root: Vec<u8>,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key_length = self.options.key_length();
         let result = StateDB::get_revert_result(&self.common, version, &state_root, key_length);
@@ -174,7 +174,7 @@ impl StateDB {
         }
         self.common.send(move |channel| {
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
@@ -193,7 +193,7 @@ impl StateDB {
 
     fn handle_commit_result(
         conn: &DB,
-        smtdb: &smt_db::SmtDB,
+        smt_db: &smt_db::SmtDB,
         writer: MutexGuard<state_writer::StateWriter>,
         info: CommitResultInfo,
     ) -> Result<SharedVec, smt::SMTError> {
@@ -220,7 +220,7 @@ impl StateDB {
 
         // insert SMT batch
         write_batch.set_prefix(&consts::Prefix::SMT);
-        smtdb.batch.iterate(&mut write_batch);
+        smt_db.batch.iterate(&mut write_batch);
         // insert diff
         let result = conn.write(write_batch.batch);
         let version = info.data.options.version();
@@ -239,21 +239,21 @@ impl StateDB {
     fn commit(
         &mut self,
         writer: ArcMutex<state_writer::StateWriter>,
-        d: CommitData,
-        cb: Root<JsFunction>,
+        commit_data: CommitData,
+        callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key_length = self.options.key_length();
         let w = writer.lock().unwrap();
         let data = smt::UpdateData::new_with_hash(w.get_updated());
-        let mut smtdb = smt_db::SmtDB::new(&self.common);
+        let mut smt_db = smt_db::SmtDB::new(&self.common);
         let mut tree =
-            smt::SparseMerkleTree::new(&d.prev_root, key_length, consts::SUBTREE_HEIGHT);
-        let root = tree.commit(&mut smtdb, &data);
-        let result_info = CommitResultInfo::new(root, d.data);
-        let result = StateDB::handle_commit_result(&self.common, &smtdb, w, result_info);
+            smt::SparseMerkleTree::new(&commit_data.prev_root, key_length, consts::SUBTREE_HEIGHT);
+        let root = tree.commit(&mut smt_db, &data);
+        let result_info = CommitResultInfo::new(root, commit_data.data);
+        let result = StateDB::handle_commit_result(&self.common, &smt_db, w, result_info);
         self.common.send(move |channel| {
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
@@ -274,7 +274,7 @@ impl StateDB {
         &self,
         root: Vec<u8>,
         queries: NestedVec,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         let key_length = self.options.key_length();
         let mut tree = smt::SparseMerkleTree::new(&root, key_length, consts::SUBTREE_HEIGHT);
@@ -284,7 +284,7 @@ impl StateDB {
         self.common
             .send(move |channel| {
                 channel.send(move |mut ctx| {
-                    let callback = cb.into_inner(&mut ctx);
+                    let callback = callback.into_inner(&mut ctx);
                     let this = ctx.undefined();
                     let args: Vec<Handle<JsValue>> = match result {
                         Ok(val) => {
@@ -319,7 +319,7 @@ impl StateDB {
     fn clean_diff_until(
         &self,
         version: BlockHeight,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), DataStoreError> {
         if version.is_equal_to(0) {
             return Ok(());
@@ -327,18 +327,17 @@ impl StateDB {
         let conn = self.common.arc_clone();
         self.common
             .send(move |channel| {
-                let zero: u32 = 0;
-                let start = [consts::Prefix::DIFF, zero.to_be_bytes().as_slice()].concat();
+                let start = [consts::Prefix::DIFF, 0_u32.to_be_bytes().as_slice()].concat();
                 let bytes = (version - BlockHeight(1)).to_be_bytes();
                 let end = [consts::Prefix::DIFF, &bytes].concat();
                 let mut batch = rocksdb::WriteBatch::default();
 
-                let iter = conn.iterator(rocksdb::IteratorMode::From(
+                let conn_iter = conn.iterator(rocksdb::IteratorMode::From(
                     end.as_ref(),
                     rocksdb::Direction::Reverse,
                 ));
 
-                for key_val in iter {
+                for key_val in conn_iter {
                     if utils::compare(&(key_val.as_ref().unwrap().0), &start)
                         == cmp::Ordering::Less
                     {
@@ -350,7 +349,7 @@ impl StateDB {
                 let result = conn.write(batch);
 
                 channel.send(move |mut ctx| {
-                    let callback = cb.into_inner(&mut ctx);
+                    let callback = callback.into_inner(&mut ctx);
                     let this = ctx.undefined();
                     let args: Vec<Handle<JsValue>> = match result {
                         Ok(_) => {
@@ -426,11 +425,14 @@ impl StateDB {
         Ok(parsed_query_keys)
     }
 
-    fn get_current_state(&self, cb: Root<JsFunction>) -> Result<(), mpsc::SendError<DbMessage>> {
+    fn get_current_state(
+        &self,
+        callback: Root<JsFunction>,
+    ) -> Result<(), mpsc::SendError<DbMessage>> {
         let result = self.common.get(consts::Prefix::CURRENT_STATE);
         self.common.send(move |channel| {
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(value) => {
@@ -476,24 +478,24 @@ impl StateDB {
 
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
         db.common
-            .get_by_key(key, cb)
+            .get_by_key(key, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
     }
 
     pub fn js_get_current_state(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let cb = ctx.argument::<JsFunction>(0)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(0)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
-        db.get_current_state(cb)
+        db.get_current_state(callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -501,13 +503,13 @@ impl StateDB {
 
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
         db.common
-            .exists(key, cb)
+            .exists(key, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -516,12 +518,12 @@ impl StateDB {
     pub fn js_revert(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let prev_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
         let mut db = db.borrow_mut();
-        db.revert(height, prev_root, cb)
+        db.revert(height, prev_root, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -530,20 +532,21 @@ impl StateDB {
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
         let options = options::IterationOption::new(&mut ctx, option_inputs);
-        let cb_on_data = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        let cb_done = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        let callback_on_data = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let callback_done = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
 
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow_mut();
 
-        let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
+        let callback_on_data = Arc::new(Mutex::new(callback_on_data));
         let conn = db.common.arc_clone();
         db.common
             .send(move |channel| {
                 let conn = conn;
-                let iter = conn.iterator(DbUtils::get_iteration_mode(&options, &mut vec![], true));
-                for (counter, key_val) in iter.enumerate() {
+                let conn_iter =
+                    conn.iterator(DbUtils::get_iteration_mode(&options, &mut vec![], true));
+                for (counter, key_val) in conn_iter.enumerate() {
                     if DbUtils::is_key_out_of_range(
                         &options,
                         &(key_val.as_ref().unwrap().0),
@@ -552,25 +555,25 @@ impl StateDB {
                     ) {
                         break;
                     }
-                    let c = Arc::clone(&a_cb_on_data);
+                    let callback_on_data = Arc::clone(&callback_on_data);
                     channel.send(move |mut ctx| {
                         let (_, key_without_prefix) =
                             key_val.as_ref().unwrap().0.split_first().unwrap();
                         let temp_pair =
                             KVPair::new(key_without_prefix, &(key_val.as_ref().unwrap().1));
                         let obj = pair_to_js_object(&mut ctx, &temp_pair)?;
-                        let cb = c.lock().unwrap().to_inner(&mut ctx);
+                        let callback = callback_on_data.lock().unwrap().to_inner(&mut ctx);
                         let this = ctx.undefined();
                         let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];
-                        cb.call(&mut ctx, this, args)?;
+                        callback.call(&mut ctx, this, args)?;
                         Ok(())
                     });
                 }
                 channel.send(move |mut ctx| {
-                    let cb_2 = cb_done.into_inner(&mut ctx);
+                    let callback_done = callback_done.into_inner(&mut ctx);
                     let this = ctx.undefined();
                     let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast()];
-                    cb_2.call(&mut ctx, this, args)?;
+                    callback_done.call(&mut ctx, this, args)?;
 
                     Ok(())
                 });
@@ -600,7 +603,7 @@ impl StateDB {
         let expected = ctx.argument::<JsTypedArray<u8>>(4)?.as_slice(&ctx).to_vec();
 
         let check_root = ctx.argument::<JsBoolean>(5)?.value(&mut ctx);
-        let cb = ctx.argument::<JsFunction>(6)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(6)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
@@ -612,7 +615,7 @@ impl StateDB {
         let commit = Commit::new(expected, options, check_root);
         let writer = Arc::clone(&writer.borrow());
         let commit_data = CommitData::new(commit, prev_root);
-        db.commit(writer, commit_data, cb)
+        db.commit(writer, commit_data, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -632,9 +635,9 @@ impl StateDB {
             queries.push(key);
         }
 
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
 
-        db.prove(state_root, queries, cb)
+        db.prove(state_root, queries, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -648,7 +651,7 @@ impl StateDB {
 
         let proof = Self::proof(&mut ctx)?;
         let parsed_query_keys = Self::parse_query_keys(&mut ctx)?;
-        let cb = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
         let channel = ctx.channel();
 
         thread::spawn(move || {
@@ -656,7 +659,7 @@ impl StateDB {
                 smt::SparseMerkleTree::verify(&parsed_query_keys, &proof, &state_root, key_length);
 
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
@@ -679,9 +682,9 @@ impl StateDB {
 
         let version = ctx.argument::<JsNumber>(0)?.value(&mut ctx).into();
 
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
-        db.clean_diff_until(version, cb)
+        db.clean_diff_until(version, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -692,10 +695,10 @@ impl StateDB {
         let db = db.borrow();
 
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
         db.common
-            .checkpoint(path, cb)
+            .checkpoint(path, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())

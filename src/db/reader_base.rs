@@ -64,14 +64,14 @@ impl ReaderBase {
     pub fn get_by_key(
         &self,
         key: Vec<u8>,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<SnapshotMessage>> {
         let key = Kind::State.key(key);
         self.send(move |conn, channel| {
             let result = conn.get(&key);
 
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(Some(val)) => {

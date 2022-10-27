@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::consts::PREFIX_BRANCH_HASH;
+use crate::consts::{PREFIX_BRANCH_HASH, PREFIX_EMPTY, PREFIX_LEAF_HASH};
 use crate::db::traits::Actions;
 use crate::types::{
     ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
@@ -22,8 +22,6 @@ pub const EMPTY_HASH: [u8; 32] = [
     227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228,
     100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85,
 ];
-static PREFIX_LEAF_HASH: &[u8] = &[0];
-static PREFIX_EMPTY: &[u8] = &[2];
 
 type SharedNode = ArcMutex<Node>;
 
@@ -93,21 +91,15 @@ struct SubTree {
     root: Arc<Vec<u8>>,
 }
 
-struct QueryHashesExtraInfo {
-    height: Height,
-    target_id: usize,
-    max_index: usize,
-}
-
 struct GenerateResultData<'a> {
     query_key: &'a [u8],
     current_node: &'a Node,
-    ref_mut_vecs: QueryHashesRefMut<'a>,
+    query_hashes: QueryHashes<'a>,
     height: Height,
     query_height: Height,
 }
 
-struct QueryHashesRefMut<'a> {
+struct QueryHashes<'a> {
     ancestor_hashes: &'a mut VecDeque<Vec<u8>>,
     sibling_hashes: &'a mut VecDeque<Vec<u8>>,
     binary_bitmap: &'a mut Vec<bool>,
@@ -116,8 +108,14 @@ struct QueryHashesRefMut<'a> {
 struct QueryHashesInfo<'a> {
     layer_nodes: Vec<SharedNode>,
     layer_structure: Vec<u8>,
-    ref_mut_vecs: QueryHashesRefMut<'a>,
+    ref_mut_vecs: QueryHashes<'a>,
     extra: QueryHashesExtraInfo,
+}
+
+struct QueryHashesExtraInfo {
+    height: Height,
+    target_id: usize,
+    max_index: usize,
 }
 
 struct NextQueryHashesInfo {
@@ -171,7 +169,7 @@ impl Hash256 for KVPair {
     }
 }
 
-fn parent_node(
+fn get_parent_node(
     layer_nodes: &[SharedNode],
     layer_structure: &[u8],
     tree_map: &mut VecDeque<(Vec<SharedNode>, Vec<u8>)>,
@@ -237,7 +235,7 @@ fn calculate_subtree(
                 continue;
             }
 
-            let parent = parent_node(&layer_nodes, &layer_structure, tree_map, i)?;
+            let parent = get_parent_node(&layer_nodes, &layer_structure, tree_map, i)?;
             next_layer_nodes.push(parent);
             next_layer_structure.push(layer_structure[i] - 1);
             // using 2 layer nodes
@@ -260,7 +258,7 @@ fn calculate_subtree(
     SubTree::from_data(&[0], &layer_nodes)
 }
 
-fn calc_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
+fn calculate_next_info(info: &mut QueryHashesInfo, next_info: &mut NextQueryHashesInfo, i: usize) {
     let layer_node = info.layer_nodes[i].lock().unwrap();
     let layer_node_next = info.layer_nodes[i + 1].lock().unwrap();
 
@@ -313,7 +311,7 @@ fn calculate_query_hashes(mut info: QueryHashesInfo) {
                 i += 1;
                 continue;
             }
-            calc_next_info(&mut info, &mut next_info, i);
+            calculate_next_info(&mut info, &mut next_info, i);
             i += 2;
         }
         let new_extra = QueryHashesExtraInfo::new(
@@ -349,7 +347,7 @@ fn insert_and_filter_queries(q: QueryProofWithProof, queries: &mut VecDeque<Quer
     }
 
     let original = &queries[index as usize];
-    if !utils::arr_eq_bool(&q.binary_path(), &original.binary_path()) {
+    if !utils::array_equal_bool(&q.binary_path(), &original.binary_path()) {
         queries.insert(index as usize, q);
     }
 }
@@ -420,7 +418,7 @@ impl Hasher {
         }
     }
 
-    fn run(&mut self) -> Arc<Vec<u8>> {
+    fn execute(&mut self) -> Arc<Vec<u8>> {
         while self.node_hashes.len() != 1 {
             let mut next_hashes: Vec<Arc<Vec<u8>>> = Vec::with_capacity(self.node_hashes.len());
             let mut next_structure: Vec<u8> = Vec::with_capacity(self.node_hashes.len());
@@ -708,7 +706,7 @@ impl SubTree {
             .map(|n| Arc::new(n.lock().unwrap().hash.value_as_vec()))
             .collect::<Vec<Arc<Vec<u8>>>>();
         let mut hasher = Hasher::new(&node_hashes, structure, height);
-        let calculated = hasher.run();
+        let calculated = hasher.execute();
 
         Ok(Self {
             structure: structure.to_vec(),
@@ -759,13 +757,13 @@ impl<'a> QueryHashesInfo<'a> {
     fn new(
         layer_nodes: Vec<SharedNode>,
         layer_structure: Vec<u8>,
-        vecs: QueryHashesRefMut<'a>,
+        vecs: QueryHashes<'a>,
         extra: QueryHashesExtraInfo,
     ) -> Self {
         QueryHashesInfo {
             layer_nodes,
             layer_structure,
-            ref_mut_vecs: QueryHashesRefMut {
+            ref_mut_vecs: QueryHashes {
                 sibling_hashes: vecs.sibling_hashes,
                 ancestor_hashes: vecs.ancestor_hashes,
                 binary_bitmap: vecs.binary_bitmap,
@@ -813,7 +811,7 @@ impl<'a> UpdateNodeInfo<'a> {
 }
 
 impl SparseMerkleTree {
-    fn proof_queries(&self, query_with_proofs: &[QueryProofWithProof]) -> Vec<QueryProof> {
+    fn get_proof_queries(&self, query_with_proofs: &[QueryProofWithProof]) -> Vec<QueryProof> {
         let proof_queries: Vec<QueryProof> = query_with_proofs
             .iter()
             .map(|query| QueryProof {
@@ -825,7 +823,7 @@ impl SparseMerkleTree {
         proof_queries
     }
 
-    fn sibling_data(
+    fn generate_sibling_data(
         &mut self,
         db: &mut impl Actions,
         queries: &[Vec<u8>],
@@ -842,13 +840,13 @@ impl SparseMerkleTree {
         Ok((query_with_proofs, ancestor_hashes))
     }
 
-    fn filter_map(proof: &Proof) -> HashMap<Vec<bool>, QueryProofWithProof> {
-        let mut filter_map: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
+    fn prepare_queries_with_proof_map(proof: &Proof) -> HashMap<Vec<bool>, QueryProofWithProof> {
+        let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
         for query in &proof.queries {
             let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
             let binary_path = utils::bytes_to_bools(&query.pair.0)[..binary_bitmap.len()].to_vec();
 
-            filter_map.insert(
+            queries_with_proof.insert(
                 binary_path,
                 QueryProofWithProof::new_with_pair(
                     Arc::clone(&query.pair),
@@ -859,10 +857,10 @@ impl SparseMerkleTree {
             );
         }
 
-        filter_map
+        queries_with_proof
     }
 
-    fn verify_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: KeyLength) -> bool {
+    fn verify_query_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: KeyLength) -> bool {
         for (i, key) in query_keys.iter().enumerate() {
             if key.len() != key_length.into() {
                 return false;
@@ -900,7 +898,7 @@ impl SparseMerkleTree {
         SubTree::new(&value, self.key_length)
     }
 
-    fn calc_bins<'a>(
+    fn calculate_bins<'a>(
         &mut self,
         key_bin: &'a [&'a [u8]],
         value_bin: &'a [&'a [u8]],
@@ -930,7 +928,7 @@ impl SparseMerkleTree {
         Ok(Bins { keys, values })
     }
 
-    fn calc_updated_info<'a>(
+    fn calculate_updated_info<'a>(
         &mut self,
         db: &mut impl Actions,
         current_subtree: &SubTree,
@@ -938,7 +936,7 @@ impl SparseMerkleTree {
         value_bin: &'a [&'a [u8]],
         height: Height,
     ) -> Result<UpdatedInfo, SMTError> {
-        let bins = self.calc_bins(key_bin, value_bin, height)?;
+        let bins = self.calculate_bins(key_bin, value_bin, height)?;
         let mut nodes: Vec<SharedNode> = vec![];
         let mut structures: Vec<u8> = vec![];
         let mut bin_offset = 0;
@@ -995,7 +993,8 @@ impl SparseMerkleTree {
         if key_bin.is_empty() {
             return Ok(current_subtree.clone());
         }
-        let updated = self.calc_updated_info(db, current_subtree, key_bin, value_bin, height)?;
+        let updated =
+            self.calculate_updated_info(db, current_subtree, key_bin, value_bin, height)?;
         if updated.bin_offset != self.max_number_of_nodes {
             return Err(SMTError::Unknown(format!(
                 "bin_offset {} expected {}",
@@ -1023,7 +1022,7 @@ impl SparseMerkleTree {
         Ok(new_subtree)
     }
 
-    fn update_one_node(
+    fn update_single_node(
         &self,
         info: &UpdateNodeInfo,
     ) -> Result<Option<(SharedNode, StructurePosition)>, SMTError> {
@@ -1101,7 +1100,7 @@ impl SparseMerkleTree {
         Ok((Arc::new(Mutex::new(new_branch)), info.structure_pos))
     }
 
-    fn left_right_nodes(
+    fn get_left_and_right_nodes(
         &self,
         info: &UpdateNodeInfo,
     ) -> Result<(SharedNode, SharedNode), SMTError> {
@@ -1145,7 +1144,7 @@ impl SparseMerkleTree {
             ));
         }
         if total_data == 1 {
-            if let Some((node, structure)) = self.update_one_node(&info)? {
+            if let Some((node, structure)) = self.update_single_node(&info)? {
                 return Ok((vec![node], vec![structure.into()]));
             }
         }
@@ -1155,7 +1154,7 @@ impl SparseMerkleTree {
             return Ok((vec![node], vec![structure.into()]));
         }
 
-        let (left_node, right_node) = self.left_right_nodes(&info)?;
+        let (left_node, right_node) = self.get_left_and_right_nodes(&info)?;
         let idx = info.key_bins.len() / 2;
         let left_info = UpdateNodeInfo::new(
             &info.key_bins[0..idx],
@@ -1221,19 +1220,19 @@ impl SparseMerkleTree {
         Ok((Arc::clone(&current_node.unwrap()), h.into()))
     }
 
-    fn calc_query_proof_from_result(
+    fn calculate_query_proof_from_result(
         &mut self,
         db: &mut impl Actions,
         d: &GenerateResultData,
     ) -> Result<QueryProofWithProof, SMTError> {
-        let mut ancestor_hashes = d.ref_mut_vecs.ancestor_hashes.clone();
-        let sibling_hashes = Vec::from(d.ref_mut_vecs.sibling_hashes.clone());
-        let binary_bitmap = d.ref_mut_vecs.binary_bitmap.clone();
+        let mut ancestor_hashes = d.query_hashes.ancestor_hashes.clone();
+        let sibling_hashes = Vec::from(d.query_hashes.sibling_hashes.clone());
+        let binary_bitmap = d.query_hashes.binary_bitmap.clone();
         if d.current_node.kind == NodeKind::Empty {
             let pair = Arc::new(KVPair::new(d.query_key, &[]));
             return Ok(QueryProofWithProof::new_with_pair(
                 pair,
-                d.ref_mut_vecs.binary_bitmap,
+                d.query_hashes.binary_bitmap,
                 &Vec::from(ancestor_hashes),
                 &(sibling_hashes),
             ));
@@ -1276,7 +1275,7 @@ impl SparseMerkleTree {
         ))
     }
 
-    fn calc_query_hashes_extra_info(
+    fn calculate_query_hashes_extra_info(
         &self,
         current_subtree: &mut SubTree,
         current_node: &Node,
@@ -1317,12 +1316,12 @@ impl SparseMerkleTree {
         let mut ancestor_hashes = VecDeque::new();
         let mut sibling_hashes = VecDeque::new();
         let mut binary_bitmap: Vec<bool> = vec![];
-        let extra =
-            self.calc_query_hashes_extra_info(current_subtree, &current_node.lock().unwrap())?;
+        let extra = self
+            .calculate_query_hashes_extra_info(current_subtree, &current_node.lock().unwrap())?;
         let info = QueryHashesInfo::new(
             current_subtree.nodes.clone(),
             current_subtree.structure.clone(),
-            QueryHashesRefMut {
+            QueryHashes {
                 ancestor_hashes: &mut ancestor_hashes,
                 sibling_hashes: &mut sibling_hashes,
                 binary_bitmap: &mut binary_bitmap,
@@ -1333,7 +1332,7 @@ impl SparseMerkleTree {
         let data = GenerateResultData {
             query_key,
             current_node: &current_node.lock().unwrap(),
-            ref_mut_vecs: QueryHashesRefMut {
+            query_hashes: QueryHashes {
                 ancestor_hashes: &mut ancestor_hashes,
                 sibling_hashes: &mut sibling_hashes,
                 binary_bitmap: &mut binary_bitmap,
@@ -1341,7 +1340,7 @@ impl SparseMerkleTree {
             height,
             query_height,
         };
-        self.calc_query_proof_from_result(db, &data)
+        self.calculate_query_proof_from_result(db, &data)
     }
 
     fn calculate_root(sibling_hashes: &[Vec<u8>], queries: &mut [QueryProofWithProof]) -> Vec<u8> {
@@ -1426,8 +1425,8 @@ impl SparseMerkleTree {
                 sibling_hashes: vec![],
             });
         }
-        let (mut query_with_proofs, ancestor_hashes) = self.sibling_data(db, queries)?;
-        let proof_queries = self.proof_queries(&query_with_proofs);
+        let (mut query_with_proofs, ancestor_hashes) = self.generate_sibling_data(db, queries)?;
+        let proof_queries = self.get_proof_queries(&query_with_proofs);
 
         query_with_proofs.sort_descending();
 
@@ -1455,10 +1454,10 @@ impl SparseMerkleTree {
             return Ok(false);
         }
 
-        if !Self::verify_keys(proof, query_keys, key_length) {
+        if !Self::verify_query_keys(proof, query_keys, key_length) {
             return Ok(false);
         }
-        let filter_map = Self::filter_map(proof);
+        let filter_map = Self::prepare_queries_with_proof_map(proof);
         let mut filtered_proof = filter_map
             .values()
             .cloned()

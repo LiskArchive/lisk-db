@@ -22,7 +22,7 @@ pub struct Database {
     cache: CacheData,
 }
 
-fn sort_kv_pair(pairs: &mut [KVPair], reverse: bool) {
+fn sort_key_value_pair(pairs: &mut [KVPair], reverse: bool) {
     if !reverse {
         pairs.sort_by(|a, b| a.key().cmp(b.key()));
         return;
@@ -43,7 +43,7 @@ fn get_key_value_pairs(db: RefMut<Database>, options: &IterationOption) -> Vec<K
         db.cache_range(&gte, &lte)
     };
 
-    sort_kv_pair(&mut cached, options.reverse);
+    sort_key_value_pair(&mut cached, options.reverse);
     if options.limit != -1 && cached.len() > options.limit as usize {
         cached = cached[..options.limit as usize].to_vec();
     }
@@ -88,7 +88,7 @@ impl Database {
         self.cache.data.clear();
     }
 
-    fn set_kv(&mut self, pair: &KVPair) {
+    fn set_key_value(&mut self, pair: &KVPair) {
         self.cache
             .data
             .insert(pair.key_as_vec(), pair.value_as_vec());
@@ -116,7 +116,7 @@ impl Database {
 
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(1)?;
+        let callback = ctx.argument::<JsFunction>(1)?;
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
 
@@ -129,7 +129,7 @@ impl Database {
             },
             None => vec![ctx.error("No data")?.upcast()],
         };
-        cb.call(&mut ctx, this, args)?;
+        callback.call(&mut ctx, this, args)?;
 
         Ok(ctx.undefined())
     }
@@ -141,7 +141,7 @@ impl Database {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
 
-        db.set_kv(&KVPair::new(&key, &value));
+        db.set_key_value(&KVPair::new(&key, &value));
 
         Ok(ctx.undefined())
     }
@@ -196,7 +196,7 @@ impl Database {
         let batch = ctx
             .argument::<batch::SendableWriteBatch>(0)?
             .downcast_or_throw::<batch::SendableWriteBatch, _>(&mut ctx)?;
-        let cb = ctx.argument::<JsFunction>(1)?;
+        let callback = ctx.argument::<JsFunction>(1)?;
 
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let mut db = db.borrow_mut();
@@ -208,7 +208,7 @@ impl Database {
 
         let this = ctx.undefined();
         let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast()];
-        cb.call(&mut ctx, this, args)?;
+        callback.call(&mut ctx, this, args)?;
 
         Ok(ctx.undefined())
     }
@@ -235,13 +235,13 @@ mod tests {
         let mut db = Database {
             cache: CacheData { data: Cache::new() },
         };
-        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
-        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
-        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
-        db.set_kv(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44]));
-        db.set_kv(&KVPair::new(&[5, 5, 5, 5], &[55, 55, 55, 55]));
-        db.set_kv(&KVPair::new(&[6, 6, 6, 6], &[66, 66, 66, 66]));
-        db.set_kv(&KVPair::new(&[7, 7, 7, 7], &[77, 77, 77, 77]));
+        db.set_key_value(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_key_value(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_key_value(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_key_value(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44]));
+        db.set_key_value(&KVPair::new(&[5, 5, 5, 5], &[55, 55, 55, 55]));
+        db.set_key_value(&KVPair::new(&[6, 6, 6, 6], &[66, 66, 66, 66]));
+        db.set_key_value(&KVPair::new(&[7, 7, 7, 7], &[77, 77, 77, 77]));
 
         let cached = db.cache_range(&[2], &[5]);
 
@@ -256,13 +256,13 @@ mod tests {
         let mut db = Database {
             cache: CacheData { data: Cache::new() },
         };
-        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
-        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
-        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
-        db.set_kv(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44]));
-        db.set_kv(&KVPair::new(&[5, 5, 5, 5], &[55, 55, 55, 55]));
-        db.set_kv(&KVPair::new(&[6, 6, 6, 6], &[66, 66, 66, 66]));
-        db.set_kv(&KVPair::new(&[7, 7, 7, 7], &[77, 77, 77, 77]));
+        db.set_key_value(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_key_value(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_key_value(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_key_value(&KVPair::new(&[4, 4, 4, 4], &[44, 44, 44, 44]));
+        db.set_key_value(&KVPair::new(&[5, 5, 5, 5], &[55, 55, 55, 55]));
+        db.set_key_value(&KVPair::new(&[6, 6, 6, 6], &[66, 66, 66, 66]));
+        db.set_key_value(&KVPair::new(&[7, 7, 7, 7], &[77, 77, 77, 77]));
 
         let cached = db.cache_all();
 
@@ -277,8 +277,8 @@ mod tests {
         let mut db = Database {
             cache: CacheData { data: Cache::new() },
         };
-        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
-        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_key_value(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_key_value(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
         assert_eq!(db.cache.data.len(), 2);
 
         db.clear();
@@ -291,11 +291,11 @@ mod tests {
         let mut db = Database {
             cache: CacheData { data: Cache::new() },
         };
-        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
-        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_key_value(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_key_value(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
         assert_eq!(db.cache.data.len(), 2);
 
-        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_key_value(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
         assert_eq!(db.cache.data.len(), 3);
 
         assert_eq!(
@@ -309,9 +309,9 @@ mod tests {
         let mut db = Database {
             cache: CacheData { data: Cache::new() },
         };
-        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
-        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
-        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_key_value(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_key_value(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_key_value(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
 
         db.del(&[2, 2, 2, 2]);
 
@@ -324,9 +324,9 @@ mod tests {
         let mut db = Database {
             cache: CacheData { data: Cache::new() },
         };
-        db.set_kv(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
-        db.set_kv(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
-        db.set_kv(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
+        db.set_key_value(&KVPair::new(&[1, 1, 1, 1], &[11, 11, 11, 11]));
+        db.set_key_value(&KVPair::new(&[2, 2, 2, 2], &[22, 22, 22, 22]));
+        db.set_key_value(&KVPair::new(&[3, 3, 3, 3], &[33, 33, 33, 33]));
 
         let cloned = db.clone();
 

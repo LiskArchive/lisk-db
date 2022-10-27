@@ -106,7 +106,7 @@ pub fn bytes_in(list: &[Vec<u8>], a: &[u8]) -> bool {
     false
 }
 
-pub fn arr_eq_bool(a: &[bool], b: &[bool]) -> bool {
+pub fn array_equal_bool(a: &[bool], b: &[bool]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -118,12 +118,12 @@ pub fn arr_eq_bool(a: &[bool], b: &[bool]) -> bool {
     true
 }
 
-pub fn binary_search<T>(list: &[T], cb: impl Fn(&T) -> bool) -> i32 {
+pub fn binary_search<T>(list: &[T], callback: impl Fn(&T) -> bool) -> i32 {
     let mut lo = -1;
     let mut hi = list.len() as i32;
     while 1 + lo < hi {
         let mi = lo + ((hi - lo) >> 1);
-        if cb(&list[mi as usize]) {
+        if callback(&list[mi as usize]) {
             hi = mi;
         } else {
             lo = mi;
@@ -330,19 +330,28 @@ mod tests {
     }
 
     #[test]
-    fn test_arr_eq_bool() {
-        assert!(arr_eq_bool(&[true, false, true], &[true, false, true]));
-        assert!(arr_eq_bool(&[false, false, false], &[false, false, false]));
-        assert!(arr_eq_bool(&[true, true, true], &[true, true, true]));
+    fn test_array_equal_bool() {
+        assert!(array_equal_bool(&[true, false, true], &[true, false, true]));
+        assert!(array_equal_bool(
+            &[false, false, false],
+            &[false, false, false]
+        ));
+        assert!(array_equal_bool(&[true, true, true], &[true, true, true]));
 
-        assert!(!arr_eq_bool(&[true, false, true], &[true, true, true]));
-        assert!(!arr_eq_bool(&[true, false, true], &[true, false, false]));
-        assert!(!arr_eq_bool(&[true, false, true], &[false, false, true]));
+        assert!(!array_equal_bool(&[true, false, true], &[true, true, true]));
+        assert!(!array_equal_bool(
+            &[true, false, true],
+            &[true, false, false]
+        ));
+        assert!(!array_equal_bool(
+            &[true, false, true],
+            &[false, false, true]
+        ));
 
-        assert!(!arr_eq_bool(&[true, true, true], &[true, true]));
-        assert!(!arr_eq_bool(&[true, true], &[true, true, true]));
-        assert!(!arr_eq_bool(&[false, false, false], &[false, false]));
-        assert!(!arr_eq_bool(&[false, false], &[false, false, false]));
+        assert!(!array_equal_bool(&[true, true, true], &[true, true]));
+        assert!(!array_equal_bool(&[true, true], &[true, true, true]));
+        assert!(!array_equal_bool(&[false, false, false], &[false, false]));
+        assert!(!array_equal_bool(&[false, false], &[false, false, false]));
     }
 
     #[test]

@@ -20,7 +20,7 @@ impl ReadWriter {
     // update or insert the pair of key and value
     fn upsert_key(
         &self,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
         writer: ArcMutex<state_writer::StateWriter>,
         key: Vec<u8>,
         new_value: Vec<u8>,
@@ -56,7 +56,7 @@ impl ReadWriter {
                 };
 
                 let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 callback.call(&mut ctx, this, args)?;
                 Ok(())
             });
@@ -65,7 +65,7 @@ impl ReadWriter {
 
     fn get_key_with_writer(
         &self,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
         writer: ArcMutex<state_writer::StateWriter>,
         key: Vec<u8>,
     ) -> Result<(), mpsc::SendError<SnapshotMessage>> {
@@ -99,7 +99,7 @@ impl ReadWriter {
                 };
 
                 let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 callback.call(&mut ctx, this, args)?;
                 Ok(())
             });
@@ -108,7 +108,7 @@ impl ReadWriter {
 
     fn delete_key(
         &self,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
         writer: ArcMutex<state_writer::StateWriter>,
         key: Vec<u8>,
     ) -> Result<(), mpsc::SendError<SnapshotMessage>> {
@@ -117,7 +117,7 @@ impl ReadWriter {
             let value = conn.get(&state_db_key);
             channel.send(move |mut ctx| {
                 let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 // the following scope use to release writer at the end of it
                 {
                     let mut writer = writer.lock().unwrap();
@@ -147,7 +147,7 @@ impl ReadWriter {
 
     fn range(
         &self,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
         writer: ArcMutex<state_writer::StateWriter>,
         options: options::IterationOption,
     ) -> Result<(), mpsc::SendError<SnapshotMessage>> {
@@ -181,7 +181,7 @@ impl ReadWriter {
                     cache_to_js_array(&mut ctx, &result)?
                 };
                 let this = ctx.undefined();
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let args = vec![ctx.null().upcast(), result.upcast()];
                 callback.call(&mut ctx, this, args)?;
 
@@ -197,15 +197,15 @@ impl ReadWriter {
             .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
         let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(2)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReadeerWriter`
+        let callback = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
+        // Get the `this` value as a `SharedReaderWriter`
         let db = ctx
             .this()
             .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
         let db = db.borrow();
 
         let writer = Arc::clone(&batch.borrow_mut());
-        db.upsert_key(cb, writer, key, value)
+        db.upsert_key(callback, writer, key, value)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -217,14 +217,14 @@ impl ReadWriter {
             .argument::<state_writer::SendableStateWriter>(0)?
             .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
         let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReadeerWriter`
+        let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        // Get the `this` value as a `SharedReaderWriter`
         let db = ctx
             .this()
             .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
         let db = db.borrow_mut();
         let writer = Arc::clone(&batch.borrow_mut());
-        db.get_key_with_writer(cb, writer, key)
+        db.get_key_with_writer(callback, writer, key)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -236,14 +236,14 @@ impl ReadWriter {
             .argument::<state_writer::SendableStateWriter>(0)?
             .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
         let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReadeerWriter`
+        let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        // Get the `this` value as a `SharedReaderWriter`
         let db = ctx
             .this()
             .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
         let db = db.borrow_mut();
         let writer = Arc::clone(&batch.borrow_mut());
-        db.delete_key(cb, writer, key)
+        db.delete_key(callback, writer, key)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
@@ -256,14 +256,14 @@ impl ReadWriter {
             .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
         let option_inputs = ctx.argument::<JsObject>(1)?;
         let options = options::IterationOption::new(&mut ctx, option_inputs);
-        let cb = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReadeerWriter`
+        let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
+        // Get the `this` value as a `SharedReaderWriter`
         let db = ctx
             .this()
             .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
         let db = db.borrow_mut();
         let writer = Arc::clone(&batch.borrow_mut());
-        db.range(cb, writer, options)
+        db.range(callback, writer, options)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
