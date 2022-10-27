@@ -17,6 +17,25 @@ pub struct Error {
 pub type Database = DB;
 impl JsNewWithBox for Database {}
 impl Database {
+    fn send_over_channel(
+        channel: &Channel,
+        callback: Root<JsFunction>,
+        result: Result<(), rocksdb::Error>,
+    ) {
+        channel.send(move |mut ctx| {
+            let callback = callback.into_inner(&mut ctx);
+            let this = ctx.undefined();
+            let args: Vec<Handle<JsValue>> = match result {
+                Ok(_) => vec![ctx.null().upcast()],
+                Err(err) => vec![ctx.error(&err)?.upcast()],
+            };
+
+            callback.call(&mut ctx, this, args)?;
+
+            Ok(())
+        });
+    }
+
     pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx
@@ -32,19 +51,7 @@ impl Database {
                 batch.delete(&(key_val.unwrap().0));
             }
             let result = conn.write(batch);
-
-            channel.send(move |mut ctx| {
-                let callback = callback.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
+            Database::send_over_channel(channel, callback, result);
         })
         .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -100,18 +107,7 @@ impl Database {
 
         let result = db.put(&key, &value);
         db.send(move |channel| {
-            channel.send(move |mut ctx| {
-                let callback = callback.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
+            Database::send_over_channel(channel, callback, result);
         })
         .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -128,18 +124,7 @@ impl Database {
 
         let result = db.delete(&key);
         db.send(move |channel| {
-            channel.send(move |mut ctx| {
-                let callback = callback.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
+            Database::send_over_channel(channel, callback, result);
         })
         .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -164,18 +149,7 @@ impl Database {
             let mut write_batch = batch::WriteBatch { batch: write_batch };
             inner_batch.batch.iterate(&mut write_batch);
             let result = conn.write(write_batch.batch);
-            channel.send(move |mut ctx| {
-                let callback = callback.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = match result {
-                    Ok(_) => vec![ctx.null().upcast()],
-                    Err(err) => vec![ctx.error(&err)?.upcast()],
-                };
-
-                callback.call(&mut ctx, this, args)?;
-
-                Ok(())
-            });
+            Database::send_over_channel(channel, callback, result);
         })
         .or_else(|err| ctx.throw_error(err.to_string()))?;
 
