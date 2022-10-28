@@ -4,9 +4,10 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::batch;
-use crate::common_db::{JsNewWithBox, DB};
-use crate::options::IterationOption;
-use crate::utils;
+use crate::db::options::IterationOption;
+use crate::db::traits::JsNewWithBox;
+use crate::db::utils;
+use crate::db::DB;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
@@ -23,7 +24,8 @@ impl Database {
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
         let cb = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
-        db.send(move |conn, channel| {
+        let conn = db.arc_clone();
+        db.send(move |channel| {
             let mut batch = rocksdb::WriteBatch::default();
             let iter = conn.iterator(rocksdb::IteratorMode::Start);
             for key_val in iter {
@@ -96,9 +98,8 @@ impl Database {
             .this()
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
-        db.send(move |conn, channel| {
-            let result = conn.put(key, value);
-
+        let result = db.put(&key, &value);
+        db.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -125,9 +126,8 @@ impl Database {
             .this()
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
-        db.send(move |conn, channel| {
-            let result = conn.delete(key);
-
+        let result = db.delete(&key);
+        db.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = cb.into_inner(&mut ctx);
                 let this = ctx.undefined();
@@ -157,8 +157,8 @@ impl Database {
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
         let batch = Arc::clone(&batch.borrow());
-
-        db.send(move |conn, channel| {
+        let conn = db.arc_clone();
+        db.send(move |channel| {
             let b = rocksdb::WriteBatch::default();
             let inner_batch = batch.lock().unwrap();
             let mut write_batch = batch::WriteBatch { batch: b };
@@ -194,7 +194,8 @@ impl Database {
             .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
 
         let a_cb_on_data = Arc::new(Mutex::new(cb_on_data));
-        db.send(move |conn, channel| {
+        let conn = db.arc_clone();
+        db.send(move |channel| {
             let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], false));
             for (counter, key_val) in iter.enumerate() {
                 if utils::is_key_out_of_range(

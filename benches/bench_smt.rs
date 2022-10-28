@@ -1,3 +1,4 @@
+use std::sync::mpsc;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -7,9 +8,11 @@ use tempdir::TempDir;
 
 use lisk_db::batch::PrefixWriteBatch;
 use lisk_db::consts;
+use lisk_db::db::types::{DbMessage, Kind};
+use lisk_db::db::DB as LDB;
 use lisk_db::smt::{SparseMerkleTree, UpdateData};
 use lisk_db::smt_db;
-use lisk_db::{Cache, KeyLength, NestedVec, SharedKVPair};
+use lisk_db::types::{Cache, KeyLength, NestedVec, SharedKVPair};
 
 const DATA_LEN: usize = 100_000;
 const QUERY_LEN: usize = 1_000;
@@ -54,7 +57,9 @@ fn test_smt(data: &UpdateData, query_keys: &[Vec<u8>]) {
     let mut opts = Options::default();
     opts.create_if_missing(true);
     let rocks_db = DB::open(&opts, temp_dir.path()).unwrap();
-    let mut db = smt_db::SmtDB::new(&rocks_db);
+    let (tx, _) = mpsc::channel::<DbMessage>();
+    let common_db = LDB::new(rocks_db, tx, Kind::Normal);
+    let mut db = smt_db::SmtDB::new(&common_db);
 
     let root = tree.commit(&mut db, data).unwrap();
 
@@ -62,7 +67,7 @@ fn test_smt(data: &UpdateData, query_keys: &[Vec<u8>]) {
     let mut write_batch = PrefixWriteBatch::new();
     write_batch.set_prefix(&consts::Prefix::SMT);
     db.batch.iterate(&mut write_batch);
-    rocks_db.write(write_batch.batch).unwrap();
+    common_db.write(write_batch.batch).unwrap();
 
     let proof = tree
         .prove(

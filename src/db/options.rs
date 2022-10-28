@@ -1,19 +1,10 @@
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
-use crate::common_db::OptionsWithContext;
 use crate::consts;
-use crate::types::{DbOptions, KeyLength, VecOption};
-
-pub type DbCallback = Box<dyn FnOnce(&mut rocksdb::DB, &Channel) + Send>;
-
-// Messages sent on the database channel
-pub enum DbMessage {
-    // Callback to be executed
-    Callback(DbCallback),
-    // Indicates that the thread should be stopped and connection closed
-    Close,
-}
+use crate::db::traits::OptionsWithContext;
+use crate::db::types::DbOptions;
+use crate::types::{KeyLength, VecOption};
 
 #[derive(Clone, Debug)]
 pub struct IterationOption {

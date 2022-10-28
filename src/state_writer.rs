@@ -6,11 +6,10 @@ use neon::prelude::*;
 use thiserror::Error;
 
 use crate::batch;
-use crate::common_db::{
-    DatabaseKind, JsArcMutex, JsNewWithArcMutex, Kind as DBKind, NewDBWithKeyLength,
-};
+use crate::db::options::IterationOption;
+use crate::db::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
+use crate::db::types::{JsArcMutex, Kind as DBKind};
 use crate::diff;
-use crate::options::IterationOption;
 use crate::types::{Cache, KVPair, KeyLength, SharedKVPair, VecOption};
 use crate::utils;
 

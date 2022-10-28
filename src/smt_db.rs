@@ -1,9 +1,10 @@
-use crate::common_db::Actions;
 use crate::consts;
+use crate::db::traits::Actions;
+use crate::db::DB;
 use crate::types::{Cache, KVPair, VecOption};
 
 pub struct SmtDB<'a> {
-    db: &'a rocksdb::DB,
+    db: &'a DB,
     pub batch: rocksdb::WriteBatch,
 }
 
@@ -14,7 +15,7 @@ pub struct InMemorySmtDB {
 
 impl Actions for SmtDB<'_> {
     fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error> {
-        let result = self.db.get([consts::Prefix::SMT, key].concat())?;
+        let result = self.db.get(&[consts::Prefix::SMT, key].concat())?;
         Ok(result)
     }
 
@@ -30,7 +31,7 @@ impl Actions for SmtDB<'_> {
 }
 
 impl<'a> SmtDB<'a> {
-    pub fn new(db: &'a rocksdb::DB) -> Self {
+    pub fn new(db: &'a DB) -> Self {
         Self {
             db,
             batch: rocksdb::WriteBatch::default(),
@@ -60,17 +61,26 @@ impl Actions for InMemorySmtDB {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
     use tempdir::TempDir;
 
     use crate::batch::PrefixWriteBatch;
+    use crate::db::types::{DbMessage, Kind};
+    use crate::db::DB;
 
     use super::*;
 
-    #[test]
-    fn test_new_smt_db() {
+    fn temp_db() -> (DB, TempDir) {
         let temp_dir = TempDir::new("test_smt_db").unwrap();
         let rocks_db = rocksdb::DB::open_default(&temp_dir).unwrap();
-        let smt_db = SmtDB::new(&rocks_db);
+        let (tx, _) = mpsc::channel::<DbMessage>();
+        (DB::new(rocks_db, tx, Kind::Normal), temp_dir)
+    }
+
+    #[test]
+    fn test_new_smt_db() {
+        let (db, temp_dir) = temp_db();
+        let smt_db = SmtDB::new(&db);
 
         assert_eq!(
             smt_db.db.path().to_str().unwrap(),
@@ -80,9 +90,8 @@ mod tests {
 
     #[test]
     fn test_smt_db_get() {
-        let temp_dir = TempDir::new("test_smt_db").unwrap();
-        let rocks_db = rocksdb::DB::open_default(&temp_dir).unwrap();
-        let mut smt_db = SmtDB::new(&rocks_db);
+        let (db, _) = temp_db();
+        let mut smt_db = SmtDB::new(&db);
 
         smt_db
             .set(&KVPair::new(b"test_key", b"test_value"))
@@ -100,9 +109,8 @@ mod tests {
 
     #[test]
     fn test_smt_db_set() {
-        let temp_dir = TempDir::new("test_smt_db").unwrap();
-        let rocks_db = rocksdb::DB::open_default(&temp_dir).unwrap();
-        let mut smt_db = SmtDB::new(&rocks_db);
+        let (db, _) = temp_db();
+        let mut smt_db = SmtDB::new(&db);
 
         smt_db
             .set(&KVPair::new(b"test_key", b"test_value"))
@@ -112,9 +120,8 @@ mod tests {
 
     #[test]
     fn test_smt_db_del() {
-        let temp_dir = TempDir::new("test_smt_db").unwrap();
-        let rocks_db = rocksdb::DB::open_default(&temp_dir).unwrap();
-        let mut smt_db = SmtDB::new(&rocks_db);
+        let (db, _) = temp_db();
+        let mut smt_db = SmtDB::new(&db);
 
         smt_db
             .set(&KVPair::new(b"test_key", b"test_value"))
