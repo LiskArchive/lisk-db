@@ -5,10 +5,10 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::consts;
-use crate::db::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
-use crate::db::types::{JsArcMutex, Kind as DBKind};
-use crate::smt::{Proof, QueryProof, SparseMerkleTree, UpdateData};
-use crate::smt_db;
+use crate::database::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
+use crate::database::types::{JsArcMutex, Kind as DBKind};
+use crate::sparse_merkle_tree::smt_db;
+use crate::sparse_merkle_tree::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
 
 type SharedInMemorySMT = JsArcMutex<InMemorySMT>;

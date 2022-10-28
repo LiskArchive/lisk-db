@@ -7,7 +7,7 @@ use neon::result::NeonResult;
 use neon::types::{JsArray, JsBuffer, JsObject, JsValue};
 
 use crate::consts::Prefix;
-use crate::db::options;
+use crate::database::options;
 use crate::state_writer;
 use crate::types::{Cache, KVPair};
 use crate::utils::compare;

@@ -74,6 +74,32 @@ fn read_key(val: u32) -> Result<(u32, u32), CodecError> {
 }
 
 impl<'a> Reader<'a> {
+    fn read_only_bytes(&mut self) -> Result<Vec<u8>, CodecError> {
+        let (result, size) = read_varint(self.data, self.index)?;
+        self.index += size;
+        if result as usize > self.data.len() {
+            return Err(CodecError::InvalidBytesLength);
+        }
+        let decoded = self.data[self.index..self.index + result as usize].to_vec();
+        self.index += result as usize;
+
+        Ok(decoded)
+    }
+
+    fn check(&mut self, field_number: u32) -> Result<bool, CodecError> {
+        if self.index >= self.end {
+            return Ok(false);
+        }
+
+        let (key, size) = read_varint(self.data, self.index)?;
+        let (next_field_number, _) = read_key(key)?;
+        if field_number != next_field_number {
+            return Ok(false);
+        }
+        self.index += size;
+        Ok(true)
+    }
+
     pub fn new(data: &'a [u8]) -> Self {
         let length = data.len();
         Self {
@@ -104,35 +130,22 @@ impl<'a> Reader<'a> {
             false => Ok(vec![]),
         }
     }
-
-    fn read_only_bytes(&mut self) -> Result<Vec<u8>, CodecError> {
-        let (result, size) = read_varint(self.data, self.index)?;
-        self.index += size;
-        if result as usize > self.data.len() {
-            return Err(CodecError::InvalidBytesLength);
-        }
-        let decoded = self.data[self.index..self.index + result as usize].to_vec();
-        self.index += result as usize;
-
-        Ok(decoded)
-    }
-
-    fn check(&mut self, field_number: u32) -> Result<bool, CodecError> {
-        if self.index >= self.end {
-            return Ok(false);
-        }
-
-        let (key, size) = read_varint(self.data, self.index)?;
-        let (next_field_number, _) = read_key(key)?;
-        if field_number != next_field_number {
-            return Ok(false);
-        }
-        self.index += size;
-        Ok(true)
-    }
 }
 
 impl Writer {
+    fn write_key(&mut self, wire_type: u32, field_number: u32) {
+        let key = (field_number << 3) | wire_type;
+        let key_bytes = write_varint(key);
+        self.size += key_bytes.len();
+        self.result.extend(key_bytes);
+    }
+
+    fn write_varint(&mut self, val: u32) {
+        let val_bytes = write_varint(val);
+        self.size += val_bytes.len();
+        self.result.extend(val_bytes);
+    }
+
     pub fn new() -> Self {
         Self {
             result: vec![],
@@ -158,19 +171,6 @@ impl Writer {
 
     pub fn result(&self) -> &Vec<u8> {
         &self.result
-    }
-
-    fn write_key(&mut self, wire_type: u32, field_number: u32) {
-        let key = (field_number << 3) | wire_type;
-        let key_bytes = write_varint(key);
-        self.size += key_bytes.len();
-        self.result.extend(key_bytes);
-    }
-
-    fn write_varint(&mut self, val: u32) {
-        let val_bytes = write_varint(val);
-        self.size += val_bytes.len();
-        self.result.extend(val_bytes);
     }
 }
 

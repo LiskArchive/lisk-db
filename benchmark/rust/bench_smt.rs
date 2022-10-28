@@ -6,10 +6,10 @@ use tempdir::TempDir;
 
 use lisk_db::batch::PrefixWriteBatch;
 use lisk_db::consts;
-use lisk_db::db::types::{DbMessage, Kind};
-use lisk_db::db::DB as LDB;
-use lisk_db::smt::{SparseMerkleTree, UpdateData};
-use lisk_db::smt_db;
+use lisk_db::database::types::{DbMessage, Kind};
+use lisk_db::database::DB as LDB;
+use lisk_db::sparse_merkle_tree::smt::{SparseMerkleTree, UpdateData};
+use lisk_db::sparse_merkle_tree::smt_db;
 use lisk_db::types::{Cache, KeyLength, NestedVec, SharedKVPair};
 
 const KEYS: [&str; 90] = [

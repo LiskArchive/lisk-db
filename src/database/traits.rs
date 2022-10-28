@@ -6,7 +6,7 @@ use neon::handle::Handle;
 use neon::result::JsResult;
 use neon::types::{Finalize, JsBox, JsNumber, JsString, JsValue};
 
-use crate::db::types::{DbOptions, JsArcMutex, JsBoxRef, Kind};
+use crate::database::types::{DbOptions, JsArcMutex, JsBoxRef, Kind};
 use crate::types::{KVPair, KeyLength, VecOption};
 
 pub trait Actions {

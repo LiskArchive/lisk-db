@@ -2,8 +2,8 @@ use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
 use crate::consts;
-use crate::db::traits::OptionsWithContext;
-use crate::db::types::DbOptions;
+use crate::database::traits::OptionsWithContext;
+use crate::database::types::DbOptions;
 use crate::types::{KeyLength, VecOption};
 
 #[derive(Clone, Debug)]

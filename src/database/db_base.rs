@@ -7,8 +7,8 @@ use neon::handle::{Handle, Root};
 use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
 use rocksdb::checkpoint::Checkpoint;
 
-use crate::db::traits::NewDBWithContext;
-use crate::db::types::{DbMessage, DbOptions, Kind};
+use crate::database::traits::NewDBWithContext;
+use crate::database::types::{DbMessage, DbOptions, Kind};
 
 pub struct DB {
     tx: mpsc::Sender<DbMessage>,
@@ -81,13 +81,13 @@ impl DB {
     pub fn get_by_key(
         &self,
         key: Vec<u8>,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key = self.db_kind.key(key);
         let result = self.db.get(&key);
         self.send(move |channel| {
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(Some(val)) => {
@@ -108,7 +108,7 @@ impl DB {
     pub fn exists(
         &self,
         key: Vec<u8>,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key = self.db_kind.key(key);
         let result = if self.db.key_may_exist(&key) {
@@ -118,7 +118,7 @@ impl DB {
         };
         self.send(move |channel| {
             channel.send(move |mut ctx| {
-                let callback = cb.into_inner(&mut ctx);
+                let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
                 let args: Vec<Handle<JsValue>> = match result {
                     Ok(val) => {
@@ -138,7 +138,7 @@ impl DB {
     pub fn checkpoint(
         &self,
         path: String,
-        cb: Root<JsFunction>,
+        callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let conn = Arc::clone(&self.db);
         self.send(move |channel| {
@@ -147,7 +147,7 @@ impl DB {
             if result.is_err() {
                 let err = result.err().unwrap();
                 channel.send(move |mut ctx| {
-                    let callback = cb.into_inner(&mut ctx);
+                    let callback = callback.into_inner(&mut ctx);
                     let this = ctx.undefined();
                     let args = vec![ctx.error(&err)?.upcast()];
 
@@ -159,7 +159,7 @@ impl DB {
                 let result = checkpoint.create_checkpoint(&path);
 
                 channel.send(move |mut ctx| {
-                    let callback = cb.into_inner(&mut ctx);
+                    let callback = callback.into_inner(&mut ctx);
                     let this = ctx.undefined();
                     let args: Vec<Handle<JsValue>> = match result {
                         Ok(()) => {
