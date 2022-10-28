@@ -30,12 +30,10 @@ const {
     state_writer_snapshot,
     state_writer_restore_snapshot,
     state_db_reader_new,
-    state_db_reader_close,
     state_db_reader_get,
     state_db_reader_exists,
     state_db_reader_iterate,
     state_db_read_writer_new,
-    state_db_read_writer_close,
     state_db_read_writer_upsert_key,
     state_db_read_writer_get_key,
     state_db_read_writer_delete,
@@ -49,10 +47,6 @@ const { getOptionsWithDefault } = require('./options');
 class StateReader {
     constructor(db) {
         this._db = state_db_reader_new(db);
-    }
-
-    destructor() {
-        state_db_reader_close.call(this._db);
     }
 
     async get(key) {
@@ -99,10 +93,6 @@ class StateReadWriter {
     constructor(db) {
         this._db = state_db_read_writer_new(db);
         this._writer = state_writer_new();
-    }
-
-    destructor() {
-        state_db_read_writer_close.call(this._db);
     }
 
     get writer() {

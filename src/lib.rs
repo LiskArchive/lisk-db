@@ -42,13 +42,11 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("db_checkpoint", Database::js_checkpoint)?;
 
     cx.export_function("state_db_reader_new", reader_db::Reader::js_new)?;
-    cx.export_function("state_db_reader_close", reader_db::Reader::js_close)?;
     cx.export_function("state_db_reader_get", reader_db::Reader::js_get)?;
     cx.export_function("state_db_reader_exists", reader_db::Reader::js_exists)?;
     cx.export_function("state_db_reader_iterate", reader_db::Reader::js_iterate)?;
 
     cx.export_function("state_db_read_writer_new", ReadWriter::js_new)?;
-    cx.export_function("state_db_read_writer_close", ReadWriter::js_close)?;
     cx.export_function("state_db_read_writer_upsert_key", ReadWriter::js_upsert_key)?;
     cx.export_function("state_db_read_writer_get_key", ReadWriter::js_get_key)?;
     cx.export_function("state_db_read_writer_delete", ReadWriter::js_delete_key)?;

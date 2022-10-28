@@ -15,7 +15,13 @@ pub struct ReaderBase {
     tx: mpsc::Sender<SnapshotMessage>,
 }
 
-impl Finalize for ReaderBase {}
+impl Finalize for ReaderBase {
+    fn finalize<'a, C: Context<'a>>(self, _: &mut C) {
+        self.close().unwrap();
+        drop(self);
+    }
+}
+
 impl ReaderBase {
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBoxRef<Self>> {
         // Channel for sending callbacks to execute on the sqlite connection thread
@@ -44,7 +50,7 @@ impl ReaderBase {
 
     // Idiomatic rust would take an owned `self` to prevent use after close
     // However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    pub fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
+    fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
         self.tx.send(SnapshotMessage::Close)
     }
 

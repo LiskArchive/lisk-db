@@ -190,16 +190,6 @@ impl ReadWriter {
         })
     }
 
-    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        ctx.this()
-            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?
-            .borrow()
-            .close()
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
     pub fn js_upsert_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the batch value as a `SendableStateWriter`
         let batch = ctx

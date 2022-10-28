@@ -273,8 +273,6 @@ describe('statedb', () => {
                 // newWriter should have the old value
                 const newWriter = db.newReadWriter();
                 await expect(newWriter.get(initState[0].key)).resolves.toEqual(initState[0].value);
-                reader.destructor();
-                writer.destructor();
             });
         });
 
