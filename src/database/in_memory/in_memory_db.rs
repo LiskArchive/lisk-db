@@ -18,6 +18,7 @@ pub struct CacheData {
     data: Cache,
 }
 
+// Database to mock the rocksdb in memory.
 pub struct Database {
     cache: CacheData,
 }

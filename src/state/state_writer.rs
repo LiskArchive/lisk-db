@@ -34,6 +34,7 @@ pub struct StateCache {
     deleted: bool,
 }
 
+/// StateWriter holds batch of operation for state_db.
 #[derive(Default)]
 pub struct StateWriter {
     counter: u32,
@@ -85,16 +86,23 @@ impl StateCache {
 }
 
 impl StateWriter {
+    /// cache_new inserts key-value pair as new value.
     pub fn cache_new(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new(pair.value());
         self.cache.insert(pair.key_as_vec(), cache);
     }
 
+    /// cache_existing inserts key-value pair as updated value.
     pub fn cache_existing(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new_existing(pair.value());
         self.cache.insert(pair.key_as_vec(), cache);
     }
 
+    /// get returns the value associated with the key.
+    /// it returns value, deleted, exists.
+    /// - if the value does not exist in the writer it returns ([], false, false).
+    /// - if the value exist in the writer but mark as deleted, it returns (val, true, true).
+    /// - if the value exists, it returns (val, false, true).
     pub fn get(&self, key: &[u8]) -> (Vec<u8>, bool, bool) {
         let val = self.cache.get(key);
         if val.is_none() {
@@ -107,10 +115,13 @@ impl StateWriter {
         (val.value.clone(), false, true)
     }
 
+    /// is_cached returns true if there is value associated with the key.
+    /// it is possible key is marked as deleted.
     pub fn is_cached(&self, key: &[u8]) -> bool {
         self.cache.get(key).is_some()
     }
 
+    /// get_range key-value pairs with option specified. 
     pub fn get_range(&self, options: &IterationOption) -> Cache {
         let start = options.gte.as_ref().unwrap();
         let end = options.lte.as_ref().unwrap();
@@ -129,6 +140,7 @@ impl StateWriter {
             .collect::<Cache>()
     }
 
+    /// update the key with corresponding value.
     pub fn update(&mut self, pair: &KVPair) -> Result<(), StateWriterError> {
         let mut cached = self
             .cache
@@ -140,6 +152,7 @@ impl StateWriter {
         Ok(())
     }
 
+    /// delete the key in the cache.
     pub fn delete(&mut self, key: &[u8]) {
         let cached = self.cache.get_mut(key);
         if cached.is_none() {
@@ -153,6 +166,7 @@ impl StateWriter {
         cached.deleted = true;
     }
 
+    /// snapshot creates snapshot of the current writer and return the snapshot id.
     fn snapshot(&mut self) -> u32 {
         self.backup.insert(self.counter, self.cache.clone());
         let index = self.counter;
@@ -160,6 +174,7 @@ impl StateWriter {
         index
     }
 
+    /// restore_snapshot reverts the writer to the snapshot id.
     fn restore_snapshot(&mut self, index: u32) -> Result<(), StateWriterError> {
         let backup = self
             .backup
@@ -170,6 +185,8 @@ impl StateWriter {
         Ok(())
     }
 
+    /// get_updated returns all the updated key-value pairs.
+    /// if the key is removed, value will be empty slice.
     pub fn get_updated(&self) -> Cache {
         let mut result = Cache::new();
         for (key, value) in self.cache.iter() {
@@ -211,6 +228,9 @@ impl StateWriter {
 }
 
 impl StateWriter {
+    /// js_snapshot is handler for JS ffi.
+    /// js "this" - StateWriter.
+    /// - @returns - snapshot id
     pub fn js_snapshot(mut ctx: FunctionContext) -> JsResult<JsNumber> {
         let writer = ctx
             .this()
@@ -224,6 +244,9 @@ impl StateWriter {
         Ok(ctx.number(index))
     }
 
+    /// js_restore_snapshot is handler for JS ffi.
+    /// js "this" - StateWriter.
+    /// - @params(0) - snapshot id
     pub fn js_restore_snapshot(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let writer = ctx
             .this()

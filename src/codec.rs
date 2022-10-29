@@ -16,12 +16,14 @@ pub enum CodecError {
     InvalidWireType,
 }
 
+///Reader maintains the bytes and the state of read bytes during the decoding.
 pub struct Reader<'a> {
     index: usize,
     end: usize,
     data: &'a [u8],
 }
 
+/// Writer maintains the bytes written during the encoding.
 pub struct Writer {
     result: Vec<u8>,
     size: usize,
@@ -41,6 +43,8 @@ fn write_varint(value: u32) -> Vec<u8> {
     result[0..index + 1].to_vec()
 }
 
+/// read_varint from the given bytes starting from the offset.
+/// it returns the value read as varint and the size it used.
 fn read_varint(data: &[u8], offset: usize) -> Result<(u32, usize), CodecError> {
     let mut result: u32 = 0;
     let mut index = offset;
@@ -100,6 +104,7 @@ impl<'a> Reader<'a> {
         Ok(true)
     }
 
+    /// new creates new reader from the given data.
     pub fn new(data: &'a [u8]) -> Self {
         let length = data.len();
         Self {
@@ -109,6 +114,8 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// read_bytes_slice reads next field as slice of bytes slice.
+    /// When next field does not match, it returns empty slice.
     pub fn read_bytes_slice(&mut self, field_number: u32) -> Result<NestedVec, CodecError> {
         let mut result = vec![];
         while self.index < self.end {
@@ -123,6 +130,8 @@ impl<'a> Reader<'a> {
         Ok(result)
     }
 
+    /// read_bytes reads next field as bytes.
+    /// When next field does not match, it returns empty bytes.
     pub fn read_bytes(&mut self, field_number: u32) -> Result<Vec<u8>, CodecError> {
         let ok = self.check(field_number)?;
         match ok {
@@ -153,6 +162,7 @@ impl Writer {
         }
     }
 
+    /// write_bytes encodes bytes slice to the writer with specified field number
     pub fn write_bytes(&mut self, field_number: u32, value: &[u8]) {
         self.write_key(2, field_number);
         self.write_varint(value.len() as u32);
@@ -160,6 +170,7 @@ impl Writer {
         self.result.extend(value);
     }
 
+    /// write_bytes encodes slice of bytes slice to the writer with specified field number
     pub fn write_bytes_slice(&mut self, field_number: u32, values: &[Vec<u8>]) {
         if values.is_empty() {
             return;

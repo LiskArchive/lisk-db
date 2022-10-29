@@ -56,6 +56,7 @@ struct CommitResultInfo {
     data: Commit,
 }
 
+/// StateDB maintains instance of database for authenticated storage using sparse merkle tree.
 pub struct StateDB {
     common: DB,
     options: DbOptions,
@@ -464,6 +465,8 @@ impl StateDB {
 }
 
 impl StateDB {
+    /// js_close is handler for JS ffi.
+    /// js "this" - StateDB.
     pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         ctx.this()
@@ -476,6 +479,12 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_get is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - key to get from state db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error. If data is not found, it will call the callback with "No data" as a first args.
+    /// - @callback(1) - [u8]. Value associated with the key.
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -490,6 +499,11 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_get_current_state is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - callback to return the fetched value.
+    /// - @callback(0) - Error
+    /// - @callback(1) - { root: [u8], version: u32 }.
     pub fn js_get_current_state(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let callback = ctx.argument::<JsFunction>(0)?.root(&mut ctx);
         // Get the `this` value as a `JsBox<Database>`
@@ -501,6 +515,12 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_exists is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - key to check existence from state db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error
+    /// - @callback(1) - bool
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -515,6 +535,13 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_revert is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - State root of to revert back from.
+    /// - @params(1) - Version of the state DB to revert back from.
+    /// - @params(2) - callback to return the result.
+    /// - @callback(0) - Error.
+    /// - @callback(1) - &[u8] State root after the revert.
     pub fn js_revert(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let prev_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let height = ctx.argument::<JsNumber>(1)?.value(&mut ctx).into();
@@ -529,6 +556,14 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_iterate is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - Options for iteration. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
+    /// - @params(1) - Callback to be called on each data iteration.
+    /// - @params(2) - callback to be called when completing the iteration.
+    /// - @callback1(0) - Error.
+    /// - @callback1(1) - { key: &[u8], value: &[u8]}.
+    /// - @callback(0) - void.
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
         let options = options::IterationOption::new(&mut ctx, option_inputs);
@@ -583,14 +618,17 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
-    // Commit
-    // @params 0 writer (required)
-    // @params 1 version (required)
-    // @params 2 prev_root (required)
-    // @params 3 readonly
-    // @params 4 expected_root
-    // @params 5 check_root
-    // @params 6 callback
+    /// js_commit is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - writer instance (required).
+    /// - @params(1) - version of current state_db (required).
+    /// - @params(2) - current state root (required).
+    /// - @params(3) - readonly not update the state to the physical storage.
+    /// - @params(4) - expected state root to compare. 
+    /// - @params(5) - whether to check the root before storing to the physical storage.
+    /// - @params(6) - callback to return the result.
+    /// - @callback(0) - Error.
+    /// - @callback(1) - &[u8] State root after the commit.
     pub fn js_commit(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let writer = ctx.argument::<state_writer::SendableStateWriter>(0)?;
 
@@ -621,6 +659,13 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_prove is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - current state root (required).
+    /// - @params(1) - queries in format of &[&[u8]]
+    /// - @params(2) - callback to return the result.
+    /// - @callback(0) - Error.
+    /// - @callback(1) - { siblingHashes: &[&[u8]]; queries: { key: &[u8]; value: &[u8]; bitmap: &[u8]; }[]; }
     pub fn js_prove(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
@@ -643,6 +688,14 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_verify is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - current state root.
+    /// - @params(1) - queries in format of &[&[u8]]
+    /// - @params(2) - proof { siblingHashes: &[&[u8]]; queries: { key: &[u8]; value: &[u8]; bitmap: &[u8]; }[]; }
+    /// - @params(3) - callback to return the result.
+    /// - @callback(0) - Error.
+    /// - @callback(1) - bool represents true if proof is valid.
     pub fn js_verify(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
@@ -676,6 +729,11 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_clean_diff_until is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - version to delete state diff upto.
+    /// - @params(1) - callback to return the result.
+    /// - @callback(0) - Error.
     pub fn js_clean_diff_until(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();
@@ -690,6 +748,11 @@ impl StateDB {
         Ok(ctx.undefined())
     }
 
+    /// js_checkpoint is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - path to create the checkpoint.
+    /// - @params(1) - callback to return the result.
+    /// - @callback(0) - Error.
     pub fn js_checkpoint(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let db = ctx.this().downcast_or_throw::<SharedStateDB, _>(&mut ctx)?;
         let db = db.borrow();

@@ -2,6 +2,15 @@ use crate::batch;
 use crate::codec;
 use crate::types::{Cache, KVPair, KVPairCodec, NestedVec};
 
+/// Diff maintains difference between each state changes, and it is used when reverting the state.
+/// When updating state to next state, it maintains:
+/// - newly created keys.
+/// - updated keys and corresponding original values
+/// - deleted keys and corresponding original values
+/// When reverting the state,
+/// - Remove created keys
+/// - Update updated to the value
+/// - Create deleted key with the value
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diff {
     created: NestedVec,
@@ -33,7 +42,8 @@ impl Diff {
             deleted,
         }
     }
-
+    /// decode bytes to diff struct.
+    /// decoding uses lisk-codec protocol.
     pub fn decode(val: &[u8]) -> Result<Self, codec::CodecError> {
         let mut reader = codec::Reader::new(val);
         let created = reader.read_bytes_slice(1)?;
@@ -54,6 +64,8 @@ impl Diff {
         })
     }
 
+    /// encode diff to bytes.
+    /// encoding uses lisk-codec protocol.
     pub fn encode(&self) -> Vec<u8> {
         let mut writer = codec::Writer::new();
         writer.write_bytes_slice(1, &self.created);
@@ -65,6 +77,8 @@ impl Diff {
         writer.result().to_vec()
     }
 
+    /// revert_update returns cache value with original data.
+    /// Deleting data is represented as empty bytes.
     pub fn revert_update(&self) -> Cache {
         let mut result = Cache::new();
         for kv in self.updated.iter() {
@@ -79,6 +93,7 @@ impl Diff {
         result
     }
 
+    /// revert_commit updates batch to revert the states.
     pub fn revert_commit(&self, batch: &mut impl batch::BatchWriter) {
         for kv in self.updated.iter() {
             batch.put(kv);

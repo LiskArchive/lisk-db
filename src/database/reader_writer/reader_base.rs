@@ -23,6 +23,9 @@ impl Finalize for ReaderBase {
 }
 
 impl ReaderBase {
+    /// js_new is handler for JS ffi.
+    /// - @params(0) - StateDB to create the reader from.
+    /// - @returns - Reader where it is snapshot of stateDB.
     pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBoxRef<Self>> {
         // Channel for sending callbacks to execute on the sqlite connection thread
         let (tx, rx) = mpsc::channel::<SnapshotMessage>();
@@ -48,8 +51,8 @@ impl ReaderBase {
         Ok(ctx.boxed(RefCell::new(Self { tx })))
     }
 
-    // Idiomatic rust would take an owned `self` to prevent use after close
-    // However, it's not possible to prevent JavaScript from continuing to hold a closed database
+    /// Idiomatic rust would take an owned `self` to prevent use after close
+    /// However, it's not possible to prevent JavaScript from continuing to hold a closed database
     fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
         self.tx.send(SnapshotMessage::Close)
     }

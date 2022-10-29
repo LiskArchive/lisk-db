@@ -14,10 +14,15 @@ use crate::types::{
 };
 use crate::utils;
 
+/// PREFIX_INT_LEAF_HASH is for leaf_hash prefix for sub tree.
 const PREFIX_INT_LEAF_HASH: u8 = 0;
+/// PREFIX_INT_BRANCH_HASH is for branch prefix for sub tree.
 const PREFIX_INT_BRANCH_HASH: u8 = 1;
+/// PREFIX_INT_EMPTY is for empty prefix for sub tree.
 const PREFIX_INT_EMPTY: u8 = 2;
+/// Hash size used in the smt.
 const HASH_SIZE: usize = 32;
+/// EMPTY_HASH using sha256.
 pub const EMPTY_HASH: [u8; 32] = [
     227, 176, 196, 66, 152, 252, 28, 20, 154, 251, 244, 200, 153, 111, 185, 36, 39, 174, 65, 228,
     100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85,
@@ -45,21 +50,24 @@ pub enum SMTError {
 enum NodeKind {
     Empty,
     Leaf,
-    Stub,
-    Temp,
+    Stub, // stub is a branch node for sub tree.
+    Temp, // temp is a stub but only used during the calculation.
 }
 
+/// UpdateData holds key-value pairs to update the SMT.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateData {
     data: Cache,
 }
 
+/// Proof holds SMT proof.
 #[derive(Clone, Debug)]
 pub struct Proof {
     pub sibling_hashes: NestedVec,
     pub queries: Vec<QueryProof>,
 }
 
+/// QueryProof is single proof for a query.
 #[derive(Clone, Debug)]
 pub struct QueryProof {
     pub pair: Arc<KVPair>,
@@ -144,10 +152,11 @@ struct UpdatedInfo {
     bin_offset: usize,
 }
 
+/// SparseMerkleTree is optimized sparse merkle tree implementation based on [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md).
 pub struct SparseMerkleTree {
     root: SharedVec,
-    key_length: KeyLength,
-    subtree_height: SubtreeHeight,
+    key_length: KeyLength, /// key_length specifies the length of the key for the SMT. All the keys must follow this length.
+    subtree_height: SubtreeHeight, /// height of the sub tree. Increase in the subtree height will increase number of hashes used while it decreases call to the storage.
     max_number_of_nodes: usize,
 }
 
@@ -649,6 +658,7 @@ impl Node {
 }
 
 impl SubTree {
+    /// new returns decoded SubTree using the encoded data.
     pub fn new(data: &[u8], key_length: KeyLength) -> Result<Self, SMTError> {
         if data.is_empty() {
             return Err(SMTError::InvalidInput(String::from("keys length is zero")));
@@ -694,6 +704,7 @@ impl SubTree {
         SubTree::from_data(structure, &nodes)
     }
 
+    /// from_data creates SubTree from structure and nodes information.
     pub fn from_data(structure: &[u8], nodes: &[SharedNode]) -> Result<Self, SMTError> {
         let height: Height = structure
             .iter()
@@ -715,6 +726,7 @@ impl SubTree {
         })
     }
 
+    /// new_empty returns empty SubTree.
     pub fn new_empty() -> Self {
         let structure = vec![0];
         let empty = Node::new_empty();
@@ -727,6 +739,7 @@ impl SubTree {
         }
     }
 
+    /// encode SubTree into bytes slice, which can be used in "new".
     pub fn encode(&self) -> Vec<u8> {
         let node_length = (self.structure.len() - 1) as u8;
         let node_hashes: NestedVec = self
@@ -881,6 +894,8 @@ impl SparseMerkleTree {
         true
     }
 
+    /// get_subtree returns sub_tree based on the node_hash provided.
+    /// if node_has is empty or equals to the empty hash, it returns empty SubTree.
     fn get_subtree(&self, db: &impl Actions, node_hash: &[u8]) -> Result<SubTree, SMTError> {
         if node_hash.is_empty() {
             return Ok(SubTree::new_empty());
@@ -928,6 +943,7 @@ impl SparseMerkleTree {
         Ok(Bins { keys, values })
     }
 
+    /// calculate_updated_info computes the update of SMT using key value pairs.
     fn calculate_updated_info<'a>(
         &mut self,
         db: &mut impl Actions,
@@ -982,6 +998,7 @@ impl SparseMerkleTree {
         })
     }
 
+    /// update_subtree updates the SubTree based on the keys and values.
     fn update_subtree<'a>(
         &mut self,
         db: &mut impl Actions,
@@ -1022,6 +1039,7 @@ impl SparseMerkleTree {
         Ok(new_subtree)
     }
 
+    /// update_single_node handles node update when info only affects single node.
     fn update_single_node(
         &self,
         info: &UpdateNodeInfo,
@@ -1131,18 +1149,21 @@ impl SparseMerkleTree {
         }
     }
 
+    /// update_node updates all the nodes below.
     fn update_node(
         &mut self,
         db: &mut impl Actions,
         info: UpdateNodeInfo,
     ) -> Result<(Vec<SharedNode>, Vec<u8>), SMTError> {
         let total_data = info.length_bins[info.length_bins.len() - 1] - info.length_base;
+        // current node is the bottom
         if total_data == 0 {
             return Ok((
                 vec![Arc::clone(&info.current_node)],
                 vec![info.structure_pos.into()],
             ));
         }
+        // remaining data only has one side. Update the node and complete
         if total_data == 1 {
             if let Some((node, structure)) = self.update_single_node(&info)? {
                 return Ok((vec![node], vec![structure.into()]));
@@ -1154,6 +1175,7 @@ impl SparseMerkleTree {
             return Ok((vec![node], vec![structure.into()]));
         }
 
+        // Update left side of the node recursively
         let (left_node, right_node) = self.get_left_and_right_nodes(&info)?;
         let idx = info.key_bins.len() / 2;
         let left_info = UpdateNodeInfo::new(
@@ -1166,6 +1188,7 @@ impl SparseMerkleTree {
             info.structure_pos + StructurePosition(1),
         );
         let (mut left_nodes, mut left_heights) = self.update_node(db, left_info)?;
+        // Update rifht side of the node recursively
         let right_info = UpdateNodeInfo::new(
             &info.key_bins[idx..],
             &info.value_bins[idx..],
@@ -1293,6 +1316,7 @@ impl SparseMerkleTree {
         ))
     }
 
+    /// generate_query_proof creates proof for single query according to the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-construction).
     fn generate_query_proof(
         &mut self,
         db: &mut impl Actions,
@@ -1343,6 +1367,7 @@ impl SparseMerkleTree {
         self.calculate_query_proof_from_result(db, &data)
     }
 
+    /// calculate_root calculates the merkle root with sibling hashes and multi proofs according to the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-verification).
     fn calculate_root(sibling_hashes: &[Vec<u8>], queries: &mut [QueryProofWithProof]) -> Vec<u8> {
         queries.sort_descending();
 
@@ -1384,6 +1409,7 @@ impl SparseMerkleTree {
         vec![]
     }
 
+    /// new creates a new SparseMerkleTree.
     pub fn new(root: &[u8], key_length: KeyLength, subtree_height: SubtreeHeight) -> Self {
         let max_number_of_nodes = 1 << subtree_height.u16();
         let r = if root.is_empty() {
@@ -1399,6 +1425,9 @@ impl SparseMerkleTree {
         }
     }
 
+    /// commit updates the db with key-value pairs based on [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#root-hash-calculation) with SubTree optimization.
+    /// Nodes are batched to "SubTree" for defined height N (4 or 8) to reduce DB call with trade-off of # of hashes.
+    /// all the keys for the data must be unique and have the same length.
     pub fn commit(
         &mut self,
         db: &mut impl Actions,
@@ -1408,12 +1437,16 @@ impl SparseMerkleTree {
             return Ok(Arc::clone(&self.root));
         }
         let (update_keys, update_values) = data.entries();
+        // get the root subtree
         let root = self.get_subtree(db, &self.root.lock().unwrap())?;
+        // update using the key-value pairs starting from the root (height: 0).
         let new_root = self.update_subtree(db, &update_keys, &update_values, &root, Height(0))?;
         self.root = Arc::new(Mutex::new(new_root.root));
         Ok(Arc::clone(&self.root))
     }
 
+    /// prove returns multi-proof based on the queries.
+    /// proof can be inclusion or non-inclusion proof. In case of non-inclusion proof, it will be prove the query key is empty in the tree.
     pub fn prove(
         &mut self,
         db: &mut impl Actions,
@@ -1444,6 +1477,8 @@ impl SparseMerkleTree {
         })
     }
 
+    /// verify checks if the provided proof is valid or not against the provided root.
+    /// Note that in case of non-inclusion proof, it will be still be valid.
     pub fn verify(
         query_keys: &[Vec<u8>],
         proof: &Proof,

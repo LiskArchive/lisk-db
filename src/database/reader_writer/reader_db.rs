@@ -47,6 +47,12 @@ impl Reader {
         })
     }
 
+    /// js_get is handler for JS ffi.
+    /// js "this" - Reader.
+    /// - @params(0) - key to get from db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error. If data is not found, it will call the callback with "No data" as a first args.
+    /// - @callback(1) - [u8]. Value associated with the key.
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -61,6 +67,12 @@ impl Reader {
         Ok(ctx.undefined())
     }
 
+    /// js_exists is handler for JS ffi.
+    /// js "this" - Reader.
+    /// - @params(0) - key to check existence from db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error
+    /// - @callback(1) - bool
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -75,6 +87,14 @@ impl Reader {
         Ok(ctx.undefined())
     }
 
+    /// js_iterate is handler for JS ffi.
+    /// js "this" - Reader.
+    /// - @params(0) - Options for iteration. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
+    /// - @params(1) - Callback to be called on each data iteration.
+    /// - @params(2) - callback to be called when completing the iteration.
+    /// - @callback1(0) - Error.
+    /// - @callback1(1) - { key: &[u8], value: &[u8]}.
+    /// - @callback(0) - void.
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
         let options = IterationOption::new(&mut ctx, option_inputs);

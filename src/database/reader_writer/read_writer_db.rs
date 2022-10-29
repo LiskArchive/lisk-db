@@ -17,7 +17,7 @@ pub type SharedReadWriter = JsBoxRef<ReadWriter>;
 pub type ReadWriter = ReaderBase;
 
 impl ReadWriter {
-    // update or insert the pair of key and value
+    /// update or insert the pair of key and value
     fn upsert_key(
         &self,
         callback: Root<JsFunction>,
@@ -190,6 +190,14 @@ impl ReadWriter {
         })
     }
 
+    /// js_upsert_key is handler for JS ffi.
+    /// it creates record if key does not exist, and if key exist, it will treat it as update.
+    /// js "this" - StateDB.
+    /// - @params(0) - ReadWriterk
+    /// - @params(1) - key to set to the db.
+    /// - @params(2) - value to set to the db.
+    /// - @params(3) - callback to return the fetched value.
+    /// - @callback(0) - Error
     pub fn js_upsert_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the batch value as a `SendableStateWriter`
         let batch = ctx
@@ -211,6 +219,13 @@ impl ReadWriter {
         Ok(ctx.undefined())
     }
 
+    /// js_get is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - ReadWriter
+    /// - @params(1) - key to get from db.
+    /// - @params(2) - callback to return the fetched value.
+    /// - @callback(0) - Error. If data is not found, it will call the callback with "No data" as a first args.
+    /// - @callback(1) - [u8]. Value associated with the key.
     pub fn js_get_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the batch value as a `SendableStateWriter`
         let batch = ctx
@@ -230,6 +245,12 @@ impl ReadWriter {
         Ok(ctx.undefined())
     }
 
+    /// js_del is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - ReadWriter
+    /// - @params(1) - key to delete from the db.
+    /// - @params(2) - callback to return the fetched value.
+    /// - @callback(0) - Error
     pub fn js_delete_key(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the batch value as a `SendableStateWriter`
         let batch = ctx
@@ -249,6 +270,13 @@ impl ReadWriter {
         Ok(ctx.undefined())
     }
 
+    /// js_range is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - ReadWriter
+    /// - @params(1) - Options for iteration. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
+    /// - @params(2) - Callback to be called on each data iteration.
+    /// - @callback(0) - Error.
+    /// - @callback(1) - [{ key: &[u8], value: &[u8]}].
     pub fn js_range(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the batch value as a `SendableStateWriter`
         let batch = ctx
