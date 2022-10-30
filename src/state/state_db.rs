@@ -624,7 +624,7 @@ impl StateDB {
     /// - @params(1) - version of current state_db (required).
     /// - @params(2) - current state root (required).
     /// - @params(3) - readonly not update the state to the physical storage.
-    /// - @params(4) - expected state root to compare. 
+    /// - @params(4) - expected state root to compare.
     /// - @params(5) - whether to check the root before storing to the physical storage.
     /// - @params(6) - callback to return the result.
     /// - @callback(0) - Error.

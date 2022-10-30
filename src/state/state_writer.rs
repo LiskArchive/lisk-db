@@ -121,7 +121,7 @@ impl StateWriter {
         self.cache.get(key).is_some()
     }
 
-    /// get_range key-value pairs with option specified. 
+    /// get_range key-value pairs with option specified.
     pub fn get_range(&self, options: &IterationOption) -> Cache {
         let start = options.gte.as_ref().unwrap();
         let end = options.lte.as_ref().unwrap();

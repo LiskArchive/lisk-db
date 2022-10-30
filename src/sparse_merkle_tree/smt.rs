@@ -155,8 +155,10 @@ struct UpdatedInfo {
 /// SparseMerkleTree is optimized sparse merkle tree implementation based on [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md).
 pub struct SparseMerkleTree {
     root: SharedVec,
-    key_length: KeyLength, /// key_length specifies the length of the key for the SMT. All the keys must follow this length.
-    subtree_height: SubtreeHeight, /// height of the sub tree. Increase in the subtree height will increase number of hashes used while it decreases call to the storage.
+    key_length: KeyLength,
+    /// key_length specifies the length of the key for the SMT. All the keys must follow this length.
+    subtree_height: SubtreeHeight,
+    /// height of the sub tree. Increase in the subtree height will increase number of hashes used while it decreases call to the storage.
     max_number_of_nodes: usize,
 }
 
