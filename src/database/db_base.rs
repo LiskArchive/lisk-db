@@ -1,3 +1,4 @@
+/// db_base provides common functionality for Database.
 use std::sync::{mpsc, Arc};
 use std::thread;
 

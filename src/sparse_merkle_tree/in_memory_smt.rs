@@ -1,3 +1,4 @@
+// in_memory_smt provides in memory SMT computation without a physical storage.
 use std::sync::Arc;
 use std::thread;
 
@@ -264,6 +265,8 @@ impl JsFunctionContext<'_> {
 }
 
 impl InMemorySMT {
+    /// js_update is handler for JS ffi.
+    /// it is the similar to StateDB commit, but it uses in memory database.
     pub fn js_update(ctx: FunctionContext) -> JsResult<JsUndefined> {
         let mut js_context = JsFunctionContext { context: ctx };
 
@@ -273,6 +276,8 @@ impl InMemorySMT {
         Ok(js_context.context.undefined())
     }
 
+    /// js_prove is handler for JS ffi.
+    /// it is the similar to StateDB prove, but it uses in memory database.
     pub fn js_prove(ctx: FunctionContext) -> JsResult<JsUndefined> {
         let mut js_context = JsFunctionContext { context: ctx };
 
@@ -282,6 +287,8 @@ impl InMemorySMT {
         Ok(js_context.context.undefined())
     }
 
+    /// js_verify is handler for JS ffi.
+    /// it is the similar to StateDB verify, but it uses in memory database.
     pub fn js_verify(ctx: FunctionContext) -> JsResult<JsUndefined> {
         let mut js_context = JsFunctionContext { context: ctx };
 

@@ -1,3 +1,4 @@
+/// batch provides a batch feature for Database.
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
@@ -12,10 +13,13 @@ pub trait BatchWriter {
     fn delete(&mut self, key: &[u8]);
 }
 
+/// WriteBatch is a container for rocksdb::WriteBatch
 pub struct WriteBatch {
     pub batch: rocksdb::WriteBatch,
 }
 
+/// PrefixWriteBatch updates rocksdb batch with defined prefix.
+/// Prefix is used for splitting the data into buckets.
 pub struct PrefixWriteBatch<'a> {
     pub batch: rocksdb::WriteBatch,
     prefix: Option<&'a [u8]>,

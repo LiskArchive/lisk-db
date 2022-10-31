@@ -32,7 +32,8 @@
     "test:node": "jest",
     "test:rust": "cargo test",
     "rust:fmt": "cargo fmt --all -- --check",
-    "rust:clippy": "cargo clippy --all-targets --all-features -- -D warnings"
+    "rust:clippy": "cargo clippy --all-targets --all-features -- -D warnings",
+    "docs": "cargo doc --no-deps"
   },
   "dependencies": {
     "@mapbox/node-pre-gyp": "^1.0.9",

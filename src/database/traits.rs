@@ -1,3 +1,4 @@
+/// traits provides common traits for database.
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 

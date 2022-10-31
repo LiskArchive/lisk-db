@@ -28,6 +28,8 @@ use read_writer_db::ReadWriter;
 use state_db::StateDB;
 use state_writer::StateWriter;
 
+/// main registers functions for JS ffi
+
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("db_new", Database::js_new_with_box::<DbOptions, Database>)?;

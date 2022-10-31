@@ -13,18 +13,18 @@ pub type DbOptions = Options<KeyLength>;
 pub type JsBoxRef<T> = JsBox<RefCell<T>>;
 pub type JsArcMutex<T> = JsBoxRef<ArcMutex<T>>;
 
-// Messages sent on the database channel
+/// Messages sent on the database channel
 pub enum Message<T> {
-    // Callback to be executed
+    /// Callback to be executed
     Callback(T),
-    // Indicates that the thread should be stopped and connection closed
+    /// Indicates that the thread should be stopped and connection closed
     Close,
 }
 
 pub type SnapshotMessage = Message<SnapshotCallback>;
 pub type DbMessage = Message<DbCallback>;
 
-// Kind represented the kind of the database
+/// Kind represented the kind of the database
 #[derive(PartialEq, Eq)]
 pub enum Kind {
     Normal,

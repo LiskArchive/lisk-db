@@ -1,3 +1,4 @@
+/// options provides functionality to read Database open and iteration options.
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
@@ -6,6 +7,7 @@ use crate::database::traits::OptionsWithContext;
 use crate::database::types::DbOptions;
 use crate::types::{KeyLength, VecOption};
 
+/// IterationOption holds iterator option for the database.
 #[derive(Clone, Debug)]
 pub struct IterationOption {
     pub limit: i64,

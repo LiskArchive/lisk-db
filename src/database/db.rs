@@ -1,3 +1,4 @@
+/// db is the interface for Database binding using rocksDB.
 use std::sync::{Arc, Mutex};
 
 use neon::prelude::*;
@@ -36,6 +37,11 @@ impl Database {
         });
     }
 
+    /// js_clear is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - Options for range. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
+    /// - @params(1) - callback to return the result.
+    /// - @callback(0) - Error.
     pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         let db = ctx
@@ -58,6 +64,8 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_close is handler for JS ffi.
+    /// js "this" - DB.
     pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         // Get the `this` value as a `JsBox<Database>`
         ctx.this()
@@ -68,6 +76,12 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_get is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - key to get from db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error. If data is not found, it will call the callback with "No data" as a first args.
+    /// - @callback(1) - [u8]. Value associated with the key.
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -82,6 +96,12 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_exists is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - key to check existence from db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error
+    /// - @callback(1) - bool
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -96,6 +116,12 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_set is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - key to set to the db.
+    /// - @params(1) - value to set to the db.
+    /// - @params(2) - callback to return the fetched value.
+    /// - @callback(0) - Error
     pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
@@ -114,6 +140,11 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_del is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - key to delete from the db.
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
@@ -131,6 +162,11 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_write is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - Batch
+    /// - @params(1) - callback to return the fetched value.
+    /// - @callback(0) - Error
     pub fn js_write(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let batch = ctx
             .argument::<batch::SendableWriteBatch>(0)?
@@ -156,6 +192,14 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_iterate is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - Options for iteration. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
+    /// - @params(1) - Callback to be called on each data iteration.
+    /// - @params(2) - callback to be called when completing the iteration.
+    /// - @callback1(0) - Error.
+    /// - @callback1(1) - { key: &[u8], value: &[u8]}.
+    /// - @callback(0) - void.
     pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
         let options = IterationOption::new(&mut ctx, option_inputs);
@@ -209,6 +253,11 @@ impl Database {
         Ok(ctx.undefined())
     }
 
+    /// js_checkpoint is handler for JS ffi.
+    /// js "this" - DB.
+    /// - @params(0) - path to create the checkpoint.
+    /// - @params(1) - callback to return the result.
+    /// - @callback(0) - Error.
     pub fn js_checkpoint(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
