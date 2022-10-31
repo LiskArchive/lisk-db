@@ -1,3 +1,4 @@
+/// db is the interface for Database binding using rocksDB.
 use std::sync::{Arc, Mutex};
 
 use neon::prelude::*;

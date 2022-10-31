@@ -1,3 +1,4 @@
+/// reader_base provides base functionality for state reader.
 use std::cell::RefCell;
 use std::sync::mpsc;
 use std::thread;

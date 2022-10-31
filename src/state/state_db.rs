@@ -1,3 +1,4 @@
+/// state_db is an authenticated storage using Sparse Merkle Tree extending Database using rocksdb.
 use std::cmp;
 use std::convert::TryInto;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};

@@ -1,3 +1,6 @@
+/// read_writer is the interface for state read writer.
+/// State writer will snapshot the data and even if the change happen during the lifetime of reader writer, it will not be affected.
+/// writer will not store the data to physical storage until commit to the state db.
 use std::sync::{mpsc, Arc};
 
 use neon::context::{Context, FunctionContext};
@@ -192,8 +195,8 @@ impl ReadWriter {
 
     /// js_upsert_key is handler for JS ffi.
     /// it creates record if key does not exist, and if key exist, it will treat it as update.
-    /// js "this" - StateDB.
-    /// - @params(0) - ReadWriterk
+    /// js "this" - ReadWriter.
+    /// - @params(0) - StateWriter
     /// - @params(1) - key to set to the db.
     /// - @params(2) - value to set to the db.
     /// - @params(3) - callback to return the fetched value.
@@ -220,8 +223,8 @@ impl ReadWriter {
     }
 
     /// js_get is handler for JS ffi.
-    /// js "this" - StateDB.
-    /// - @params(0) - ReadWriter
+    /// js "this" - ReadWriter.
+    /// - @params(0) - StateWriter
     /// - @params(1) - key to get from db.
     /// - @params(2) - callback to return the fetched value.
     /// - @callback(0) - Error. If data is not found, it will call the callback with "No data" as a first args.
@@ -246,8 +249,8 @@ impl ReadWriter {
     }
 
     /// js_del is handler for JS ffi.
-    /// js "this" - StateDB.
-    /// - @params(0) - ReadWriter
+    /// js "this" - ReadWriter.
+    /// - @params(0) - StateWriter
     /// - @params(1) - key to delete from the db.
     /// - @params(2) - callback to return the fetched value.
     /// - @callback(0) - Error
@@ -271,8 +274,8 @@ impl ReadWriter {
     }
 
     /// js_range is handler for JS ffi.
-    /// js "this" - StateDB.
-    /// - @params(0) - ReadWriter
+    /// js "this" - ReadWriter.
+    /// - @params(0) - StateWriter
     /// - @params(1) - Options for iteration. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
     /// - @params(2) - Callback to be called on each data iteration.
     /// - @callback(0) - Error.

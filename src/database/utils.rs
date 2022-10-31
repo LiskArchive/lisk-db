@@ -1,3 +1,4 @@
+/// utils provides common functionalities used in the DB, such as parsing JS context, iteration checks.
 use std::cmp;
 
 use neon::context::Context;

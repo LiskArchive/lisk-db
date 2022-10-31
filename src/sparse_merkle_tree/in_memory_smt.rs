@@ -1,3 +1,4 @@
+// in_memory_smt provides in memory SMT computation without a physical storage.
 use std::sync::Arc;
 use std::thread;
 

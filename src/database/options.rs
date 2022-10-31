@@ -1,3 +1,4 @@
+/// options provides functionality to read Database open and iteration options.
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 

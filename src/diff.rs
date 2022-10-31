@@ -1,3 +1,4 @@
+/// diff provides data structure to revert the state for StateDB.
 use crate::batch;
 use crate::codec;
 use crate::types::{Cache, KVPair, KVPairCodec, NestedVec};

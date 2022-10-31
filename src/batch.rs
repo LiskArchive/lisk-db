@@ -1,3 +1,4 @@
+/// batch provides a batch feature for Database.
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 

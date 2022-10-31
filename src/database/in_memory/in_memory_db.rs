@@ -1,3 +1,4 @@
+/// in_memory_db provides same interface as rocksdb for in_memory state computation or mocking rocksDB without a physical storage.
 use std::cell::{RefCell, RefMut};
 use std::cmp;
 use std::sync::Arc;

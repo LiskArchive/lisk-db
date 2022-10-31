@@ -1,3 +1,5 @@
+/// reader_db is the interface for state reader.
+/// State reader will snapshot the data and even if the change happen during the lifetime of reader, it will not be affected.
 use std::sync::{mpsc, Arc, Mutex};
 
 use neon::context::{Context, FunctionContext};

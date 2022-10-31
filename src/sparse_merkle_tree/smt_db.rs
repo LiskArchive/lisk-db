@@ -1,3 +1,4 @@
+// smt_db provides in memory interface for in memory SMT computation.
 use crate::consts;
 use crate::database::traits::Actions;
 use crate::database::DB;

@@ -1,3 +1,4 @@
+/// codec provides minimal lisk-codec feature to encode/decode diff for the state.
 use thiserror::Error;
 
 use crate::types::NestedVec;

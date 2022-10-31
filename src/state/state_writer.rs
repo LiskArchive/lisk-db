@@ -1,3 +1,4 @@
+// state_wirter provides batch feature for StateDB. The data written to the writer will not be stored to the physical storage unless "commit" using StateDB.
 use std::cmp;
 use std::collections::HashMap;
 use std::sync::Arc;

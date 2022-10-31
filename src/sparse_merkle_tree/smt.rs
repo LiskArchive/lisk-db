@@ -1,3 +1,4 @@
+/// SparseMerkleTree is optimized sparse merkle tree implementation based on [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md).
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -1190,7 +1191,7 @@ impl SparseMerkleTree {
             info.structure_pos + StructurePosition(1),
         );
         let (mut left_nodes, mut left_heights) = self.update_node(db, left_info)?;
-        // Update rifht side of the node recursively
+        // Update right side of the node recursively
         let right_info = UpdateNodeInfo::new(
             &info.key_bins[idx..],
             &info.value_bins[idx..],
