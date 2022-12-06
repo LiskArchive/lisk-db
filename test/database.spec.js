@@ -32,6 +32,19 @@ describe('database', () => {
             db.close();
         });
 
+        it('should be able to open after closing', async () => {
+            const newDBPath = path.join(os.tmpdir(), 'db', Date.now().toString());
+            fs.mkdirSync(newDBPath, { recursive: true });
+            const newDB = new Database(newDBPath);
+            const key = getRandomBytes();
+            const value = getRandomBytes();
+            await newDB.set(key, value);
+            newDB.close();
+
+            const reopenDB = new Database(newDBPath);
+            await expect(reopenDB.get(key)).resolves.toEqual(value);
+        });
+
         it('should open DB', () => {
             expect(db).not.toBeUndefined();
         });

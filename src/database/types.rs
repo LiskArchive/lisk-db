@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use neon::event::Channel;
 use neon::types::JsBox;
@@ -12,6 +13,7 @@ pub type DbOptions = Options<KeyLength>;
 
 pub type JsBoxRef<T> = JsBox<RefCell<T>>;
 pub type JsArcMutex<T> = JsBoxRef<ArcMutex<T>>;
+pub type ArcOptionDB = Arc<Option<rocksdb::DB>>;
 
 /// Messages sent on the database channel
 pub enum Message<T> {

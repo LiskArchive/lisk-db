@@ -1,3 +1,4 @@
+use core::cell::RefCell;
 /// state_db is an authenticated storage using Sparse Merkle Tree extending Database using rocksdb.
 use std::cmp;
 use std::convert::TryInto;
@@ -11,8 +12,8 @@ use thiserror::Error;
 use crate::batch;
 use crate::consts;
 use crate::database::options;
-use crate::database::traits::{JsNewWithBoxRef, NewDBWithContext};
-use crate::database::types::{DbMessage, DbOptions, JsBoxRef, Kind};
+use crate::database::traits::{JsNewWithBoxRef, NewDBWithContext, OptionsWithContext, Unwrap};
+use crate::database::types::{ArcOptionDB, DbMessage, DbOptions, JsBoxRef, Kind};
 use crate::database::utils as DbUtils;
 use crate::database::utils::pair_to_js_object;
 use crate::database::DB;
@@ -119,7 +120,21 @@ impl NewDBWithContext for StateDB {
     }
 }
 
-impl JsNewWithBoxRef for StateDB {}
+impl JsNewWithBoxRef for StateDB {
+    fn js_new_with_box_ref<T: OptionsWithContext, U: NewDBWithContext + Send + Finalize>(
+        mut ctx: FunctionContext,
+    ) -> JsResult<JsBoxRef<U>> {
+        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
+        let options = ctx.argument_opt(1);
+        let db_opts = T::new_with_context(&mut ctx, options)?;
+        let db = U::new_db_with_context(&mut ctx, path, db_opts, Kind::State)
+            .or_else(|err| ctx.throw_error(&err))?;
+        let ref_db = RefCell::new(db);
+
+        return Ok(ctx.boxed(ref_db));
+    }
+}
+
 impl Finalize for StateDB {}
 impl StateDB {
     fn get_revert_result(
@@ -334,7 +349,7 @@ impl StateDB {
                 let end = [consts::Prefix::DIFF, &bytes].concat();
                 let mut batch = rocksdb::WriteBatch::default();
 
-                let conn_iter = conn.iterator(rocksdb::IteratorMode::From(
+                let conn_iter = conn.unwrap().iterator(rocksdb::IteratorMode::From(
                     end.as_ref(),
                     rocksdb::Direction::Reverse,
                 ));
@@ -348,7 +363,7 @@ impl StateDB {
                     batch.delete(&(key_val.unwrap().0));
                 }
 
-                let result = conn.write(batch);
+                let result = conn.unwrap().write(batch);
 
                 channel.send(move |mut ctx| {
                     let callback = callback.into_inner(&mut ctx);
@@ -460,7 +475,7 @@ impl StateDB {
         })
     }
 
-    pub fn arc_clone(&self) -> Arc<rocksdb::DB> {
+    pub fn arc_clone(&self) -> ArcOptionDB {
         self.common.arc_clone()
     }
 }
@@ -472,7 +487,7 @@ impl StateDB {
         // Get the `this` value as a `JsBox<Database>`
         ctx.this()
             .downcast_or_throw::<SharedStateDB, _>(&mut ctx)?
-            .borrow()
+            .borrow_mut()
             .common
             .close()
             .or_else(|err| ctx.throw_error(err.to_string()))?;
@@ -579,9 +594,11 @@ impl StateDB {
         let conn = db.common.arc_clone();
         db.common
             .send(move |channel| {
-                let conn = conn;
-                let conn_iter =
-                    conn.iterator(DbUtils::get_iteration_mode(&options, &mut vec![], true));
+                let conn_iter = conn.unwrap().iterator(DbUtils::get_iteration_mode(
+                    &options,
+                    &mut vec![],
+                    true,
+                ));
                 for (counter, key_val) in conn_iter.enumerate() {
                     if DbUtils::is_key_out_of_range(
                         &options,

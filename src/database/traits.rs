@@ -5,10 +5,14 @@ use std::sync::{Arc, Mutex};
 use neon::context::{Context, FunctionContext};
 use neon::handle::Handle;
 use neon::result::JsResult;
-use neon::types::{Finalize, JsBox, JsNumber, JsString, JsValue};
+use neon::types::{Finalize, JsNumber, JsString, JsValue};
 
 use crate::database::types::{DbOptions, JsArcMutex, JsBoxRef, Kind};
 use crate::types::{KVPair, KeyLength, VecOption};
+
+pub trait Unwrap {
+    fn unwrap(&self) -> &rocksdb::DB;
+}
 
 pub trait Actions {
     fn get(&self, key: &[u8]) -> Result<VecOption, rocksdb::Error>;
@@ -53,25 +57,11 @@ pub trait JsNewWithBoxRef {
         let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
         let options = ctx.argument_opt(1);
         let db_opts = T::new_with_context(&mut ctx, options)?;
-        let db = U::new_db_with_context(&mut ctx, path, db_opts, Kind::State)
+        let db = U::new_db_with_context(&mut ctx, path, db_opts, Kind::Normal)
             .or_else(|err| ctx.throw_error(&err))?;
         let ref_db = RefCell::new(db);
 
         return Ok(ctx.boxed(ref_db));
-    }
-}
-
-pub trait JsNewWithBox {
-    fn js_new_with_box<T: OptionsWithContext, U: NewDBWithContext + Finalize + Send>(
-        mut ctx: FunctionContext,
-    ) -> JsResult<JsBox<U>> {
-        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let options = ctx.argument_opt(1);
-        let db_opts = T::new_with_context(&mut ctx, options)?;
-        let db = U::new_db_with_context(&mut ctx, path, db_opts, Kind::Normal)
-            .or_else(|err| ctx.throw_error(&err))?;
-
-        return Ok(ctx.boxed(db));
     }
 }
 
