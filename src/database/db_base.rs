@@ -8,13 +8,19 @@ use neon::handle::{Handle, Root};
 use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
 use rocksdb::checkpoint::Checkpoint;
 
-use crate::database::traits::NewDBWithContext;
-use crate::database::types::{DbMessage, DbOptions, Kind};
+use crate::database::traits::{NewDBWithContext, Unwrap};
+use crate::database::types::{ArcOptionDB, DbMessage, DbOptions, Kind};
 
 pub struct DB {
     tx: mpsc::Sender<DbMessage>,
     db_kind: Kind,
-    db: Arc<rocksdb::DB>,
+    db: ArcOptionDB,
+}
+
+impl Unwrap for ArcOptionDB {
+    fn unwrap(&self) -> &rocksdb::DB {
+        self.as_ref().as_ref().expect("The DB connection is None")
+    }
 }
 
 impl NewDBWithContext for DB {
@@ -58,17 +64,22 @@ impl NewDBWithContext for DB {
 
 impl Finalize for DB {}
 impl DB {
+    fn db(&self) -> &rocksdb::DB {
+        self.db.unwrap()
+    }
+
     pub fn new(db: rocksdb::DB, tx: mpsc::Sender<DbMessage>, db_kind: Kind) -> Self {
         Self {
             tx,
             db_kind,
-            db: Arc::new(db),
+            db: Arc::new(Some(db)),
         }
     }
 
     // Idiomatic rust would take an owned `self` to prevent use after close
     // However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    pub fn close(&self) -> Result<(), mpsc::SendError<DbMessage>> {
+    pub fn close(&mut self) -> Result<(), mpsc::SendError<DbMessage>> {
+        self.db = Arc::new(None);
         self.tx.send(DbMessage::Close)
     }
 
@@ -85,7 +96,7 @@ impl DB {
         callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key = self.db_kind.key(key);
-        let result = self.db.get(&key);
+        let result = self.get(&key);
         self.send(move |channel| {
             channel.send(move |mut ctx| {
                 let callback = callback.into_inner(&mut ctx);
@@ -112,8 +123,8 @@ impl DB {
         callback: Root<JsFunction>,
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key = self.db_kind.key(key);
-        let result = if self.db.key_may_exist(&key) {
-            self.db.get(&key).map(|res| res.is_some())
+        let result = if self.db().key_may_exist(&key) {
+            self.get(&key).map(|res| res.is_some())
         } else {
             Ok(false)
         };
@@ -143,7 +154,7 @@ impl DB {
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let conn = Arc::clone(&self.db);
         self.send(move |channel| {
-            let result = Checkpoint::new(&conn);
+            let result = Checkpoint::new(conn.unwrap());
 
             if result.is_err() {
                 let err = result.err().unwrap();
@@ -177,28 +188,28 @@ impl DB {
         })
     }
 
-    pub fn arc_clone(&self) -> Arc<rocksdb::DB> {
+    pub fn arc_clone(&self) -> ArcOptionDB {
         Arc::clone(&self.db)
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), rocksdb::Error> {
-        self.db.put(key, value)
+        self.db().put(key, value)
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<(), rocksdb::Error> {
-        self.db.delete(key)
+        self.db().delete(key)
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, rocksdb::Error> {
-        self.db.get(key)
+        self.db().get(key)
     }
 
     pub fn write(&self, batch: rocksdb::WriteBatch) -> Result<(), rocksdb::Error> {
-        self.db.write(batch)
+        self.db().write(batch)
     }
 
     pub fn path(&self) -> &std::path::Path {
-        self.db.path()
+        self.db().path()
     }
 }
 
@@ -207,9 +218,8 @@ mod tests {
     use std::sync::mpsc;
     use tempdir::TempDir;
 
-    use crate::types::KVPair;
-
     use super::*;
+    use crate::types::KVPair;
 
     fn temp_db() -> DB {
         let temp_dir = TempDir::new("test_db").unwrap();

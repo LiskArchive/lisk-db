@@ -4,7 +4,7 @@ use crate::database::db;
 use crate::database::in_memory::in_memory_db;
 use crate::database::reader_writer::read_writer_db;
 use crate::database::reader_writer::reader_db;
-use crate::database::traits::{JsNewWithArcMutex, JsNewWithBox, JsNewWithBoxRef};
+use crate::database::traits::{JsNewWithArcMutex, JsNewWithBoxRef};
 use crate::database::types::DbOptions;
 use crate::sparse_merkle_tree::in_memory_smt;
 use crate::state::state_db;
@@ -32,7 +32,10 @@ use state_writer::StateWriter;
 
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
-    cx.export_function("db_new", Database::js_new_with_box::<DbOptions, Database>)?;
+    cx.export_function(
+        "db_new",
+        Database::js_new_with_box_ref::<DbOptions, Database>,
+    )?;
     cx.export_function("db_clear", Database::js_clear)?;
     cx.export_function("db_close", Database::js_close)?;
     cx.export_function("db_get", Database::js_get)?;

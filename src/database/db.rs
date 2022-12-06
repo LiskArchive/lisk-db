@@ -6,7 +6,8 @@ use neon::types::buffer::TypedArray;
 
 use crate::batch;
 use crate::database::options::IterationOption;
-use crate::database::traits::JsNewWithBox;
+use crate::database::traits::{JsNewWithBoxRef, Unwrap};
+use crate::database::types::JsBoxRef;
 use crate::database::utils;
 use crate::database::DB;
 
@@ -15,8 +16,9 @@ pub struct Error {
     message: String,
 }
 
+pub type SharedDatabase = JsBoxRef<Database>;
 pub type Database = DB;
-impl JsNewWithBox for Database {}
+impl JsNewWithBoxRef for Database {}
 impl Database {
     fn send_over_channel(
         channel: &Channel,
@@ -43,20 +45,20 @@ impl Database {
     /// - @params(1) - callback to return the result.
     /// - @callback(0) - Error.
     pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // Get the `this` value as a `JsBox<Database>`
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
         let conn = db.arc_clone();
         db.send(move |channel| {
             let mut batch = rocksdb::WriteBatch::default();
-            let conn_iter = conn.iterator(rocksdb::IteratorMode::Start);
+            let conn_iter = conn.unwrap().iterator(rocksdb::IteratorMode::Start);
             for key_val in conn_iter {
                 batch.delete(&(key_val.unwrap().0));
             }
-            let result = conn.write(batch);
+            let result = conn.unwrap().write(batch);
             Database::send_over_channel(channel, callback, result);
         })
         .or_else(|err| ctx.throw_error(err.to_string()))?;
@@ -67,9 +69,9 @@ impl Database {
     /// js_close is handler for JS ffi.
     /// js "this" - DB.
     pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        // Get the `this` value as a `JsBox<Database>`
         ctx.this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?
+            .borrow_mut()
             .close()
             .or_else(|err| ctx.throw_error(err.to_string()))?;
 
@@ -85,10 +87,10 @@ impl Database {
     pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        // Get the `this` value as a `JsBox<Database>`
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         db.get_by_key(key, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
@@ -105,10 +107,10 @@ impl Database {
     pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        // Get the `this` value as a `JsBox<Database>`
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         db.exists(key, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
@@ -126,10 +128,10 @@ impl Database {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `JsBox<Database>`
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         let result = db.put(&key, &value);
         db.send(move |channel| {
@@ -148,10 +150,10 @@ impl Database {
     pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        // Get the `this` value as a `JsBox<Database>`
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         let result = db.delete(&key);
         db.send(move |channel| {
@@ -175,7 +177,8 @@ impl Database {
 
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         let batch = Arc::clone(&batch.borrow());
         let conn = db.arc_clone();
@@ -184,7 +187,7 @@ impl Database {
             let inner_batch = batch.lock().unwrap();
             let mut write_batch = batch::WriteBatch { batch: write_batch };
             inner_batch.batch.iterate(&mut write_batch);
-            let result = conn.write(write_batch.batch);
+            let result = conn.unwrap().write(write_batch.batch);
             Database::send_over_channel(channel, callback, result);
         })
         .or_else(|err| ctx.throw_error(err.to_string()))?;
@@ -205,16 +208,18 @@ impl Database {
         let options = IterationOption::new(&mut ctx, option_inputs);
         let callback_on_data = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let callback_done = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `JsBox<Database>`
 
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         let callback_on_data = Arc::new(Mutex::new(callback_on_data));
         let conn = db.arc_clone();
         db.send(move |channel| {
-            let iter = conn.iterator(utils::get_iteration_mode(&options, &mut vec![], false));
+            let iter =
+                conn.unwrap()
+                    .iterator(utils::get_iteration_mode(&options, &mut vec![], false));
             for (counter, key_val) in iter.enumerate() {
                 if utils::is_key_out_of_range(
                     &options,
@@ -264,7 +269,8 @@ impl Database {
 
         let db = ctx
             .this()
-            .downcast_or_throw::<JsBox<Database>, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+        let db = db.borrow();
 
         db.checkpoint(path, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;

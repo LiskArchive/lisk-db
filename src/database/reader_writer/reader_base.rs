@@ -9,6 +9,7 @@ use neon::handle::{Handle, Root};
 use neon::result::JsResult;
 use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
 
+use crate::database::traits::Unwrap;
 use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
 use crate::state_db::SharedStateDB;
 
@@ -38,7 +39,7 @@ impl ReaderBase {
         let db = db.borrow();
         let conn = db.arc_clone();
         thread::spawn(move || {
-            let snapshot = conn.snapshot();
+            let snapshot = conn.unwrap().snapshot();
             while let Ok(message) = rx.recv() {
                 match message {
                     SnapshotMessage::Callback(f) => {
