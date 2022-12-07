@@ -336,11 +336,8 @@ class StateDB {
     }
 
     async calculateRoot(proof) {
-        return new Promise((resolve, reject) => {
-            state_db_calculate_root.call(this._db, proof, (err, result) => {
-                if (err) {
-                    return reject(err);
-                }
+        return new Promise((resolve, _reject) => {
+            state_db_calculate_root.call(this._db, proof, (_err, result) => {
                 resolve(result);
             });
         });

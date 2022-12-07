@@ -80,12 +80,8 @@ class SparseMerkleTree {
     }
 
     async calculateRoot(proof) {
-        return new Promise((resolve, reject) => {
-            in_memory_smt_calculate_root.call(null, proof, (err, result) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
+        return new Promise((resolve, _reject) => {
+            in_memory_smt_calculate_root.call(null, proof, (_err, result) => {
                 resolve(result);
             });
         });
