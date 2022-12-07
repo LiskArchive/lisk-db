@@ -382,8 +382,8 @@ impl StateDB {
             .map_err(|err| DataStoreError::Unknown(err.to_string()))
     }
 
-    fn proof(ctx: &mut FunctionContext) -> NeonResult<smt::Proof> {
-        let raw_proof = ctx.argument::<JsObject>(2)?;
+    fn proof(ctx: &mut FunctionContext, pos: u8) -> NeonResult<smt::Proof> {
+        let raw_proof = ctx.argument::<JsObject>(pos.into())?;
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(ctx, "siblingHashes")?
             .to_vec(ctx)?;
@@ -720,7 +720,7 @@ impl StateDB {
         let key_length = db.options.key_length();
         let state_root = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
 
-        let proof = Self::proof(&mut ctx)?;
+        let proof = Self::proof(&mut ctx, 2)?;
         let parsed_query_keys = Self::parse_query_keys(&mut ctx)?;
         let callback = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
         let channel = ctx.channel();
@@ -781,6 +781,40 @@ impl StateDB {
         db.common
             .checkpoint(path, callback)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
+
+    /// js_calculate_root is handler for JS ffi.
+    /// js "this" - StateDB.
+    /// - @params(0) - proof { siblingHashes: &[&[u8]]; queries: { key: &[u8]; value: &[u8]; bitmap: &[u8]; }[]; }
+    /// - @params(1) - callback to return the result.
+    /// - @callback(0) - Error.
+    /// - @callback(1) - root: &[u8].
+    pub fn js_calculate_root(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let proof = Self::proof(&mut ctx, 0)?;
+        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+        let channel = ctx.channel();
+
+        thread::spawn(move || {
+            let filter_map = smt::SparseMerkleTree::prepare_queries_with_proof_map(&proof);
+            let mut filtered_proof = filter_map
+                .values()
+                .cloned()
+                .collect::<Vec<smt::QueryProofWithProof>>();
+            let result =
+                smt::SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof);
+
+            channel.send(move |mut ctx| {
+                let callback = callback.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let buffer = JsBuffer::external(&mut ctx, result);
+                let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), buffer.upcast()];
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        });
 
         Ok(ctx.undefined())
     }

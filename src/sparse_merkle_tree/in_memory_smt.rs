@@ -8,6 +8,7 @@ use neon::types::buffer::TypedArray;
 use crate::consts;
 use crate::database::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
 use crate::database::types::{JsArcMutex, Kind as DBKind};
+use crate::sparse_merkle_tree::smt::QueryProofWithProof;
 use crate::sparse_merkle_tree::smt_db;
 use crate::sparse_merkle_tree::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
@@ -184,8 +185,8 @@ impl JsFunctionContext<'_> {
         Ok(())
     }
 
-    fn get_proof(&mut self) -> NeonResult<Proof> {
-        let raw_proof = self.context.argument::<JsObject>(2)?;
+    fn get_proof(&mut self, pos: u8) -> NeonResult<Proof> {
+        let raw_proof = self.context.argument::<JsObject>(pos.into())?;
         let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(&mut self.context, "siblingHashes")?
@@ -248,7 +249,7 @@ impl JsFunctionContext<'_> {
             parsed_query_keys.push(key);
         }
 
-        let proof = self.get_proof()?;
+        let proof = self.get_proof(2)?;
 
         let key_length = self
             .context
@@ -309,6 +310,41 @@ impl InMemorySMT {
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        });
+
+        Ok(js_context.context.undefined())
+    }
+
+    /// js_calculate_root is handler for JS ffi.
+    /// it calculate and returns the root hash of the in memory database.
+    pub fn js_calculate_root(ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let mut js_context = JsFunctionContext { context: ctx };
+
+        let proof = js_context.get_proof(0)?;
+        let callback = js_context
+            .context
+            .argument::<JsFunction>(1)?
+            .root(&mut js_context.context);
+        let channel = js_context.context.channel();
+
+        thread::spawn(move || {
+            let filter_map = SparseMerkleTree::prepare_queries_with_proof_map(&proof);
+            let mut filtered_proof = filter_map
+                .values()
+                .cloned()
+                .collect::<Vec<QueryProofWithProof>>();
+            let result =
+                SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof);
+
+            channel.send(move |mut ctx| {
+                let callback = callback.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let buffer = JsBuffer::external(&mut ctx, result);
+                let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), buffer.upcast()];
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())

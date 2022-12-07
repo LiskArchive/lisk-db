@@ -124,6 +124,7 @@ export class StateDB {
     close(): void;
     checkpoint(path: string): Promise<void>;
     getCurrentState(): Promise<CurrentState>;
+    calculateRoot(proof: Proof): Promise<Buffer>;
 }
 
 export class SparseMerkleTree {
@@ -131,4 +132,5 @@ export class SparseMerkleTree {
     update(root: Buffer, kvpair: { key: Buffer, value: Buffer }[]): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
     verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
+    calculateRoot(proof: Proof): Promise<Buffer>;
 }

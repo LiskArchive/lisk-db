@@ -26,6 +26,7 @@ const {
     state_db_verify,
     state_db_clean_diff_until,
     state_db_checkpoint,
+    state_db_calculate_root,
     state_writer_new,
     state_writer_snapshot,
     state_writer_restore_snapshot,
@@ -330,6 +331,14 @@ class StateDB {
                     return reject(err);
                 }
                 resolve();
+            });
+        });
+    }
+
+    async calculateRoot(proof) {
+        return new Promise((resolve, _reject) => {
+            state_db_calculate_root.call(this._db, proof, (_err, result) => {
+                resolve(result);
             });
         });
     }

@@ -17,6 +17,7 @@ const {
     in_memory_smt_update,
     in_memory_smt_prove,
     in_memory_smt_verify,
+    in_memory_smt_calculate_root,
 } = require("./bin-package/index.node");
 
 const DEFAULT_KEY_LENGTH = 38;
@@ -73,6 +74,14 @@ class SparseMerkleTree {
                     reject(err);
                     return;
                 }
+                resolve(result);
+            });
+        });
+    }
+
+    async calculateRoot(proof) {
+        return new Promise((resolve, _reject) => {
+            in_memory_smt_calculate_root.call(null, proof, (_err, result) => {
                 resolve(result);
             });
         });
