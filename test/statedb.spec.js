@@ -617,5 +617,15 @@ describe('statedb', () => {
                 expect(result).toEqual(false);
             });
         });
+
+        describe('calculateRoot', () => {
+            it('should calculate sparse merkle tree root', async () => {
+                const queries = [getRandomBytes(38), getRandomBytes(38)];
+                const proof = await db.prove(root, queries);
+
+                await expect(db.calculateRoot(proof)).resolves.toEqual(root);
+            });
+
+        });
     });
 });

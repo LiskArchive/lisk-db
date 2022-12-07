@@ -74,6 +74,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_db_verify", StateDB::js_verify)?;
     cx.export_function("state_db_clean_diff_until", StateDB::js_clean_diff_until)?;
     cx.export_function("state_db_checkpoint", StateDB::js_checkpoint)?;
+    cx.export_function("state_db_calculate_root", StateDB::js_calculate_root)?;
 
     let state_writer_new = StateWriter::js_new_with_arc_mutex::<StateWriter>;
     let restore_snapshot = StateWriter::js_restore_snapshot;
@@ -95,6 +96,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("in_memory_smt_update", InMemorySMT::js_update)?;
     cx.export_function("in_memory_smt_prove", InMemorySMT::js_prove)?;
     cx.export_function("in_memory_smt_verify", InMemorySMT::js_verify)?;
+    cx.export_function(
+        "in_memory_smt_calculate_root",
+        InMemorySMT::js_calculate_root,
+    )?;
 
     Ok(())
 }

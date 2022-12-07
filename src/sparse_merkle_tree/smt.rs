@@ -76,7 +76,7 @@ pub struct QueryProof {
 }
 
 #[derive(Clone, Debug)]
-struct QueryProofWithProof {
+pub struct QueryProofWithProof {
     query_proof: QueryProof,
     binary_bitmap: Vec<bool>,
     ancestor_hashes: NestedVec,
@@ -856,26 +856,6 @@ impl SparseMerkleTree {
         Ok((query_with_proofs, ancestor_hashes))
     }
 
-    fn prepare_queries_with_proof_map(proof: &Proof) -> HashMap<Vec<bool>, QueryProofWithProof> {
-        let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
-        for query in &proof.queries {
-            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            let binary_path = utils::bytes_to_bools(&query.pair.0)[..binary_bitmap.len()].to_vec();
-
-            queries_with_proof.insert(
-                binary_path,
-                QueryProofWithProof::new_with_pair(
-                    Arc::clone(&query.pair),
-                    &binary_bitmap,
-                    &[],
-                    &[],
-                ),
-            );
-        }
-
-        queries_with_proof
-    }
-
     fn verify_query_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: KeyLength) -> bool {
         for (i, key) in query_keys.iter().enumerate() {
             if key.len() != key_length.into() {
@@ -1370,8 +1350,33 @@ impl SparseMerkleTree {
         self.calculate_query_proof_from_result(db, &data)
     }
 
+    pub fn prepare_queries_with_proof_map(
+        proof: &Proof,
+    ) -> HashMap<Vec<bool>, QueryProofWithProof> {
+        let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
+        for query in &proof.queries {
+            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+            let binary_path = utils::bytes_to_bools(&query.pair.0)[..binary_bitmap.len()].to_vec();
+
+            queries_with_proof.insert(
+                binary_path,
+                QueryProofWithProof::new_with_pair(
+                    Arc::clone(&query.pair),
+                    &binary_bitmap,
+                    &[],
+                    &[],
+                ),
+            );
+        }
+
+        queries_with_proof
+    }
+
     /// calculate_root calculates the merkle root with sibling hashes and multi proofs according to the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-verification).
-    fn calculate_root(sibling_hashes: &[Vec<u8>], queries: &mut [QueryProofWithProof]) -> Vec<u8> {
+    pub fn calculate_root(
+        sibling_hashes: &[Vec<u8>],
+        queries: &mut [QueryProofWithProof],
+    ) -> Vec<u8> {
         queries.sort_descending();
 
         let mut sorted_queries = VecDeque::from(queries.to_vec());
