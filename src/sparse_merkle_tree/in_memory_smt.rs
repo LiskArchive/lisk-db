@@ -185,8 +185,8 @@ impl JsFunctionContext<'_> {
         Ok(())
     }
 
-    fn get_proof(&mut self, pos: i32) -> NeonResult<Proof> {
-        let raw_proof = self.context.argument::<JsObject>(pos)?;
+    fn get_proof(&mut self, pos: u8) -> NeonResult<Proof> {
+        let raw_proof = self.context.argument::<JsObject>(pos.into())?;
         let mut sibling_hashes = NestedVec::new();
         let raw_sibling_hashes = raw_proof
             .get::<JsArray, _, _>(&mut self.context, "siblingHashes")?

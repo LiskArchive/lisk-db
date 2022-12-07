@@ -273,4 +273,26 @@ describe('SparseMerkleTree', () => {
 			});
 		}
 	});
+
+	describe('calculateRoot - Jumbo fixtures', () => {
+		for (const test of JumboFixtures.testCases) {
+			// eslint-disable-next-line no-loop-func
+			it(test.description, async () => {
+				const smt = new SparseMerkleTree(32);
+				const outputMerkleRoot = test.output.merkleRoot;
+				const outputProof = test.output.proof;
+
+				const proof = {
+					siblingHashes: outputProof.siblingHashes.map(q => Buffer.from(q, 'hex')),
+					queries: outputProof.queries.map(q => ({
+						key: Buffer.from(q.key, 'hex'),
+						value: Buffer.from(q.value, 'hex'),
+						bitmap: Buffer.from(q.bitmap, 'hex'),
+					}))
+				};
+
+				await expect(smt.calculateRoot(proof)).resolves.toEqual(Buffer.from(outputMerkleRoot, 'hex'));
+			});
+		}
+	});
 });
