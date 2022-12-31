@@ -176,9 +176,10 @@ impl ReadWriter {
                         } else if deleted {
                             continue;
                         } else {
-                            let shared_pair = SharedKVPair::new(pair.key(), pair.value());
+                            // key is stored and returned without prefix
+                            let shared_pair = SharedKVPair::new(key_without_prefix, pair.value());
                             writer.cache_existing(&shared_pair);
-                            result.insert(pair.key_as_vec(), pair.value_as_vec());
+                            result.insert(shared_pair.key_as_vec(), shared_pair.value_as_vec());
                         }
                     }
                     cache_to_js_array(&mut ctx, &result)?
