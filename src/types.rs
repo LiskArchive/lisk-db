@@ -144,7 +144,7 @@ impl Sub for Height {
 impl From<KeyLength> for u16 {
     #[inline]
     fn from(value: KeyLength) -> u16 {
-        value.0 as u16
+        value.0
     }
 }
 
