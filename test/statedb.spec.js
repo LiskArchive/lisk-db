@@ -381,8 +381,11 @@ describe('statedb', () => {
                 });
 
                 expect(result).toHaveLength(2);
-                expect(result[0].value).toEqual(newValue);
-                expect(result[1].value).toEqual(initState[2].value);
+                expect(result[0]).toEqual({
+                    key: initState[1].key,
+                    value: newValue,
+                });
+                expect(result[1]).toEqual(initState[2]);
             });
 
             it('should return updated value with range in reverse', async () => {
