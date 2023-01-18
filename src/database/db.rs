@@ -55,9 +55,13 @@ impl Database {
         db.send(move |channel| {
             let mut batch = rocksdb::WriteBatch::default();
             let conn_iter = conn.unwrap().iterator(rocksdb::IteratorMode::Start);
-            for key_val in conn_iter {
-                batch.delete(&(key_val.unwrap().0));
+            for (key, _) in conn_iter {
+                batch.delete(&key);
             }
+
+            // for key_val in conn_iter {
+            //     batch.delete(&(key_val.unwrap().0));
+            // }
             let result = conn.unwrap().write(batch);
             Database::send_over_channel(channel, callback, result);
         })
@@ -220,21 +224,15 @@ impl Database {
             let iter =
                 conn.unwrap()
                     .iterator(utils::get_iteration_mode(&options, &mut vec![], false));
-            for (counter, key_val) in iter.enumerate() {
-                if utils::is_key_out_of_range(
-                    &options,
-                    &(key_val.as_ref().unwrap().0),
-                    counter as i64,
-                    false,
-                ) {
+            for (counter, (key, val)) in iter.enumerate() {
+                if utils::is_key_out_of_range(&options, &key, counter as i64, false) {
                     break;
                 }
                 let callback_on_data = Arc::clone(&callback_on_data);
                 channel.send(move |mut ctx| {
                     let obj = ctx.empty_object();
-                    let key_res =
-                        JsBuffer::external(&mut ctx, key_val.as_ref().unwrap().0.clone());
-                    let val_res = JsBuffer::external(&mut ctx, key_val.unwrap().1);
+                    let key_res = JsBuffer::external(&mut ctx, key);
+                    let val_res = JsBuffer::external(&mut ctx, val);
                     obj.set(&mut ctx, "key", key_res)?;
                     obj.set(&mut ctx, "value", val_res)?;
                     let callback = callback_on_data.lock().unwrap().to_inner(&mut ctx);

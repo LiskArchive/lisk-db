@@ -42,20 +42,20 @@ struct CurrentState<'a> {
     version: BlockHeight,
 }
 
-struct Commit {
+struct CommitResultInfo {
+    next_root: Result<SharedVec, smt::SMTError>,
+    data: Commit,
+}
+
+pub struct Commit {
     options: CommitOptions,
     check_expected: bool,
     expected: Vec<u8>,
 }
 
-struct CommitData {
+pub struct CommitData {
     data: Commit,
     prev_root: Vec<u8>,
-}
-
-struct CommitResultInfo {
-    next_root: Result<SharedVec, smt::SMTError>,
-    data: Commit,
 }
 
 /// StateDB maintains instance of database for authenticated storage using sparse merkle tree.
@@ -82,7 +82,7 @@ impl<'a> CurrentState<'a> {
 }
 
 impl Commit {
-    fn new(expected: Vec<u8>, options: CommitOptions, check_expected: bool) -> Self {
+    pub fn new(expected: Vec<u8>, options: CommitOptions, check_expected: bool) -> Self {
         Self {
             options,
             check_expected,
@@ -92,7 +92,7 @@ impl Commit {
 }
 
 impl CommitData {
-    fn new(data: Commit, prev_root: Vec<u8>) -> Self {
+    pub fn new(data: Commit, prev_root: Vec<u8>) -> Self {
         Self { data, prev_root }
     }
 }
@@ -354,13 +354,11 @@ impl StateDB {
                     rocksdb::Direction::Reverse,
                 ));
 
-                for key_val in conn_iter {
-                    if utils::compare(&(key_val.as_ref().unwrap().0), &start)
-                        == cmp::Ordering::Less
-                    {
+                for (key, _) in conn_iter {
+                    if utils::compare(&key, &start) == cmp::Ordering::Less {
                         break;
                     }
-                    batch.delete(&(key_val.unwrap().0));
+                    batch.delete(&key);
                 }
 
                 let result = conn.unwrap().write(batch);
@@ -477,6 +475,29 @@ impl StateDB {
 
     pub fn arc_clone(&self) -> ArcOptionDB {
         self.common.arc_clone()
+    }
+
+    pub fn new(db: DB) -> Self {
+        Self {
+            common: db,
+            options: DbOptions::default(),
+        }
+    }
+
+    pub fn commit_without_ctx(
+        &mut self,
+        writer: ArcMutex<state_writer::StateWriter>,
+        commit_data: CommitData,
+    ) -> Result<SharedVec, smt::SMTError> {
+        let key_length = self.options.key_length();
+        let w = writer.lock().unwrap();
+        let data = smt::UpdateData::new_with_hash(w.get_updated());
+        let mut smt_db = smt_db::SmtDB::new(&self.common);
+        let mut tree =
+            smt::SparseMerkleTree::new(&commit_data.prev_root, key_length, consts::SUBTREE_HEIGHT);
+        let root = tree.commit(&mut smt_db, &data);
+        let result_info = CommitResultInfo::new(root, commit_data.data);
+        StateDB::handle_commit_result(&self.common, &smt_db, w, result_info)
     }
 }
 
@@ -599,21 +620,13 @@ impl StateDB {
                     &mut vec![],
                     true,
                 ));
-                for (counter, key_val) in conn_iter.enumerate() {
-                    if DbUtils::is_key_out_of_range(
-                        &options,
-                        &(key_val.as_ref().unwrap().0),
-                        counter as i64,
-                        true,
-                    ) {
+                for (counter, (key, val)) in conn_iter.enumerate() {
+                    if DbUtils::is_key_out_of_range(&options, &key, counter as i64, true) {
                         break;
                     }
                     let callback_on_data = Arc::clone(&callback_on_data);
                     channel.send(move |mut ctx| {
-                        let (_, key_without_prefix) =
-                            key_val.as_ref().unwrap().0.split_first().unwrap();
-                        let temp_pair =
-                            KVPair::new(key_without_prefix, &(key_val.as_ref().unwrap().1));
+                        let temp_pair = KVPair::new(&key, &val);
                         let obj = pair_to_js_object(&mut ctx, &temp_pair)?;
                         let callback = callback_on_data.lock().unwrap().to_inner(&mut ctx);
                         let this = ctx.undefined();

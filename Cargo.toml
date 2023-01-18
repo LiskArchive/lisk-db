@@ -12,8 +12,16 @@ crate-type = ["cdylib", "lib"]
 name = "bench_smt"
 path = "benchmark/rust/bench_smt.rs"
 
+[[bin]]
+name = "bench_leak"
+path = "benchmark/rust/bench_leak.rs"
+
 [[bench]]
 name = "bench_smt"
+harness = false
+
+[[bench]]
+name = "bench_leak"
 harness = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -32,13 +40,16 @@ default-features = false
 features = ["napi-6", "event-queue-api", "try-catch-api"]
 
 [dependencies.rocksdb]
-version = "0.19"
+version = "0.18"
 
 [dependencies.hex]
 version = "0.4.3"
 
 [dependencies.tempdir]
 version = "0.3"
+
+[dependencies.rand]
+version = "0.8.5"
 
 [dependencies.bitvec]
 version = "1.0.1"

@@ -157,9 +157,7 @@ impl ReadWriter {
         self.send(move |conn, channel| {
             let values = conn
                 .iterator(get_iteration_mode(&options, &mut vec![], true))
-                .map(|key_val| {
-                    KVPair::new(&key_val.as_ref().unwrap().0.clone(), &key_val.unwrap().1)
-                })
+                .map(|(k, v)| KVPair::new(&k, &v))
                 .collect::<Vec<KVPair>>();
             channel.send(move |mut ctx| {
                 let result = {
@@ -188,6 +186,45 @@ impl ReadWriter {
                 let callback = callback.into_inner(&mut ctx);
                 let args = vec![ctx.null().upcast(), result.upcast()];
                 callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            });
+        })
+    }
+
+    pub fn new(tx: mpsc::Sender<SnapshotMessage>) -> Self {
+        Self { tx }
+    }
+
+    pub fn upsert_key_without_ctx(
+        &self,
+        writer: ArcMutex<state_writer::StateWriter>,
+        key: Vec<u8>,
+        new_value: Vec<u8>,
+    ) -> Result<(), mpsc::SendError<SnapshotMessage>> {
+        let state_db_key = Kind::State.key(key.clone());
+        self.send(move |conn, channel| {
+            let value = conn.get(&state_db_key);
+            channel.send(move |_ctx| {
+                let mut writer = writer.lock().unwrap();
+                let cached = writer.is_cached(&key);
+                if cached {
+                    //  if the key already in cache so update it and returns
+                    let _result = writer.update(&KVPair::new(&key, &new_value));
+                } else if let Ok(value) = &value {
+                    // if found the value of the key then insert into cache and update it
+                    if value.is_some() {
+                        let temp_value = value.as_ref().unwrap().to_vec();
+                        let pair = SharedKVPair::new(&key, &temp_value);
+                        writer.cache_existing(&pair);
+                        let _result = writer.update(&KVPair::new(&key, &new_value));
+                    } else {
+                        // if there is no key then make a new pair and insert into cache
+                        writer.cache_new(&SharedKVPair::new(&key, &new_value));
+                    }
+                } else {
+                    panic!("{:#?}", value.err());
+                }
 
                 Ok(())
             });

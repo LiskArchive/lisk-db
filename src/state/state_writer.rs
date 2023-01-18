@@ -93,6 +93,11 @@ impl StateWriter {
         self.cache.insert(pair.key_as_vec(), cache);
     }
 
+    // pub fn cache_new_no_shared(&mut self, pair: KVPair) {
+    //     let cache = StateCache::new(pair.value());
+    //     self.cache.insert(pair.key_as_vec(), cache);
+    // }
+
     /// cache_existing inserts key-value pair as updated value.
     pub fn cache_existing(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new_existing(pair.value());

@@ -111,21 +111,13 @@ impl Reader {
         let callback_on_data = Arc::new(Mutex::new(callback_on_data));
         db.send(move |conn, channel| {
             let conn_iter = conn.iterator(get_iteration_mode(&options, &mut vec![], true));
-            for (counter, key_val) in conn_iter.enumerate() {
-                if is_key_out_of_range(
-                    &options,
-                    &(key_val.as_ref().unwrap().0),
-                    counter as i64,
-                    true,
-                ) {
+            for (counter, (key, val)) in conn_iter.enumerate() {
+                if is_key_out_of_range(&options, &key, counter as i64, true) {
                     break;
                 }
                 let callback_on_data = Arc::clone(&callback_on_data);
                 channel.send(move |mut ctx| {
-                    let (_, key_without_prefix) =
-                        key_val.as_ref().unwrap().0.split_first().unwrap();
-                    let temp_pair =
-                        KVPair::new(key_without_prefix, &(key_val.as_ref().unwrap().1));
+                    let temp_pair = KVPair::new(&key, &val);
                     let obj = pair_to_js_object(&mut ctx, &temp_pair)?;
                     let callback = callback_on_data.lock().unwrap().to_inner(&mut ctx);
                     let this = ctx.undefined();

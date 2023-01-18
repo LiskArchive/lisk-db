@@ -14,7 +14,7 @@ use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
 use crate::state_db::SharedStateDB;
 
 pub struct ReaderBase {
-    tx: mpsc::Sender<SnapshotMessage>,
+    pub tx: mpsc::Sender<SnapshotMessage>,
 }
 
 impl Finalize for ReaderBase {
