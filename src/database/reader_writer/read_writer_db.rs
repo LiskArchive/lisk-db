@@ -20,6 +20,18 @@ pub type SharedReadWriter = JsBoxRef<ReadWriter>;
 pub type ReadWriter = ReaderBase;
 
 impl ReadWriter {
+    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx
+            .this()
+            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
+        let db = db.borrow_mut();
+        println!("      Close func called from reader_writer to close the connection");
+        db.close()
+            .or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
+
     /// update or insert the pair of key and value
     fn upsert_key(
         &self,

@@ -35,6 +35,10 @@ const hash = data => {
 
 const count = 10000;
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 (async () => {
     let root = Buffer.alloc(0);
     let db = new StateDB('./.tmp-state');
@@ -51,7 +55,7 @@ const count = 10000;
     for (let i = 0; i < 10000; i++) {
         logger.info(`Executing ${i + 1} with root ${root.toString('hex')}`);
         performance.mark('s-start');
-        const writer = db.newReadWriter();
+        let writer = db.newReadWriter();
         for (let j = 0; j < count; j++) {
             await writer.set(Buffer.concat([Buffer.from([0,0,0,0,0,0]), getRandomBytes(32)]), getRandomBytes(32));
         }
@@ -59,6 +63,10 @@ const count = 10000;
         performance.mark('c-start');
         console.log({ i, root })
         root = await db.commit(writer, i, root);
+        writer.close();
+        writer = null;
+        delete writer;
+        await sleep(6000);
         console.log({ root })
         performance.mark('c-end');
 

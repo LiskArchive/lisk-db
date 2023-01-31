@@ -43,6 +43,15 @@ pub struct StateWriter {
     pub cache: HashMap<Vec<u8>, StateCache>,
 }
 
+impl StateWriter {
+    pub fn empty(&mut self) {
+        println!("      we are trying to make an empty writer, the cache size is: {:}", self.cache.len());
+        self.backup = HashMap::new();
+        self.cache = HashMap::new();
+        println!("      after that the cache size is: {:}", self.cache.len());
+    }
+}
+
 impl DatabaseKind for StateWriter {
     fn db_kind() -> DBKind {
         DBKind::StateWriter
@@ -267,6 +276,17 @@ impl StateWriter {
             Err(error) => ctx.throw_error(error.to_string())?,
         }
     }
+
+    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx
+            .this()
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
+        let db = db.borrow_mut();
+        db.lock().unwrap().empty();
+
+        Ok(ctx.undefined())
+    }
+
 }
 
 #[cfg(test)]

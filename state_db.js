@@ -28,6 +28,7 @@ const {
     state_db_checkpoint,
     state_db_calculate_root,
     state_writer_new,
+    state_writer_close,
     state_writer_snapshot,
     state_writer_restore_snapshot,
     state_db_reader_new,
@@ -35,6 +36,7 @@ const {
     state_db_reader_exists,
     state_db_reader_iterate,
     state_db_read_writer_new,
+    state_db_read_writer_close,
     state_db_read_writer_upsert_key,
     state_db_read_writer_get_key,
     state_db_read_writer_delete,
@@ -98,6 +100,11 @@ class StateReadWriter {
 
     get writer() {
         return this._writer;
+    }
+
+    close() {
+        state_db_read_writer_close.call(this._db);
+        state_writer_close.call(this._writer);
     }
 
     async get(key) {

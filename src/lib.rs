@@ -52,6 +52,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("state_db_reader_iterate", reader_db::Reader::js_iterate)?;
 
     cx.export_function("state_db_read_writer_new", ReadWriter::js_new)?;
+    cx.export_function("state_db_read_writer_close", ReadWriter::js_close)?;
     cx.export_function("state_db_read_writer_upsert_key", ReadWriter::js_upsert_key)?;
     cx.export_function("state_db_read_writer_get_key", ReadWriter::js_get_key)?;
     cx.export_function("state_db_read_writer_delete", ReadWriter::js_delete_key)?;
@@ -80,6 +81,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     let restore_snapshot = StateWriter::js_restore_snapshot;
     cx.export_function("state_writer_new", state_writer_new)?;
     cx.export_function("state_writer_snapshot", StateWriter::js_snapshot)?;
+    cx.export_function("state_writer_close", StateWriter::js_close)?;
     cx.export_function("state_writer_restore_snapshot", restore_snapshot)?;
 
     cx.export_function("in_memory_db_new", in_memory_db::Database::js_new)?;

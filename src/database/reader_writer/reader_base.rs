@@ -19,7 +19,8 @@ pub struct ReaderBase {
 
 impl Finalize for ReaderBase {
     fn finalize<'a, C: Context<'a>>(self, _: &mut C) {
-        self.close().unwrap();
+        println!("      the finalize of the ReaderBase is called");
+        // self.close().unwrap();
         drop(self);
     }
 }
@@ -55,7 +56,7 @@ impl ReaderBase {
 
     /// Idiomatic rust would take an owned `self` to prevent use after close
     /// However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
+    pub fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
         self.tx.send(SnapshotMessage::Close)
     }
 
