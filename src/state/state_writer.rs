@@ -87,6 +87,12 @@ impl StateCache {
 }
 
 impl StateWriter {
+    /// empty makes StateWriter as an empty HashMap to handle of releasing the memory from JS.
+    fn empty(&mut self) {
+        self.backup = HashMap::new();
+        self.cache = HashMap::new();
+    }
+
     /// cache_new inserts key-value pair as new value.
     pub fn cache_new(&mut self, pair: &SharedKVPair) {
         let cache = StateCache::new(pair.value());
@@ -229,6 +235,20 @@ impl StateWriter {
 }
 
 impl StateWriter {
+    /// js_close is handler for JS ffi.
+    /// js "this" - StateWriter.
+    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let writer = ctx
+            .this()
+            .downcast_or_throw::<SendableStateWriter, _>(&mut ctx)?;
+
+        let batch = Arc::clone(&writer.borrow());
+        let mut inner_writer = batch.lock().unwrap();
+        inner_writer.empty();
+
+        Ok(ctx.undefined())
+    }
+
     /// js_snapshot is handler for JS ffi.
     /// js "this" - StateWriter.
     /// - @returns - snapshot id
@@ -268,6 +288,65 @@ impl StateWriter {
 mod tests {
     use super::*;
     use crate::consts::Prefix;
+
+    use std::cell::RefCell;
+    use std::convert::TryInto;
+    use std::sync::Mutex;
+    use std::thread;
+
+    use rand::RngCore;
+
+    #[test]
+    fn test_multi_thread() {
+        let outer_loop_iterations = 1000;
+        let inner_loop_iteration = 2000;
+        let pairs_len = inner_loop_iteration / 10;
+
+        for _ in 0..outer_loop_iterations {
+            let mut pairs: Vec<KVPair> = vec![];
+            for _ in 0..pairs_len {
+                let mut key = [0u8; 32];
+                let mut value = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut key);
+                rand::thread_rng().fill_bytes(&mut value);
+                pairs.push(KVPair::new(&key, &value));
+            }
+
+            let sendable_writer = RefCell::new(Arc::new(Mutex::new(StateWriter::default())));
+            let mut counter = 0;
+            for i in 1..inner_loop_iteration {
+                let mut key = [0u8; 32];
+                let mut value = [0u8; 32];
+                if i % 6 == 0 && counter < pairs_len {
+                    key = pairs[counter].key().try_into().unwrap();
+                    value = pairs[counter].value().try_into().unwrap();
+                    counter += 1;
+                } else {
+                    rand::thread_rng().fill_bytes(&mut key);
+                    rand::thread_rng().fill_bytes(&mut value);
+                }
+
+                let batch = sendable_writer.borrow_mut();
+                let writer = Arc::clone(&batch);
+                thread::spawn(move || {
+                    let w = writer.lock();
+                    assert!(w.is_ok());
+                    w.unwrap().cache_new(&SharedKVPair::new(&key, &value));
+                });
+            }
+
+            let writer = Arc::clone(&sendable_writer.borrow_mut());
+            thread::spawn(move || {
+                let mut w = writer.lock().unwrap();
+                for kv in pairs.iter() {
+                    assert!(w.is_cached(kv.key()));
+                    let mut new_value = [0u8; 32];
+                    rand::thread_rng().fill_bytes(&mut new_value);
+                    assert!(w.update(&KVPair::new(kv.key(), &new_value)).is_ok());
+                }
+            });
+        }
+    }
 
     #[test]
     fn test_cache() {

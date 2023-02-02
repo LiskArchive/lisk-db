@@ -452,6 +452,15 @@ describe('statedb', () => {
                 await writer.set(initState[1].key, getRandomBytes());
                 expect(() => writer.restoreSnapshot(99)).toThrow('Invalid usage');
             });
+
+            it('should throw an error when the writer is closed', async () => {
+                const writer = db.newReadWriter();
+                const newValue = getRandomBytes();
+                await writer.set(initState[1].key, newValue);
+                await expect(writer.get(initState[1].key)).resolves.toEqual(newValue);
+                writer.close();
+                expect(() => writer.get(initState[1].key)).rejects.toThrow();
+            });
         });
 
         describe('StateReader', () => {
