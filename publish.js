@@ -44,7 +44,7 @@
  if (canarySHA) {
     originalPackageJSON.version = `${originalPackageJSON.version}-${canarySHA}`;
  }
- originalPackageJSON.scripts.install = "node-pre-gyp install";
+ originalPackageJSON.scripts.install = "node install";
  fs.writeFileSync("./package.json", JSON.stringify(originalPackageJSON, null, 2));
  
  //Use a fully qualified path to pre-gyp binary for Windows support
