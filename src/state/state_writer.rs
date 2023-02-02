@@ -294,6 +294,67 @@ mod tests {
     use super::*;
     use crate::consts::Prefix;
 
+    use std::sync::Mutex;
+    use std::cell::RefCell;
+    use std::thread;
+    use std::convert::TryInto;
+
+    use rand::RngCore;
+
+    #[test]
+    fn test_multi_thread() {
+        let outer_loop_iterations = 10000;
+        let inner_loop_iteration = 10000;
+        let pairs_len = inner_loop_iteration / 10;
+
+        for k in 0..outer_loop_iterations {
+            println!("iteration {:}...", k);
+            let mut pairs : Vec<KVPair> = vec![];
+            for _ in 0..pairs_len {
+                let mut key = [0u8; 32];
+                let mut value = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut key);
+                rand::thread_rng().fill_bytes(&mut value);
+                pairs.push(KVPair::new(&key, &value));
+            }
+
+            let sendable_writer = RefCell::new(Arc::new(Mutex::new(StateWriter::default())));
+            let mut counter = 0;
+            for i in 1..inner_loop_iteration {
+                let mut key = [0u8; 32];
+                let mut value = [0u8; 32];
+                if i % 6 == 0 && counter < pairs_len {
+                    key = pairs[counter].key().try_into().unwrap();
+                    value = pairs[counter].value().try_into().unwrap();
+                    counter += 1;
+                } else {
+                    rand::thread_rng().fill_bytes(&mut key);
+                    rand::thread_rng().fill_bytes(&mut value);
+                }
+
+                let batch = sendable_writer.borrow_mut();
+                let writer = Arc::clone(&batch);
+                thread::spawn(move || {
+                    let w = writer.lock();
+                    assert!(w.is_ok());
+                    w.unwrap().cache_new(&SharedKVPair::new(&key, &value));
+                });
+            }
+
+            let writer = Arc::clone(&sendable_writer.borrow_mut());
+            thread::spawn(move || {
+                let mut w = writer.lock().unwrap();
+                for kv in pairs.iter() {
+                    assert!(w.is_cached(kv.key()));
+                    let mut new_value = [0u8; 32];
+                    rand::thread_rng().fill_bytes(&mut new_value);
+                    assert!(w.update(&KVPair::new(&kv.key(), &new_value)).is_ok());
+                }
+            });
+            println!("iteration {:} is finished", k);
+        }
+    }
+
     #[test]
     fn test_cache() {
         let mut writer = StateWriter::default();
