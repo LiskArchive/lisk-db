@@ -32,6 +32,7 @@ const {
     state_writer_snapshot,
     state_writer_restore_snapshot,
     state_db_reader_new,
+    state_db_reader_close,
     state_db_reader_get,
     state_db_reader_exists,
     state_db_reader_iterate,
@@ -50,6 +51,10 @@ const { getOptionsWithDefault } = require('./options');
 class StateReader {
     constructor(db) {
         this._db = state_db_reader_new(db);
+    }
+
+    close() {
+        state_db_reader_close.call(this._db);
     }
 
     async get(key) {

@@ -10,15 +10,13 @@ use neon::result::JsResult;
 use neon::types::{buffer::TypedArray, JsBuffer, JsFunction, JsObject, JsTypedArray, JsUndefined};
 
 use crate::database::options;
-use crate::database::reader_writer::ReaderBase;
-use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
+use crate::database::reader_writer::{ReaderBase, SharedReaderBase};
+use crate::database::types::{Kind, SnapshotMessage};
 use crate::database::utils::*;
 use crate::state_writer;
 use crate::types::{ArcMutex, KVPair, SharedKVPair};
 
-pub type SharedReadWriter = JsBoxRef<ReadWriter>;
 pub type ReadWriter = ReaderBase;
-
 impl ReadWriter {
     /// update or insert the pair of key and value
     fn upsert_key(
@@ -210,10 +208,10 @@ impl ReadWriter {
         let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         let value = ctx.argument::<JsTypedArray<u8>>(2)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(3)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReaderWriter`
+        // Get the `this` value as a `SharedReaderBase`
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
         let db = db.borrow();
 
         let writer = Arc::clone(&batch.borrow_mut());
@@ -237,10 +235,10 @@ impl ReadWriter {
             .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
         let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReaderWriter`
+        // Get the `this` value as a `SharedReaderBase`
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
         let db = db.borrow_mut();
         let writer = Arc::clone(&batch.borrow_mut());
         db.get_key_with_writer(callback, writer, key)
@@ -262,10 +260,10 @@ impl ReadWriter {
             .downcast_or_throw::<state_writer::SendableStateWriter, _>(&mut ctx)?;
         let key = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
         let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReaderWriter`
+        // Get the `this` value as a `SharedReaderBase`
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
         let db = db.borrow_mut();
         let writer = Arc::clone(&batch.borrow_mut());
         db.delete_key(callback, writer, key)
@@ -289,26 +287,14 @@ impl ReadWriter {
         let option_inputs = ctx.argument::<JsObject>(1)?;
         let options = options::IterationOption::new(&mut ctx, option_inputs);
         let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        // Get the `this` value as a `SharedReaderWriter`
+        // Get the `this` value as a `SharedReaderBase`
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
         let db = db.borrow_mut();
         let writer = Arc::clone(&batch.borrow_mut());
         db.range(callback, writer, options)
             .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    /// js_close is handler for JS ffi.
-    /// js "this" - ReadWriter.
-    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let db = ctx
-            .this()
-            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
-        let db = db.borrow_mut();
-        db.close().or_else(|err| ctx.throw_error(err.to_string()))?;
 
         Ok(ctx.undefined())
     }
