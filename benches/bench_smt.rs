@@ -24,7 +24,7 @@ fn get_data() -> UpdateData {
         let mut hasher = Sha256::new();
         hasher.update(i.to_string());
         let hash = hasher.finalize();
-        let hash: String = format!("{:X}", hash);
+        let hash: String = format!("{hash:X}");
 
         data.insert(SharedKVPair(
             &hex::decode(&hash).unwrap(),
@@ -42,7 +42,7 @@ fn get_query_keys() -> NestedVec {
         let mut hasher = Sha256::new();
         hasher.update(i.to_string());
         let hash = hasher.finalize();
-        let hash: String = format!("{:X}", hash);
+        let hash: String = format!("{hash:X}");
 
         query_keys.push(hash.as_bytes().to_vec());
     }
