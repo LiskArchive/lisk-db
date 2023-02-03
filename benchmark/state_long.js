@@ -59,6 +59,7 @@ const count = 10000;
         performance.mark('c-start');
         console.log({ i, root })
         root = await db.commit(writer, i, root);
+        writer.close();
         console.log({ root })
         performance.mark('c-end');
 

@@ -505,14 +505,12 @@ impl UpdateData {
     pub fn new_with_hash(data: Cache) -> Self {
         let mut new_data = Cache::new();
         for (k, v) in data {
+            let mut value: Vec<u8> = vec![];
             if !v.is_empty() {
-                new_data.insert(
-                    k.hash_with_kind(HashKind::Key),
-                    v.hash_with_kind(HashKind::Value),
-                );
-            } else {
-                new_data.insert(k.hash_with_kind(HashKind::Key), vec![]);
+                value = v.hash_with_kind(HashKind::Value);
             }
+            let key = k.hash_with_kind(HashKind::Key);
+            new_data.insert(key, value);
         }
         Self { data: new_data }
     }

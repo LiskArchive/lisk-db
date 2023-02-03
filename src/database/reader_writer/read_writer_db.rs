@@ -300,4 +300,16 @@ impl ReadWriter {
 
         Ok(ctx.undefined())
     }
+
+    /// js_close is handler for JS ffi.
+    /// js "this" - ReadWriter.
+    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx
+            .this()
+            .downcast_or_throw::<SharedReadWriter, _>(&mut ctx)?;
+        let db = db.borrow_mut();
+        db.close().or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
+    }
 }

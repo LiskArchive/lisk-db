@@ -86,6 +86,7 @@ declare class StateReadWriter {
     range(options?: IterateOptions): Promise<{ key: Buffer, value: Buffer }[]>;
     snapshot(): number;
     restoreSnapshot(index: number): void;
+    close(): void;
 }
 
 interface StateCommitOption {
