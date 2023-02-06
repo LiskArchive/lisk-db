@@ -545,6 +545,13 @@ describe('statedb', () => {
 
                 expect(values).toEqual(initState.slice(1, 3));
             });
+
+            it('should throw an error when the reader is closed', async () => {
+                const reader = db.newReader();
+                await expect(reader.get(initState[0].key)).resolves.toEqual(initState[0].value);
+                reader.close();
+                expect(() => reader.get(initState[1].key)).rejects.toThrow();
+            });
         });
 
         describe('checkpoint', () => {

@@ -32,10 +32,8 @@ use state_writer::StateWriter;
 
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
-    cx.export_function(
-        "db_new",
-        Database::js_new_with_box_ref::<DbOptions, Database>,
-    )?;
+    let db_new = Database::js_new_with_box_ref::<DbOptions, Database>;
+    cx.export_function("db_new", db_new)?;
     cx.export_function("db_clear", Database::js_clear)?;
     cx.export_function("db_close", Database::js_close)?;
     cx.export_function("db_get", Database::js_get)?;
@@ -47,6 +45,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("db_checkpoint", Database::js_checkpoint)?;
 
     cx.export_function("state_db_reader_new", reader_db::Reader::js_new)?;
+    cx.export_function("state_db_reader_close", reader_db::Reader::js_close)?;
     cx.export_function("state_db_reader_get", reader_db::Reader::js_get)?;
     cx.export_function("state_db_reader_exists", reader_db::Reader::js_exists)?;
     cx.export_function("state_db_reader_iterate", reader_db::Reader::js_iterate)?;

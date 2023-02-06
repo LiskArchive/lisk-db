@@ -76,6 +76,7 @@ declare class StateReader {
     has(key: Buffer): Promise<boolean>;
     iterate(options?: IterateOptions): NodeJS.ReadableStream;
     createReadStream(options?: IterateOptions): NodeJS.ReadableStream;
+    close(): void;
 }
 
 declare class StateReadWriter {

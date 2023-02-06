@@ -7,7 +7,7 @@ use neon::context::{Context, FunctionContext};
 use neon::event::Channel;
 use neon::handle::{Handle, Root};
 use neon::result::JsResult;
-use neon::types::{Finalize, JsBuffer, JsFunction, JsValue};
+use neon::types::{Finalize, JsBuffer, JsFunction, JsUndefined, JsValue};
 
 use crate::database::traits::Unwrap;
 use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
@@ -23,7 +23,14 @@ impl Finalize for ReaderBase {
     }
 }
 
+pub type SharedReaderBase = JsBoxRef<ReaderBase>;
 impl ReaderBase {
+    /// Idiomatic rust would take an owned `self` to prevent use after close
+    /// However, it's not possible to prevent JavaScript from continuing to hold a closed database
+    fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
+        self.tx.send(SnapshotMessage::Close)
+    }
+
     /// js_new is handler for JS ffi.
     /// - @params(0) - StateDB to create the reader from.
     /// - @returns - Reader where it is snapshot of stateDB.
@@ -50,12 +57,6 @@ impl ReaderBase {
         });
 
         Ok(ctx.boxed(RefCell::new(Self { tx })))
-    }
-
-    /// Idiomatic rust would take an owned `self` to prevent use after close
-    /// However, it's not possible to prevent JavaScript from continuing to hold a closed database
-    pub fn close(&self) -> Result<(), mpsc::SendError<SnapshotMessage>> {
-        self.tx.send(SnapshotMessage::Close)
     }
 
     pub fn send(
@@ -91,5 +92,18 @@ impl ReaderBase {
                 Ok(())
             });
         })
+    }
+
+    /// js_close is handler for JS ffi.
+    /// js "this" - ReaderBase.
+    /// ReaderBase is a base struct so, it is possible to use js_close in Reader & ReadWriter
+    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let db = ctx
+            .this()
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
+        let db = db.borrow_mut();
+        db.close().or_else(|err| ctx.throw_error(err.to_string()))?;
+
+        Ok(ctx.undefined())
     }
 }

@@ -10,14 +10,12 @@ use neon::types::buffer::TypedArray;
 use neon::types::{JsBoolean, JsFunction, JsObject, JsTypedArray, JsUndefined, JsValue};
 
 use crate::database::options::IterationOption;
-use crate::database::reader_writer::ReaderBase;
-use crate::database::types::{JsBoxRef, Kind, SnapshotMessage};
+use crate::database::reader_writer::{ReaderBase, SharedReaderBase};
+use crate::database::types::{Kind, SnapshotMessage};
 use crate::database::utils::*;
 use crate::types::KVPair;
 
 pub type Reader = ReaderBase;
-pub type SharedReaderDB = JsBoxRef<Reader>;
-
 impl Reader {
     fn exists(
         &self,
@@ -60,7 +58,7 @@ impl Reader {
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReaderDB, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
         db.get_by_key(key, callback)
@@ -80,7 +78,7 @@ impl Reader {
         let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReaderDB, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
 
         let db = db.borrow_mut();
         db.exists(key, callback)
@@ -105,7 +103,7 @@ impl Reader {
 
         let db = ctx
             .this()
-            .downcast_or_throw::<SharedReaderDB, _>(&mut ctx)?;
+            .downcast_or_throw::<SharedReaderBase, _>(&mut ctx)?;
         let db = db.borrow();
 
         let callback_on_data = Arc::new(Mutex::new(callback_on_data));
