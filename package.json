@@ -37,14 +37,14 @@
   },
   "dependencies": {
     "@mapbox/node-pre-gyp": "^1.0.9",
-    "@types/node": "^16"
+    "@types/node": "^16",
+    "cargo-cp-artifact": "^0.1",
+    "shelljs": "^0.8.5"
   },
   "devDependencies": {
     "bunyan": "^1.8.15",
-    "cargo-cp-artifact": "^0.1",
     "jest": "^27.5.1",
     "rimraf": "^3.0.2",
-    "shelljs": "^0.8.5",
     "sodium-native": "^3.3.0"
   },
   "binary": {
