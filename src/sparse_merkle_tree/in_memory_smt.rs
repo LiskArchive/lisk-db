@@ -343,8 +343,15 @@ impl InMemorySMT {
             channel.send(move |mut ctx| {
                 let callback = callback.into_inner(&mut ctx);
                 let this = ctx.undefined();
-                let buffer = JsBuffer::external(&mut ctx, result);
-                let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), buffer.upcast()];
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        vec![
+                            ctx.null().upcast(),
+                            JsBuffer::external(&mut ctx, val).upcast(),
+                        ]
+                    },
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
                 callback.call(&mut ctx, this, args)?;
 
                 Ok(())

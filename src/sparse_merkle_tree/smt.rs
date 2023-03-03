@@ -1377,7 +1377,7 @@ impl SparseMerkleTree {
     pub fn calculate_root(
         sibling_hashes: &[Vec<u8>],
         queries: &mut [QueryProofWithProof],
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, SMTError> {
         queries.sort_descending();
 
         let mut sorted_queries = VecDeque::from(queries.to_vec());
@@ -1386,7 +1386,7 @@ impl SparseMerkleTree {
         while !sorted_queries.is_empty() {
             let query = &sorted_queries.pop_front().unwrap();
             if query.is_zero_height() {
-                return query.hash.clone();
+                return Ok(query.hash.clone());
             }
 
             let mut sibling_hash: VecOption = None;
@@ -1394,9 +1394,14 @@ impl SparseMerkleTree {
             if !sorted_queries.is_empty() && query.is_sibling_of(&sorted_queries[0]) {
                 let sibling = sorted_queries.pop_front().unwrap();
                 sibling_hash = Some(sibling.hash);
-            } else if !query.binary_bitmap[0] || sibling_hashes.len() == next_sibling_hash {
+            } else if !query.binary_bitmap[0] {
                 sibling_hash = Some(EMPTY_HASH.to_vec());
             } else if query.binary_bitmap[0] {
+                if sibling_hashes.len() == next_sibling_hash {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "length of sibnling_hashes does not match with bitmap",
+                    )));
+                }
                 sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
                 next_sibling_hash += 1;
             }
@@ -1415,7 +1420,7 @@ impl SparseMerkleTree {
             insert_and_filter_queries(next_query, &mut sorted_queries);
         }
 
-        vec![]
+        Ok(vec![])
     }
 
     /// new creates a new SparseMerkleTree.
@@ -1507,10 +1512,10 @@ impl SparseMerkleTree {
             .cloned()
             .collect::<Vec<QueryProofWithProof>>();
 
-        Ok(utils::is_bytes_equal(
-            root,
-            &SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof),
-        ))
+        match SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof) {
+            Ok(computed_root) => Ok(utils::is_bytes_equal(root, &computed_root)),
+            Err(_) => Ok(false),
+        }
     }
 }
 
