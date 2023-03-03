@@ -176,6 +176,24 @@ describe('SparseMerkleTree', () => {
 				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
 				expect(queriesString).toEqual(outputProof.queries);
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+
+				// modified bitmap should fail
+				const zeroPrependedProof =  {
+					...proof,
+					queries: proof.queries.map(q => ({
+						...q,
+						bitmap: Buffer.concat([Buffer.from([0]), q.bitmap])
+					})),
+				};
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, zeroPrependedProof)).resolves.toEqual(false);
+				const zeroAppendedProof =  {
+					...proof,
+					queries: proof.queries.map(q => ({
+						...q,
+						bitmap: Buffer.concat([q.bitmap, Buffer.from([0])])
+					})),
+				};
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, zeroAppendedProof)).resolves.toEqual(false);
 			});
 		}
 	});

@@ -863,6 +863,9 @@ impl SparseMerkleTree {
             if utils::is_bytes_equal(key, query.key()) {
                 continue;
             }
+            if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
+                return false;
+            }
             let key_binary = utils::bytes_to_bools(key);
             let query_key_binary = utils::bytes_to_bools(query.key());
             let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
