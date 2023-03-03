@@ -1394,12 +1394,9 @@ impl SparseMerkleTree {
             if !sorted_queries.is_empty() && query.is_sibling_of(&sorted_queries[0]) {
                 let sibling = sorted_queries.pop_front().unwrap();
                 sibling_hash = Some(sibling.hash);
-            } else if !query.binary_bitmap[0] {
+            } else if !query.binary_bitmap[0] || sibling_hashes.len() == next_sibling_hash {
                 sibling_hash = Some(EMPTY_HASH.to_vec());
             } else if query.binary_bitmap[0] {
-                if sibling_hashes.len() == next_sibling_hash {
-                    return query.hash.clone();
-                }
                 sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
                 next_sibling_hash += 1;
             }
