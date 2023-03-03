@@ -860,7 +860,7 @@ impl SparseMerkleTree {
                 return false;
             }
             let query = &proof.queries[i];
-            if query.bitmap.len() > 0 && (query.bitmap[0] == 0 || query.bitmap[query.bitmap.len() - 1] == 0) {
+            if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
                 return false;
             }
             if utils::is_bytes_equal(key, query.key()) {
@@ -1397,6 +1397,9 @@ impl SparseMerkleTree {
             } else if !query.binary_bitmap[0] {
                 sibling_hash = Some(EMPTY_HASH.to_vec());
             } else if query.binary_bitmap[0] {
+                if sibling_hashes.len() == next_sibling_hash {
+                    return query.hash.clone();
+                }
                 sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
                 next_sibling_hash += 1;
             }
