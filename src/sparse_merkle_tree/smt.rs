@@ -860,11 +860,11 @@ impl SparseMerkleTree {
                 return false;
             }
             let query = &proof.queries[i];
+            if query.bitmap.len() > 0 && (query.bitmap[0] == 0 || query.bitmap[query.bitmap.len() - 1] == 0) {
+                return false;
+            }
             if utils::is_bytes_equal(key, query.key()) {
                 continue;
-            }
-            if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
-                return false;
             }
             let key_binary = utils::bytes_to_bools(key);
             let query_key_binary = utils::bytes_to_bools(query.key());
