@@ -1399,7 +1399,7 @@ impl SparseMerkleTree {
             } else if query.binary_bitmap[0] {
                 if sibling_hashes.len() == next_sibling_hash {
                     return Err(SMTError::InvalidInput(String::from(
-                        "length of sibnling_hashes does not match with bitmap",
+                        "no more sibling hashes available",
                     )));
                 }
                 sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
