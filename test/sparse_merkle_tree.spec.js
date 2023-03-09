@@ -18,6 +18,7 @@ const { StateDB, SparseMerkleTree } = require('../main');
 const fixtures = require('./fixtures/update_tree.json');
 const SMTFixtures = require('./fixtures/smt_fixtures.json');
 const JumboFixtures = require('./fixtures/smt_jumbo_fixtures.json');
+const InvalidFixtures = require('./fixtures/invalid_proof.json');
 const removeTreeFixtures = require('./fixtures/remove_tree.json');
 const removeExtraTreeFixtures = require('./fixtures/remove_extra_tree.json');
 const ProofFixtures = require('./fixtures/smt_proof_fixtures.json');
@@ -194,6 +195,41 @@ describe('SparseMerkleTree', () => {
 					})),
 				};
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, zeroAppendedProof)).resolves.toEqual(false);
+			});
+		}
+
+		for (const test of InvalidFixtures.testCases) {
+			// eslint-disable-next-line no-loop-func
+			it(test.description, async () => {
+				const smt = new SparseMerkleTree(32);
+				const inputKeys = test.input.keys;
+				const inputValues = test.input.values;
+				const deletedKeys = test.input.deleteKeys;
+				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
+				const outputMerkleRoot = test.output.merkleRoot;
+				const outputProof = test.output.proof;
+
+				const kvpair = [];
+				for (let i = 0; i < inputKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
+				}
+
+				for (let i = 0; i < deletedKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
+				}
+
+				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
+
+				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
+
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, {
+					siblingHashes: outputProof.siblingHashes.map(h => Buffer.from(h, 'hex')),
+					queries: outputProof.queries.map(q => ({
+						bitmap: Buffer.from(q.bitmap, 'hex'),
+						key: Buffer.from(q.key, 'hex'),
+						value: Buffer.from(q.value, 'hex'),
+					})),
+				})).resolves.toEqual(false);
 			});
 		}
 	});
