@@ -854,11 +854,20 @@ impl SparseMerkleTree {
     }
 
     fn verify_query_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: KeyLength) -> bool {
+        let mut queries: HashMap<&[u8], QueryProof> = HashMap::new();
         for (i, key) in query_keys.iter().enumerate() {
             if key.len() != key_length.into() {
                 return false;
             }
             let query = &proof.queries[i];
+            let duplicate_query = queries.get(query.key());
+            if duplicate_query.is_some() {
+                let q = duplicate_query.unwrap();
+                if !utils::is_bytes_equal(&q.bitmap, &query.bitmap) || !utils::is_bytes_equal(q.value(), query.value()) {
+                    return false;
+                }
+            }
+            queries.insert(query.key(), query.clone());
             if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
                 return false;
             }
@@ -1357,9 +1366,6 @@ impl SparseMerkleTree {
         for query in &proof.queries {
             let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
             let binary_path = utils::bytes_to_bools(&query.pair.0)[..binary_bitmap.len()].to_vec();
-            if queries_with_proof.contains_key(&binary_path) {
-                continue;
-            }
 
             queries_with_proof.insert(
                 binary_path,
