@@ -861,8 +861,7 @@ impl SparseMerkleTree {
             }
             let query = &proof.queries[i];
             let duplicate_query = queries.get(query.key());
-            if duplicate_query.is_some() {
-                let q = duplicate_query.unwrap();
+            if let Some(q) = duplicate_query {
                 if !utils::is_bytes_equal(&q.bitmap, &query.bitmap)
                     || !utils::is_bytes_equal(q.value(), query.value())
                 {
