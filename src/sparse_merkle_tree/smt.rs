@@ -863,7 +863,9 @@ impl SparseMerkleTree {
             let duplicate_query = queries.get(query.key());
             if duplicate_query.is_some() {
                 let q = duplicate_query.unwrap();
-                if !utils::is_bytes_equal(&q.bitmap, &query.bitmap) || !utils::is_bytes_equal(q.value(), query.value()) {
+                if !utils::is_bytes_equal(&q.bitmap, &query.bitmap)
+                    || !utils::is_bytes_equal(q.value(), query.value())
+                {
                     return false;
                 }
             }
@@ -1404,18 +1406,23 @@ impl SparseMerkleTree {
                 // We are merging two branches.
                 // Check that the bitmap at the merging point is consistent with the nodes type.
                 let is_sibling_empty = utils::is_empty_hash(&sibling.hash);
-                if (is_sibling_empty && query.binary_bitmap[0]) || (!is_sibling_empty && !query.binary_bitmap[0]) {
+                if (is_sibling_empty && query.binary_bitmap[0])
+                    || (!is_sibling_empty && !query.binary_bitmap[0])
+                {
                     return Err(SMTError::InvalidInput(String::from(
                         "bitmap is not consistent with the nodes type",
                     )));
                 }
                 let is_query_empty = utils::is_empty_hash(&query.hash);
-                if (is_query_empty && sibling.binary_bitmap[0]) || (!is_query_empty && !sibling.binary_bitmap[0]) {
+                if (is_query_empty && sibling.binary_bitmap[0])
+                    || (!is_query_empty && !sibling.binary_bitmap[0])
+                {
                     return Err(SMTError::InvalidInput(String::from(
                         "bitmap is not consistent with the nodes type",
                     )));
                 }
-                if !utils::array_equal_bool(&query.binary_bitmap[1..], &sibling.binary_bitmap[1..]) {
+                if !utils::array_equal_bool(&query.binary_bitmap[1..], &sibling.binary_bitmap[1..])
+                {
                     return Err(SMTError::InvalidInput(String::from(
                         "nodes do not share common path",
                     )));
