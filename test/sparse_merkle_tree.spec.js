@@ -326,6 +326,23 @@ describe('SparseMerkleTree', () => {
 				await expect(smt.calculateRoot(proof)).resolves.toEqual(Buffer.from(outputMerkleRoot, 'hex'));
 			});
 		}
+
+		describe('when invalid sibling hash is provided', () => {
+			it('should resolve to error', async () => {
+				const smt = new SparseMerkleTree(32);
+
+				const proof = {
+					siblingHashes: [],
+					queries: [{
+						key: Buffer.from([1,2,3]),
+						value: Buffer.from([1,2,3]),
+						bitmap: Buffer.from([1]),
+					}],
+				};
+
+				await expect(smt.calculateRoot(proof)).rejects.toThrow('Invalid input');
+			});
+		});
 	});
 
 	describe('calculateRoot - Jumbo fixtures', () => {
