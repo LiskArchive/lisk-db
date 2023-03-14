@@ -207,9 +207,6 @@ class InMemoryIterator extends Readable {
         this._db = db;
         this._options = options;
         Readable.call(this, { objectMode: true });
-    }
-
-    _read() {
         in_memory_db_iterate.call(
             this._db,
             this._options,
@@ -224,6 +221,9 @@ class InMemoryIterator extends Readable {
                 this.push(null)
             },
         );
+    }
+
+    _read() {
     }
 }
 
