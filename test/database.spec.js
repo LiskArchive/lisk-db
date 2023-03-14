@@ -295,7 +295,79 @@ describe('database', () => {
                 });
 
                 it('should iterate with specified range with limit', async () => {
+                    const stream = db.iterate({
+                        gte: Buffer.from([0, 0, 1]),
+                        lte: Buffer.from([1, 0, 1]),
+                        limit: 2,
+                    });
+
+                    const values = await new Promise((resolve, reject) => {
+                        const result = [];
+                        stream
+                            .on('data', kv => {
+                                result.push(kv);
+                            })
+                            .on('err', err => {
+                                reject(err);
+                            })
+                            .on('end', () => {
+                                resolve(result);
+                            });
+                    });
+
+                    expect(values).toEqual(pairs.slice(1, 3));
+                });
+
+                it('should iterate with specified range with limit using createReadStream', async () => {
+                    const stream = db.createReadStream({
+                        gte: Buffer.from([0, 0, 1]),
+                        lte: Buffer.from([1, 0, 1]),
+                        limit: 2,
+                    });
+
+                    const values = await new Promise((resolve, reject) => {
+                        const result = [];
+                        stream
+                            .on('data', kv => {
+                                result.push(kv);
+                            })
+                            .on('err', err => {
+                                reject(err);
+                            })
+                            .on('end', () => {
+                                resolve(result);
+                            });
+                    });
+
+                    expect(values).toEqual(pairs.slice(1, 3));
+                });
+
+                it('should iterate with specified range with limit with reader', async () => {
                     const stream = db.newReader().iterate({
+                        gte: Buffer.from([0, 0, 1]),
+                        lte: Buffer.from([1, 0, 1]),
+                        limit: 2,
+                    });
+
+                    const values = await new Promise((resolve, reject) => {
+                        const result = [];
+                        stream
+                            .on('data', kv => {
+                                result.push(kv);
+                            })
+                            .on('err', err => {
+                                reject(err);
+                            })
+                            .on('end', () => {
+                                resolve(result);
+                            });
+                    });
+
+                    expect(values).toEqual(pairs.slice(1, 3));
+                });
+
+                it('should iterate with specified range with limit using createReadStream', async () => {
+                    const stream = db.newReader().createReadStream({
                         gte: Buffer.from([0, 0, 1]),
                         lte: Buffer.from([1, 0, 1]),
                         limit: 2,
@@ -503,6 +575,30 @@ describe('database', () => {
 
             it('should iterate with specified range with limit', async () => {
                 const stream = db.iterate({
+                    gte: Buffer.from([0, 0, 1]),
+                    lte: Buffer.from([1, 0, 1]),
+                    limit: 2,
+                });
+
+                const values = await new Promise((resolve, reject) => {
+                    const result = [];
+                    stream
+                        .on('data', kv => {
+                            result.push(kv);
+                        })
+                        .on('err', err => {
+                            reject(err);
+                        })
+                        .on('end', () => {
+                            resolve(result);
+                        });
+                });
+
+                expect(values).toEqual(pairs.slice(1, 3));
+            });
+
+            it('should iterate with specified range with limit using createReadStream', async () => {
+                const stream = db.createReadStream({
                     gte: Buffer.from([0, 0, 1]),
                     lte: Buffer.from([1, 0, 1]),
                     limit: 2,
