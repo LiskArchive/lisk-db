@@ -23,9 +23,6 @@ class Iterator extends Readable {
         this._options = options;
         this.queue = []
         Readable.call(this, { objectMode: true });
-    }
-
-    _read() {
         this._iterateFunc.call(
             this._db,
             this._options,
@@ -40,6 +37,9 @@ class Iterator extends Readable {
                 this.push(null);
             },
         );
+    }
+
+    _read() {
     }
 }
 
