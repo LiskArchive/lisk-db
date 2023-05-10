@@ -1536,6 +1536,13 @@ impl SparseMerkleTree {
             return Ok(false);
         }
 
+        // Check if all the query keys have the same length.
+        for query in &proof.queries {
+            if query.pair.key().len() != key_length.into() {
+                return Ok(false);
+            }
+        }
+
         if !Self::verify_query_keys(proof, query_keys, key_length) {
             return Ok(false);
         }
@@ -1749,6 +1756,55 @@ mod tests {
                 **result.unwrap().lock().unwrap(),
                 hex::decode(root).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn test_proof_verify_key_length() {
+        let test_data = vec![(
+            vec!["ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"],
+            vec!["b6d58dfa6547c1eb7f0d4ffd3e3bd6452213210ea51baa70b97c31f011187215"],
+            "353ac3e329fac7ef85361df532e64497113f2d9efc644d65593d346c373d8751",
+            vec!["ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"],
+        )];
+
+        for (keys, values, root, query_keys) in test_data {
+            let mut tree = SparseMerkleTree::new(&[], KeyLength(32), Default::default());
+            let mut data = UpdateData { data: Cache::new() };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+
+            let mut db = smt_db::InMemorySmtDB::default();
+            let result = tree.commit(&mut db, &data).unwrap();
+            assert_eq!(**result.lock().unwrap(), hex::decode(root).unwrap());
+
+            // The query key length is 29, which is not equal to the key length of the tree.
+            let proof: Proof = Proof {
+                sibling_hashes: vec![],
+                queries: vec![QueryProof {
+                    pair: Arc::new(KVPair(
+                        hex::decode(query_keys[0]).unwrap()[0..29].to_vec(),
+                        hex::decode(values[0]).unwrap(),
+                    )),
+                    bitmap: Arc::new(vec![]),
+                }],
+            };
+
+            // The proof verification should fail.
+            assert!(!SparseMerkleTree::verify(
+                &query_keys
+                    .iter()
+                    .map(|k| hex::decode(k).unwrap())
+                    .collect::<NestedVec>(),
+                &proof,
+                &result.lock().unwrap(),
+                KeyLength(32)
+            )
+            .unwrap());
         }
     }
 
