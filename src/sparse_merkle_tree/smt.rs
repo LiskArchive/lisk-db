@@ -1794,19 +1794,17 @@ mod tests {
                 }],
             };
 
-            assert_eq!(
-                SparseMerkleTree::verify(
-                    &query_keys
-                        .iter()
-                        .map(|k| hex::decode(k).unwrap())
-                        .collect::<NestedVec>(),
-                    &proof,
-                    &result.lock().unwrap(),
-                    KeyLength(32)
-                )
-                .unwrap(),
-                false
-            );
+            // The proof verification should fail.
+            assert!(!SparseMerkleTree::verify(
+                &query_keys
+                    .iter()
+                    .map(|k| hex::decode(k).unwrap())
+                    .collect::<NestedVec>(),
+                &proof,
+                &result.lock().unwrap(),
+                KeyLength(32)
+            )
+            .unwrap());
         }
     }
 
