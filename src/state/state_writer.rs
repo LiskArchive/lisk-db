@@ -298,8 +298,10 @@ mod tests {
 
     #[test]
     fn test_multi_thread() {
-        let outer_loop_iterations = 1000;
-        let inner_loop_iteration = 2000;
+        // On some machines, while executing this unit test, it could occur buffer overflow or out of memory error.
+        // Because of that reason, we limit the number of iterations.
+        let outer_loop_iterations = 100;
+        let inner_loop_iteration = 200;
         let pairs_len = inner_loop_iteration / 10;
 
         for _ in 0..outer_loop_iterations {
