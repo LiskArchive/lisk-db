@@ -80,6 +80,8 @@ pub fn common_prefix(a: &[bool], b: &[bool]) -> Vec<bool> {
         }
         if *v == shorter[i] {
             result.push(*v);
+        } else {
+            return result;
         }
     }
     result
@@ -268,6 +270,16 @@ mod tests {
             (
                 vec![true, false],
                 vec![true, false, true],
+                vec![true, false],
+            ),
+            (
+                vec![true, false, true, true],
+                vec![true, true, true, true],
+                vec![true],
+            ),
+            (
+                vec![true, false, false, true, false],
+                vec![true, false, true, true, false],
                 vec![true, false],
             ),
         ];
