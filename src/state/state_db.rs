@@ -18,7 +18,7 @@ use crate::database::utils as DbUtils;
 use crate::database::utils::pair_to_js_object;
 use crate::database::DB;
 use crate::diff;
-use crate::sparse_merkle_tree::smt::{self, EMPTY_HASH};
+use crate::sparse_merkle_tree::smt::{self, SMTError, EMPTY_HASH};
 use crate::sparse_merkle_tree::smt_db;
 use crate::state::state_writer;
 use crate::types::{
@@ -797,13 +797,20 @@ impl StateDB {
         let channel = ctx.channel();
 
         thread::spawn(move || {
-            let filter_map = smt::SparseMerkleTree::prepare_queries_with_proof_map(&proof);
-            let mut filtered_proof = filter_map
-                .values()
-                .cloned()
-                .collect::<Vec<smt::QueryProofWithProof>>();
-            let result =
-                smt::SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof);
+            let result: Result<Vec<u8>, SMTError> =
+                match smt::SparseMerkleTree::prepare_queries_with_proof_map(&proof) {
+                    Ok(filter_map) => {
+                        let mut filtered_proof = filter_map
+                            .values()
+                            .cloned()
+                            .collect::<Vec<smt::QueryProofWithProof>>();
+                        smt::SparseMerkleTree::calculate_root(
+                            &proof.sibling_hashes,
+                            &mut filtered_proof,
+                        )
+                    },
+                    Err(err) => Err(err),
+                };
 
             channel.send(move |mut ctx| {
                 let callback = callback.into_inner(&mut ctx);

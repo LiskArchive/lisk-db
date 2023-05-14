@@ -8,7 +8,7 @@ use neon::types::buffer::TypedArray;
 use crate::consts;
 use crate::database::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
 use crate::database::types::{JsArcMutex, Kind as DBKind};
-use crate::sparse_merkle_tree::smt::QueryProofWithProof;
+use crate::sparse_merkle_tree::smt::{QueryProofWithProof, SMTError};
 use crate::sparse_merkle_tree::smt_db;
 use crate::sparse_merkle_tree::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
@@ -332,13 +332,20 @@ impl InMemorySMT {
         let channel = js_context.context.channel();
 
         thread::spawn(move || {
-            let filter_map = SparseMerkleTree::prepare_queries_with_proof_map(&proof);
-            let mut filtered_proof = filter_map
-                .values()
-                .cloned()
-                .collect::<Vec<QueryProofWithProof>>();
-            let result =
-                SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof);
+            let result: Result<Vec<u8>, SMTError> =
+                match SparseMerkleTree::prepare_queries_with_proof_map(&proof) {
+                    Ok(filter_map) => {
+                        let mut filtered_proof = filter_map
+                            .values()
+                            .cloned()
+                            .collect::<Vec<QueryProofWithProof>>();
+                        SparseMerkleTree::calculate_root(
+                            &proof.sibling_hashes,
+                            &mut filtered_proof,
+                        )
+                    },
+                    Err(err) => Err(err),
+                };
 
             channel.send(move |mut ctx| {
                 let callback = callback.into_inner(&mut ctx);

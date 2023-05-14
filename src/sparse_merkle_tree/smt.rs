@@ -35,8 +35,10 @@ trait SortDescending {
     fn sort_descending(&mut self);
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum SMTError {
+    #[error("Invalid bitmap length")]
+    InvalidBitmapLen,
     #[error("Invalid input: `{0}`")]
     InvalidInput(String),
     #[error("unknown data not found error `{0}`")]
@@ -1362,24 +1364,31 @@ impl SparseMerkleTree {
 
     pub fn prepare_queries_with_proof_map(
         proof: &Proof,
-    ) -> HashMap<Vec<bool>, QueryProofWithProof> {
+    ) -> Result<HashMap<Vec<bool>, QueryProofWithProof>, SMTError> {
         let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
-        for query in &proof.queries {
-            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            let binary_path = utils::bytes_to_bools(query.key())[..binary_bitmap.len()].to_vec();
+        if !proof.queries.is_empty() {
+            let max_binary_bitmap_len = proof.queries[0].key().len() * 8; // converts key_length to bits
+            for query in &proof.queries {
+                let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+                if binary_bitmap.len() > max_binary_bitmap_len {
+                    return Err(SMTError::InvalidBitmapLen);
+                }
+                let binary_path =
+                    utils::bytes_to_bools(query.key())[..binary_bitmap.len()].to_vec();
 
-            queries_with_proof.insert(
-                binary_path,
-                QueryProofWithProof::new_with_pair(
-                    Arc::clone(&query.pair),
-                    &binary_bitmap,
-                    &[],
-                    &[],
-                ),
-            );
+                queries_with_proof.insert(
+                    binary_path,
+                    QueryProofWithProof::new_with_pair(
+                        Arc::clone(&query.pair),
+                        &binary_bitmap,
+                        &[],
+                        &[],
+                    ),
+                );
+            }
         }
 
-        queries_with_proof
+        Ok(queries_with_proof)
     }
 
     /// calculate_root calculates the merkle root with sibling hashes and multi proofs according to the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-verification).
@@ -1538,7 +1547,7 @@ impl SparseMerkleTree {
 
         // Check if all the query keys have the same length.
         for query in &proof.queries {
-            if query.key().len() != key_length.into() || query.key().len() < query.bitmap.len() {
+            if query.key().len() != key_length.into() {
                 return Ok(false);
             }
         }
@@ -1546,7 +1555,7 @@ impl SparseMerkleTree {
         if !Self::verify_query_keys(proof, query_keys, key_length) {
             return Ok(false);
         }
-        let filter_map = Self::prepare_queries_with_proof_map(proof);
+        let filter_map = Self::prepare_queries_with_proof_map(proof)?;
         let mut filtered_proof = filter_map
             .values()
             .cloned()
@@ -2521,10 +2530,9 @@ mod tests {
             &proof,
             &root.lock().unwrap(),
             KeyLength(32),
-        )
-        .unwrap();
+        );
 
-        assert!(!is_valid);
+        assert_eq!(is_valid.unwrap_err(), SMTError::InvalidBitmapLen);
     }
 
     #[test]
