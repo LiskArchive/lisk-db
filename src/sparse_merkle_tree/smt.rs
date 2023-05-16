@@ -1366,26 +1366,24 @@ impl SparseMerkleTree {
         proof: &Proof,
     ) -> Result<HashMap<Vec<bool>, QueryProofWithProof>, SMTError> {
         let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
-        if !proof.queries.is_empty() {
-            let max_binary_bitmap_len = proof.queries[0].key().len() * 8; // converts key_length to bits
-            for query in &proof.queries {
-                let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-                if binary_bitmap.len() > max_binary_bitmap_len {
-                    return Err(SMTError::InvalidBitmapLen);
-                }
-                let binary_path =
-                    utils::bytes_to_bools(query.key())[..binary_bitmap.len()].to_vec();
+        for query in &proof.queries {
+            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+            let key_bools = utils::bytes_to_bools(query.key());
+            let binary_path = if binary_bitmap.len() > key_bools.len() {
+                return Err(SMTError::InvalidBitmapLen);
+            } else {
+                key_bools[..binary_bitmap.len()].to_vec()
+            };
 
-                queries_with_proof.insert(
-                    binary_path,
-                    QueryProofWithProof::new_with_pair(
-                        Arc::clone(&query.pair),
-                        &binary_bitmap,
-                        &[],
-                        &[],
-                    ),
-                );
-            }
+            queries_with_proof.insert(
+                binary_path,
+                QueryProofWithProof::new_with_pair(
+                    Arc::clone(&query.pair),
+                    &binary_bitmap,
+                    &[],
+                    &[],
+                ),
+            );
         }
 
         Ok(queries_with_proof)
