@@ -559,9 +559,6 @@ describe('statedb', () => {
             beforeEach(() => {
                 tmpPath = fs.mkdtempSync("");
             });
-            afterEach(() => {
-                fs.rmSync(tmpPath, { recursive: true, force: true });
-            });
 
             it('should create checkpoint', async () => {
                 await expect(db.get(initState[0].key)).resolves.toEqual(initState[0].value);
