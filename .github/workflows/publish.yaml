@@ -22,8 +22,7 @@ jobs:
       matrix:
         rust_version:
           - stable
-        node_version:
-          - 16
+        node_version: [16, 18]
         architecture:
           - x64
         system:
@@ -34,11 +33,17 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
         include:
-          # only node 15+ supports arm64 natively, so we only need to build 16 for now
+          # only node 15+ supports arm64 natively, so we only need to build 16 and 18 for now
           - system:
               os: [self-hosted, macOS, ARM64]
               target: aarch64-apple-darwin
             node_version: 16
+            architecture: arm64
+            rust_version: stable-aarch64-apple-darwin 
+          - system:
+              os: [self-hosted, macOS, ARM64]
+              target: aarch64-apple-darwin
+            node_version: 18
             architecture: arm64
             rust_version: stable-aarch64-apple-darwin 
     steps:
