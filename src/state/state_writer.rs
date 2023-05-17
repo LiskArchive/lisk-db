@@ -149,7 +149,7 @@ impl StateWriter {
 
     /// update the key with corresponding value.
     pub fn update(&mut self, pair: &KVPair) -> Result<(), StateWriterError> {
-        let mut cached = self
+        let cached = self
             .cache
             .get_mut(pair.key())
             .ok_or(StateWriterError::InvalidUsage)?;
@@ -165,7 +165,7 @@ impl StateWriter {
         if cached.is_none() {
             return;
         }
-        let mut cached = cached.unwrap();
+        let cached = cached.unwrap();
         if cached.init.is_none() {
             self.cache.remove(key);
             return;

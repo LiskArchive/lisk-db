@@ -35,8 +35,10 @@ trait SortDescending {
     fn sort_descending(&mut self);
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum SMTError {
+    #[error("Invalid bitmap length")]
+    InvalidBitmapLen,
     #[error("Invalid input: `{0}`")]
     InvalidInput(String),
     #[error("unknown data not found error `{0}`")]
@@ -1362,11 +1364,16 @@ impl SparseMerkleTree {
 
     pub fn prepare_queries_with_proof_map(
         proof: &Proof,
-    ) -> HashMap<Vec<bool>, QueryProofWithProof> {
+    ) -> Result<HashMap<Vec<bool>, QueryProofWithProof>, SMTError> {
         let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
         for query in &proof.queries {
             let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            let binary_path = utils::bytes_to_bools(&query.pair.0)[..binary_bitmap.len()].to_vec();
+            let key_bools = utils::bytes_to_bools(query.key());
+            let binary_path = if binary_bitmap.len() > key_bools.len() {
+                return Err(SMTError::InvalidBitmapLen);
+            } else {
+                key_bools[..binary_bitmap.len()].to_vec()
+            };
 
             queries_with_proof.insert(
                 binary_path,
@@ -1379,7 +1386,7 @@ impl SparseMerkleTree {
             );
         }
 
-        queries_with_proof
+        Ok(queries_with_proof)
     }
 
     /// calculate_root calculates the merkle root with sibling hashes and multi proofs according to the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-verification).
@@ -1538,7 +1545,7 @@ impl SparseMerkleTree {
 
         // Check if all the query keys have the same length.
         for query in &proof.queries {
-            if query.pair.key().len() != key_length.into() {
+            if query.key().len() != key_length.into() {
                 return Ok(false);
             }
         }
@@ -1546,7 +1553,7 @@ impl SparseMerkleTree {
         if !Self::verify_query_keys(proof, query_keys, key_length) {
             return Ok(false);
         }
-        let filter_map = Self::prepare_queries_with_proof_map(proof);
+        let filter_map = Self::prepare_queries_with_proof_map(proof)?;
         let mut filtered_proof = filter_map
             .values()
             .cloned()
@@ -2479,6 +2486,66 @@ mod tests {
             path,
             vec![true, true, true, false, false, true, false, true, false, false]
         );
+    }
+
+    #[test]
+    fn test_bitmap_len_with_verify() {
+        let mut data = UpdateData::new_from(Cache::new());
+        let keys = vec!["bbbbc758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"];
+        let values = vec!["9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70"];
+
+        for i in 0..keys.len() {
+            data.insert(SharedKVPair(
+                &hex::decode(keys[i]).unwrap(),
+                &hex::decode(values[i]).unwrap(),
+            ));
+        }
+
+        let mut tree = SparseMerkleTree::new(&[], KeyLength(32), Default::default());
+        let mut db = smt_db::InMemorySmtDB::default();
+        let root = tree.commit(&mut db, &data).unwrap();
+
+        let mut proof = tree
+            .prove(
+                &mut db,
+                &keys
+                    .iter()
+                    .map(|k| hex::decode(k).unwrap())
+                    .collect::<NestedVec>(),
+            )
+            .unwrap();
+
+        // length = 32
+        proof.queries[0].bitmap = Arc::new(vec![
+            1u8, 2, 3, 4, 1, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71,
+            3, 3, 71, 3, 3, 71,
+        ]);
+        assert!(!SparseMerkleTree::verify(
+            &keys
+                .iter()
+                .map(|k| hex::decode(k).unwrap())
+                .collect::<NestedVec>(),
+            &proof,
+            &root.lock().unwrap(),
+            KeyLength(32),
+        )
+        .unwrap());
+
+        // length = 33
+        proof.queries[0].bitmap = Arc::new(vec![
+            1u8, 2, 3, 4, 1, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71,
+            3, 3, 71, 3, 3, 71, 3,
+        ]);
+        let res = SparseMerkleTree::verify(
+            &keys
+                .iter()
+                .map(|k| hex::decode(k).unwrap())
+                .collect::<NestedVec>(),
+            &proof,
+            &root.lock().unwrap(),
+            KeyLength(32),
+        );
+        assert_eq!(res.unwrap_err(), SMTError::InvalidBitmapLen);
     }
 
     #[test]
