@@ -2515,12 +2515,28 @@ mod tests {
             )
             .unwrap();
 
+        // length = 32
         proof.queries[0].bitmap = Arc::new(vec![
             1u8, 2, 3, 4, 1, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71,
-            3, 3, 71, 3, 3, 71, 3, 3, 7,
+            3, 3, 71, 3, 3, 71,
         ]);
+        assert!(!SparseMerkleTree::verify(
+            &keys
+                .iter()
+                .map(|k| hex::decode(k).unwrap())
+                .collect::<NestedVec>(),
+            &proof,
+            &root.lock().unwrap(),
+            KeyLength(32),
+        )
+        .unwrap());
 
-        let is_valid = SparseMerkleTree::verify(
+        // length = 33
+        proof.queries[0].bitmap = Arc::new(vec![
+            1u8, 2, 3, 4, 1, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71,
+            3, 3, 71, 3, 3, 71, 3,
+        ]);
+        let res = SparseMerkleTree::verify(
             &keys
                 .iter()
                 .map(|k| hex::decode(k).unwrap())
@@ -2529,8 +2545,7 @@ mod tests {
             &root.lock().unwrap(),
             KeyLength(32),
         );
-
-        assert_eq!(is_valid.unwrap_err(), SMTError::InvalidBitmapLen);
+        assert_eq!(res.unwrap_err(), SMTError::InvalidBitmapLen);
     }
 
     #[test]
