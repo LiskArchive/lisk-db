@@ -15,8 +15,7 @@ jobs:
         rust_version:
         - stable
         # - beta
-        node_version:
-        - 16
+        node_version: [16, 18]
         architecture:
         - x64
         system:
@@ -34,6 +33,15 @@ jobs:
             - ARM64
             target: aarch64-apple-darwin
           node_version: 16
+          architecture: arm64
+          rust_version: stable-aarch64-apple-darwin
+        - system:
+            os:
+            - self-hosted
+            - macOS
+            - ARM64
+            target: aarch64-apple-darwin
+          node_version: 18
           architecture: arm64
           rust_version: stable-aarch64-apple-darwin
 
@@ -69,7 +77,7 @@ jobs:
     - name: Run node.js tests
       run: yarn run test:node
     - name: Check test coverage
-      if: ${{ contains(matrix.system.os, 'ubuntu') && matrix.node_version == '16'
+      if: ${{ contains(matrix.system.os, 'ubuntu') && matrix.node_version == '18'
         && matrix.rust_version == 'stable' && github.base_ref != '' }}
       uses: anuraag016/Jest-Coverage-Diff@V1.4
       with:

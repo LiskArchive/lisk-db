@@ -447,9 +447,6 @@ describe('database', () => {
             beforeEach(() => {
                 tmpPath = fs.mkdtempSync("");
             });
-            afterEach(() => {
-                fs.rmSync(tmpPath, { recursive: true, force: true });
-            });
 
             it('should create checkpoint', async () => {
                 const pairs = [
