@@ -100,7 +100,7 @@ jobs:
       - uses: c-hive/gha-yarn-cache@v1
       - uses: actions/setup-node@v2.1.5
         with:
-          node-version: [16, 18]
+          node-version: 18
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
