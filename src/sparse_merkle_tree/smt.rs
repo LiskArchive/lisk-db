@@ -1402,6 +1402,11 @@ impl SparseMerkleTree {
         while !sorted_queries.is_empty() {
             let query = &sorted_queries.pop_front().unwrap();
             if query.is_zero_height() {
+                if next_sibling_hash != sibling_hashes.len() {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Not all sibling hashes were used",
+                    )));
+                }
                 return Ok(query.hash.clone());
             }
 
