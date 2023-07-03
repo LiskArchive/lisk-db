@@ -15,55 +15,17 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { StateDB, SparseMerkleTree } = require('../main');
-const fixtures = require('./fixtures/update_tree.json');
+const { getRandomBytes } = require('./utils');
+
 const SMTFixtures = require('./fixtures/smt_fixtures.json');
-const JumboFixtures = require('./fixtures/smt_jumbo_fixtures.json');
-const InvalidFixtures = require('./fixtures/invalid_proof.json');
-const removeTreeFixtures = require('./fixtures/remove_tree.json');
-const removeExtraTreeFixtures = require('./fixtures/remove_extra_tree.json');
-const ProofFixtures = require('./fixtures/smt_proof_fixtures.json');
+const FixturesInclusionProof = require('./fixtures/fixtures_no_delete_inclusion_proof.json');
+const FixturesNonInclusionProof = require('./fixtures/fixtures_delete_non_inclusion_proof.json');
 
 describe('SparseMerkleTree', () => {
-    jest.setTimeout(100000);
+	jest.setTimeout(100000);
 
-    describe('updates', () => {
-		for (const test of fixtures.testCases) {
-			// eslint-disable-next-line no-loop-func
-			it(test.description, async () => {
-				const smt = new SparseMerkleTree(32);
-				const inputKeys = test.input.keys;
-				const inputValues = test.input.values;
-				const outputMerkleRoot = test.output.merkleRoot;
-
-				const kvpair = [];
-				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
-				}
-				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-
-				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
-			});
-		}
-
-		for (const test of SMTFixtures.testCases) {
-			// eslint-disable-next-line no-loop-func
-			it(test.description, async () => {
-				const smt = new SparseMerkleTree(32);
-				const inputKeys = test.input.keys;
-				const inputValues = test.input.values;
-				const outputMerkleRoot = test.output.merkleRoot;
-
-				const kvpair = [];
-				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
-				}
-				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-
-				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
-			});
-		}
-
-		for (const test of JumboFixtures.testCases) {
+	describe('updates and deletes', () => {
+		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -74,57 +36,11 @@ describe('SparseMerkleTree', () => {
 
 				const kvpair = [];
 				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex') });
 				}
 
 				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
-				}
-
-				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
-			});
-		}
-
-		for (const test of removeTreeFixtures.testCases) {
-			// eslint-disable-next-line no-loop-func
-			it(test.description, async () => {
-				const smt = new SparseMerkleTree(32);
-				const inputKeys = test.input.keys;
-				const inputValues = test.input.values;
-				const deletedKeys = test.input.deleteKeys;
-				const outputMerkleRoot = test.output.merkleRoot;
-
-				const kvpair = [];
-				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
-				}
-
-				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
-				}
-
-				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
-			});
-		}
-
-		for (const test of removeExtraTreeFixtures.testCases) {
-			// eslint-disable-next-line no-loop-func
-			it(test.description, async () => {
-				const smt = new SparseMerkleTree(32);
-				const inputKeys = test.input.keys;
-				const inputValues = test.input.values;
-				const deletedKeys = test.input.deleteKeys;
-				const outputMerkleRoot = test.output.merkleRoot;
-
-				const kvpair = [];
-				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
-				}
-
-				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0) });
 				}
 
 				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
@@ -134,7 +50,7 @@ describe('SparseMerkleTree', () => {
 	});
 
 	describe('prove', () => {
-		for (const test of ProofFixtures.testCases) {
+		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -147,15 +63,14 @@ describe('SparseMerkleTree', () => {
 
 				const kvpair = [];
 				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex') });
 				}
 
 				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0) });
 				}
 
 				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-
 				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
 
 				const proof = await smt.prove(rootHash, queryKeys);
@@ -179,7 +94,7 @@ describe('SparseMerkleTree', () => {
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
 
 				// modified bitmap should fail
-				const zeroPrependedProof =  {
+				const zeroPrependedProof = {
 					...proof,
 					queries: proof.queries.map(q => ({
 						...q,
@@ -187,7 +102,7 @@ describe('SparseMerkleTree', () => {
 					})),
 				};
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, zeroPrependedProof)).resolves.toEqual(false);
-				const zeroAppendedProof =  {
+				const zeroAppendedProof = {
 					...proof,
 					queries: proof.queries.map(q => ({
 						...q,
@@ -195,47 +110,26 @@ describe('SparseMerkleTree', () => {
 					})),
 				};
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, zeroAppendedProof)).resolves.toEqual(false);
-			});
-		}
 
-		for (const test of InvalidFixtures.testCases) {
-			// eslint-disable-next-line no-loop-func
-			it(test.description, async () => {
-				const smt = new SparseMerkleTree(32);
-				const inputKeys = test.input.keys;
-				const inputValues = test.input.values;
-				const deletedKeys = test.input.deleteKeys;
-				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
-				const outputMerkleRoot = test.output.merkleRoot;
-				const outputProof = test.output.proof;
+				// modified sibling hashes should fail
+				const randomSiblingPrependedProof = { ...proof };
+				randomSiblingPrependedProof.siblingHashes = [getRandomBytes(), ...randomSiblingPrependedProof.siblingHashes];
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, randomSiblingPrependedProof)).resolves.toEqual(false);
 
-				const kvpair = [];
-				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
-				}
+				const randomSiblingAppendedProof = { ...proof };
+				randomSiblingAppendedProof.siblingHashes = [...randomSiblingAppendedProof.siblingHashes, getRandomBytes()];
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, randomSiblingAppendedProof)).resolves.toEqual(false);
 
-				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
-				}
-
-				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-
-				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
-
-				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, {
-					siblingHashes: outputProof.siblingHashes.map(h => Buffer.from(h, 'hex')),
-					queries: outputProof.queries.map(q => ({
-						bitmap: Buffer.from(q.bitmap, 'hex'),
-						key: Buffer.from(q.key, 'hex'),
-						value: Buffer.from(q.value, 'hex'),
-					})),
-				})).resolves.toEqual(false);
+				// removed random query should fail
+				const randomQueryRemovedProof = { ...proof };
+				randomQueryRemovedProof.queries.splice(Math.floor(Math.random() * randomQueryRemovedProof.queries.length), 1);
+				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, randomQueryRemovedProof)).resolves.toEqual(false);
 			});
 		}
 	});
 
-	describe('prove - Jumbo fixtures', () => {
-		for (const test of JumboFixtures.testCases) {
+	describe('prove - check inclusion and non inclusion', () => {
+		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -248,15 +142,14 @@ describe('SparseMerkleTree', () => {
 
 				const kvpair = [];
 				for (let i = 0; i < inputKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex')});
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex') });
 				}
 
 				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0)});
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0) });
 				}
 
 				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
-
 				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
 
 				const proof = await smt.prove(rootHash, queryKeys);
@@ -283,7 +176,7 @@ describe('SparseMerkleTree', () => {
 				const deletingKVPair = [];
 				const deleteQueryKeys = [];
 				for (let i = 0; i < Math.floor(inputKeys.length / 4); i += 1) {
-					deletingKVPair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.alloc(0)});
+					deletingKVPair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.alloc(0) });
 					deleteQueryKeys.push(Buffer.from(inputKeys[i], 'hex'));
 				}
 				const rootAfterDelete = await smt.update(rootHash, deletingKVPair);
@@ -307,7 +200,7 @@ describe('SparseMerkleTree', () => {
 	});
 
 	describe('calculateRoot', () => {
-		for (const test of ProofFixtures.testCases) {
+		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -334,8 +227,8 @@ describe('SparseMerkleTree', () => {
 				const proof = {
 					siblingHashes: [],
 					queries: [{
-						key: Buffer.from([1,2,3]),
-						value: Buffer.from([1,2,3]),
+						key: Buffer.from([1, 2, 3]),
+						value: Buffer.from([1, 2, 3]),
 						bitmap: Buffer.from([1]),
 					}],
 				};
@@ -343,27 +236,5 @@ describe('SparseMerkleTree', () => {
 				await expect(smt.calculateRoot(proof)).rejects.toThrow('Invalid input');
 			});
 		});
-	});
-
-	describe('calculateRoot - Jumbo fixtures', () => {
-		for (const test of JumboFixtures.testCases) {
-			// eslint-disable-next-line no-loop-func
-			it(test.description, async () => {
-				const smt = new SparseMerkleTree(32);
-				const outputMerkleRoot = test.output.merkleRoot;
-				const outputProof = test.output.proof;
-
-				const proof = {
-					siblingHashes: outputProof.siblingHashes.map(q => Buffer.from(q, 'hex')),
-					queries: outputProof.queries.map(q => ({
-						key: Buffer.from(q.key, 'hex'),
-						value: Buffer.from(q.value, 'hex'),
-						bitmap: Buffer.from(q.bitmap, 'hex'),
-					}))
-				};
-
-				await expect(smt.calculateRoot(proof)).resolves.toEqual(Buffer.from(outputMerkleRoot, 'hex'));
-			});
-		}
 	});
 });
