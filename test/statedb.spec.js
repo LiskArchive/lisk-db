@@ -587,9 +587,9 @@ describe('statedb', () => {
                 const queries = [getRandomBytes(38), getRandomBytes(38)];
                 const proof = await db.prove(root, queries);
 
-                const result = await db.verify(root, queries, proof);
-
-                expect(result).toEqual(true);
+                await expect(db.verify(root, queries, proof)).resolves.toEqual(true);
+                await expect(db.verifyNonInclusionProof(root, queries, proof)).resolves.toEqual(true);
+                await expect(db.verifyInclusionProof(root, queries, proof)).resolves.toEqual(false);
             });
 
             it('should generate wrong non-inclusion proof and verify that a result is not correct', async () => {
@@ -599,9 +599,9 @@ describe('statedb', () => {
                 // change sibling hash in proof to make it wrong
                 proof.siblingHashes[0] = getRandomBytes(32);
 
-                const result = await db.verify(root, queries, proof);
-
-                expect(result).toEqual(false);
+                await expect(db.verify(root, queries, proof)).resolves.toEqual(false);
+                await expect(db.verifyNonInclusionProof(root, queries, proof)).resolves.toEqual(false);
+                await expect(db.verifyInclusionProof(root, queries, proof)).resolves.toEqual(false);
             });
 
             it('should generate inclusion proof and verify that a result is correct', async () => {
@@ -612,9 +612,9 @@ describe('statedb', () => {
                 ];
                 const proof = await db.prove(root, queries);
 
-                const result = await db.verify(root, queries, proof);
-
-                expect(result).toEqual(true);
+                await expect(db.verify(root, queries, proof)).resolves.toEqual(true);
+                await expect(db.verifyNonInclusionProof(root, queries, proof)).resolves.toEqual(false);
+                await expect(db.verifyInclusionProof(root, queries, proof)).resolves.toEqual(true);
             });
 
             it('should generate wrong inclusion proof and verify that a result is not correct', async () => {
@@ -628,9 +628,9 @@ describe('statedb', () => {
                 // change sibling hash in proof to make it wrong
                 proof.siblingHashes[0] = getRandomBytes(32);
 
-                const result = await db.verify(root, queries, proof);
-
-                expect(result).toEqual(false);
+                await expect(db.verify(root, queries, proof)).resolves.toEqual(false);
+                await expect(db.verifyNonInclusionProof(root, queries, proof)).resolves.toEqual(false);
+                await expect(db.verifyInclusionProof(root, queries, proof)).resolves.toEqual(false);
             });
         });
 

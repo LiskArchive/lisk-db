@@ -120,6 +120,8 @@ export class StateDB {
     commit(readWriter: StateReadWriter, height: number, prevRoot: Buffer, options?: StateCommitOption): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
     verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
+    verifyInclusionProof(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
+    verifyNonInclusionProof(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
     finalize(height: number): Promise<void>;
     newReader(): StateReader;
     newReadWriter(): StateReadWriter;
@@ -134,5 +136,7 @@ export class SparseMerkleTree {
     update(root: Buffer, kvpair: { key: Buffer, value: Buffer }[]): Promise<Buffer>;
     prove(root: Buffer, queries: Buffer[]): Promise<Proof>;
     verify(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
+    verifyInclusionProof(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
+    verifyNonInclusionProof(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
     calculateRoot(proof: Proof): Promise<Buffer>;
 }

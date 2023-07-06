@@ -12,10 +12,9 @@
  * Removal or modification of this copyright notice is prohibited.
  */
 const os = require('os');
-const path = require('path');
-const fs = require('fs');
-const { StateDB, SparseMerkleTree } = require('../main');
+const { SparseMerkleTree } = require('../main');
 const { getRandomBytes } = require('./utils');
+const { isInclusionProofForQueryKey } = require('../utils');
 
 const FixturesInclusionProof = require('./fixtures/fixtures_no_delete_inclusion_proof.json');
 const FixturesNonInclusionProof = require('./fixtures/fixtures_delete_non_inclusion_proof.json');
@@ -88,6 +87,37 @@ describe('SparseMerkleTree', () => {
 					});
 				}
 
+                /*
+                * We do not know which testcase is inclusion or non-inclusion so define the two
+                * following functions to call correct verification function based on the result
+                * of these functions.
+                */
+                const isNonInclusionProof = (queriesKeys, proofQueries) => {
+                    for (let i = 0; i < queriesKeys.length; i++) {
+                        if (isInclusionProofForQueryKey(queriesKeys[i], proofQueries[i])) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+                const isInclusionProof = (queriesKeys, proofQueries) => {
+                    for (let i = 0; i < queriesKeys.length; i++) {
+                        if (!isInclusionProofForQueryKey(queriesKeys[i], proofQueries[i])) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+                if (isNonInclusionProof(queryKeys, proof.queries)) {
+                    await expect(smt.verifyNonInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+                    await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(false);
+                } else if (isInclusionProof(queryKeys, proof.queries)) {
+                    await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+                    await expect(smt.verifyNonInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(false);
+                }
+
 				expect(siblingHashesString).toEqual(outputProof.siblingHashes);
 				expect(queriesString).toEqual(outputProof.queries);
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
@@ -114,6 +144,8 @@ describe('SparseMerkleTree', () => {
 				const randomSiblingPrependedProof = { ...proof };
 				randomSiblingPrependedProof.siblingHashes = [getRandomBytes(), ...randomSiblingPrependedProof.siblingHashes];
 				await expect(smt.verify(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, randomSiblingPrependedProof)).resolves.toEqual(false);
+                await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, randomSiblingPrependedProof)).resolves.toEqual(false);
+				await expect(smt.verifyNonInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, randomSiblingPrependedProof)).resolves.toEqual(false);
 
 				const randomSiblingAppendedProof = { ...proof };
 				randomSiblingAppendedProof.siblingHashes = [...randomSiblingAppendedProof.siblingHashes, getRandomBytes()];
@@ -181,17 +213,15 @@ describe('SparseMerkleTree', () => {
 				const rootAfterDelete = await smt.update(rootHash, deletingKVPair);
 				const deletedKeyProof = await smt.prove(rootAfterDelete, queryKeys);
 
-				const isInclusion = (proofQuery, queryKey) =>
-					queryKey.equals(proofQuery.key) && !proofQuery.value.equals(Buffer.alloc(0));
 				await expect(smt.verify(rootAfterDelete, queryKeys, deletedKeyProof)).resolves.toEqual(true);
 				for (let i = 0; i < queryKeys.length; i += 1) {
 					const query = queryKeys[i];
 					const proofQuery = deletedKeyProof.queries[i];
 
 					if (inputKeys.find(k => Buffer.from(k, 'hex').equals(query)) !== undefined && [...deleteQueryKeys, ...deletedKeys.map(keyHex => Buffer.from(keyHex, 'hex'))].find(k => k.equals(query)) === undefined) {
-						expect(isInclusion(proofQuery, query)).toEqual(true);
+						expect(isInclusionProofForQueryKey(query, proofQuery)).toEqual(true);
 					} else {
-						expect(isInclusion(proofQuery, query)).toEqual(false);
+						expect(isInclusionProofForQueryKey(query, proofQuery)).toEqual(false);
 					}
 				}
 			});

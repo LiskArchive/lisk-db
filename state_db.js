@@ -13,6 +13,7 @@
  */
 'use strict';
 
+const { resolveObjectURL } = require("buffer");
 const {
     state_db_new,
     state_db_close,
@@ -47,6 +48,7 @@ const {
 const { NotFoundError } = require('./error');
 const { Iterator } = require("./iterator");
 const { getOptionsWithDefault } = require('./options');
+const { isInclusionProofForQueryKey } = require('./utils');
 
 class StateReader {
     constructor(db) {
@@ -303,11 +305,37 @@ class StateDB {
     }
 
     async verify(root, queries, proof) {
-        return new Promise((resolve, reject) => {
-            state_db_verify.call(this._db, root, queries, proof, (err, result) => {
-                if (err) {
-                    return reject(err);
+        return new Promise((resolve) => {
+            state_db_verify.call(this._db, root, queries, proof, (_, result) => {
+                resolve(result);
+            });
+        });
+    }
+
+
+    async verifyInclusionProof(root, queries, proof) {
+        return new Promise((resolve) => {
+            for (let i = 0; i < queries.length; i++) {
+                if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                    return resolve(false);
                 }
+            }
+
+            this.verify(root, queries, proof).then((result) => {
+                resolve(result);
+            });
+        });
+    }
+
+    async verifyNonInclusionProof(root, queries, proof) {
+        return new Promise((resolve) => {
+            for (let i = 0; i < queries.length; i++) {
+                if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                    return resolve(false);
+                }
+            }
+
+            this.verify(root, queries, proof).then((result) => {
                 resolve(result);
             });
         });

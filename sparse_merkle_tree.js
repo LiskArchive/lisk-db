@@ -19,6 +19,7 @@ const {
     in_memory_smt_verify,
     in_memory_smt_calculate_root,
 } = require("./bin-package/index.node");
+const { isInclusionProofForQueryKey } = require('./utils');
 
 const DEFAULT_KEY_LENGTH = 38;
 
@@ -68,12 +69,36 @@ class SparseMerkleTree {
     }
 
     async verify(root, queries, proof) {
-        return new Promise((resolve, reject) => {
-            in_memory_smt_verify.call(null, root, queries, proof, this._keyLength, (err, result) => {
-                if (err) {
-                    reject(err);
-                    return;
+        return new Promise((resolve) => {
+            in_memory_smt_verify.call(null, root, queries, proof, this._keyLength, (_, result) => {
+                resolve(result);
+            });
+        });
+    }
+
+    async verifyInclusionProof(root, queries, proof) {
+        return new Promise((resolve) => {
+            for (let i = 0; i < queries.length; i++) {
+                if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                    return resolve(false);
                 }
+            }
+
+            this.verify(root, queries, proof).then((result) => {
+                resolve(result);
+            });
+        });
+    }
+
+    async verifyNonInclusionProof(root, queries, proof) {
+        return new Promise((resolve) => {
+            for (let i = 0; i < queries.length; i++) {
+                if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                    return resolve(false);
+                }
+            }
+
+            this.verify(root, queries, proof).then((result) => {
                 resolve(result);
             });
         });
