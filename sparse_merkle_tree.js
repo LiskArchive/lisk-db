@@ -18,6 +18,7 @@ const {
     in_memory_smt_prove,
     in_memory_smt_verify,
     in_memory_smt_calculate_root,
+    in_memory_smt_remove_keys_from_proof,
 } = require("./bin-package/index.node");
 const { isInclusionProofForQueryKey } = require('./utils');
 
@@ -100,6 +101,18 @@ class SparseMerkleTree {
     async calculateRoot(proof) {
         return new Promise((resolve, reject) => {
             in_memory_smt_calculate_root.call(null, proof, (err, result) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    async removeKeysFromProof(proof, removingKeys) {
+        return new Promise((resolve, reject) => {
+            in_memory_smt_remove_keys_from_proof.call(null, proof, removingKeys, (err, result) => {
                 if (err) {
                     reject(err);
                     return;

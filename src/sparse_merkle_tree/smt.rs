@@ -30,6 +30,7 @@ pub const EMPTY_HASH: [u8; 32] = [
 ];
 
 type SharedNode = ArcMutex<Node>;
+pub type SharedProof = ArcMutex<Proof>;
 
 trait SortDescending {
     fn sort_descending(&mut self);
@@ -1582,6 +1583,137 @@ impl SparseMerkleTree {
             Ok(computed_root) => Ok(utils::is_bytes_equal(root, &computed_root)),
             Err(_) => Ok(false),
         }
+    }
+
+    // remove_keys_from_proof removes keys from proof and returns a new proof without them.
+    pub fn remove_keys_from_proof(
+        proof: SharedProof,
+        removing_keys: &[&[u8]],
+    ) -> Result<SharedProof, SMTError> {
+        let mut proof = proof.lock().unwrap();
+        let filter_map = Self::prepare_queries_with_proof_map(&proof)?;
+        let mut filtered_proof = filter_map
+            .values()
+            .cloned()
+            .collect::<Vec<QueryProofWithProof>>();
+        filtered_proof.sort_descending();
+
+        let mut sorted_queries = VecDeque::from(filtered_proof.to_vec());
+        let mut adding_sibling_hashes: NestedVec = vec![];
+        let mut removing_sibling_hashes: NestedVec = vec![];
+        let mut next_sibling_hash_index = 0;
+        let mut base_sibling_hashes = proof.sibling_hashes.clone();
+
+        while !sorted_queries.is_empty() {
+            let query = &mut sorted_queries.pop_front().unwrap();
+            let is_query_removed = removing_keys.contains(&query.query_proof.key());
+            if query.is_zero_height() {
+                // the top of the tree, so return the merkle root.
+                if next_sibling_hash_index != proof.sibling_hashes.len() {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Not all sibling hashes were used",
+                    )));
+                }
+                for hash in adding_sibling_hashes {
+                    if base_sibling_hashes.contains(&hash) {
+                        return Err(SMTError::InvalidInput(String::from(
+                            "Duplicate sibling hashes",
+                        )));
+                    }
+                    base_sibling_hashes.push(hash);
+                }
+                for hash in removing_sibling_hashes {
+                    if let Some(pos) = base_sibling_hashes.iter().position(|x| x == &hash) {
+                        base_sibling_hashes.remove(pos);
+                    } else {
+                        return Err(SMTError::InvalidInput(String::from(
+                            "Removed key is not in sibling hashes",
+                        )));
+                    }
+                }
+                let mut updated_queries = proof.queries.clone();
+                for (index, proof_query) in proof.queries.iter().enumerate() {
+                    if removing_keys.contains(&proof_query.key()) {
+                        updated_queries.remove(index);
+                    }
+                }
+                proof.queries = updated_queries;
+                return Ok(Arc::from(Mutex::new(proof.clone())));
+            }
+
+            let mut sibling_hash: Vec<u8> = vec![];
+            // there are three cases for the sibling hash:
+            if !sorted_queries.is_empty() && query.is_sibling_of(&sorted_queries[0]) {
+                // #1. sibling hash is next element of sorted_queries.
+                let is_first_query_removed =
+                    removing_keys.contains(&sorted_queries[0].query_proof.key());
+                let sibling = sorted_queries.pop_front().unwrap();
+                // We are merging two branches.
+                // Check that the bitmap at the merging point is consistent with the nodes type.
+                let is_sibling_empty = utils::is_empty_hash(&sibling.hash);
+                if (is_sibling_empty && query.binary_bitmap[0])
+                    || (!is_sibling_empty && !query.binary_bitmap[0])
+                {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Bitmap is not consistent with the nodes type",
+                    )));
+                }
+                let is_query_empty = utils::is_empty_hash(&query.hash);
+                if (is_query_empty && sibling.binary_bitmap[0])
+                    || (!is_query_empty && !sibling.binary_bitmap[0])
+                {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Bitmap is not consistent with the nodes type",
+                    )));
+                }
+                if !utils::array_equal_bool(&query.binary_bitmap[1..], &sibling.binary_bitmap[1..])
+                {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Nodes do not share common path",
+                    )));
+                }
+                // if the branch is being removed, we need to add the sibling hash to the list of hashes to be added.
+                if !is_query_removed && is_first_query_removed {
+                    adding_sibling_hashes.push(sibling_hash);
+                    next_sibling_hash_index += 1;
+                } else if is_query_removed && !is_first_query_removed {
+                    adding_sibling_hashes.push(query.hash.clone());
+                    next_sibling_hash_index += 1;
+                }
+                sibling_hash = sibling.hash;
+            } else if !query.binary_bitmap[0] {
+                // #2. sibling hash is a default empty node.
+                sibling_hash = EMPTY_HASH.to_vec();
+            } else if query.binary_bitmap[0] {
+                // #3. sibling hash comes from sibling_hashes.
+                if proof.sibling_hashes.len() == next_sibling_hash_index {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "No more sibling hashes available",
+                    )));
+                }
+                sibling_hash = proof.sibling_hashes[next_sibling_hash_index].clone();
+                next_sibling_hash_index += 1;
+                if is_query_removed {
+                    removing_sibling_hashes.push(sibling_hash.clone());
+                }
+            }
+
+            let d = query.binary_key()[query.height() - 1];
+            let mut next_query = query.clone();
+            if !d {
+                next_query.hash = [query.hash.as_slice(), sibling_hash.as_slice()]
+                    .concat()
+                    .hash_with_kind(HashKind::Branch);
+            } else {
+                next_query.hash = [sibling_hash.as_slice(), query.hash.as_slice()]
+                    .concat()
+                    .hash_with_kind(HashKind::Branch);
+            }
+            next_query.slice_bitmap();
+            insert_and_filter_queries(next_query, &mut sorted_queries);
+        }
+
+        Err(SMTError::InvalidInput(String::from("Empty")))
     }
 }
 

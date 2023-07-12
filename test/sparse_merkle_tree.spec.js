@@ -46,6 +46,54 @@ describe('SparseMerkleTree', () => {
 		}
 	});
 
+    describe('remove keys from proof', () => {
+        for (const test of FixturesInclusionProof.testCases) {
+            it(test.description, async () => {
+				const smt = new SparseMerkleTree(32);
+				const inputKeys = test.input.keys;
+				const inputValues = test.input.values;
+				const deletedKeys = test.input.deleteKeys;
+				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
+				const outputMerkleRoot = test.output.merkleRoot;
+
+				const kvpair = [];
+				for (let i = 0; i < inputKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex') });
+				}
+
+				for (let i = 0; i < deletedKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0) });
+				}
+
+				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
+				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
+
+				const proof = await smt.prove(rootHash, queryKeys);
+                await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+
+                const removedKeys = queryKeys.slice(1, queryKeys.length/2);
+                const newQueryKeys = queryKeys.slice(queryKeys.length/2, queryKeys.length);
+                const removedProof = await smt.prove(rootHash, newQueryKeys);
+                const newProof = await smt.removeKeysFromProof(removedProof, removedKeys);
+                await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), newQueryKeys, newProof)).resolves.toEqual(true);
+            });
+        }
+
+        it('should reject by invalid input', async () => {
+            const smt = new SparseMerkleTree(32);
+            const proof = {
+                siblingHashes: [getRandomBytes()],
+                queries: [{
+                    key: Buffer.alloc(0),
+                    value: Buffer.alloc(0),
+                    bitmap: Buffer.alloc(0),
+                }],
+            };
+            const removeKeys = FixturesInclusionProof.testCases[0].input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
+            await expect(smt.removeKeysFromProof(proof, removeKeys)).rejects.toThrow("Invalid input: `Not all sibling hashes were used`");
+        });
+    });
+
 	describe('prove', () => {
 		for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func

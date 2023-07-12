@@ -1,5 +1,5 @@
 // in_memory_smt provides in memory SMT computation without a physical storage.
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use neon::prelude::*;
@@ -8,7 +8,7 @@ use neon::types::buffer::TypedArray;
 use crate::consts;
 use crate::database::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
 use crate::database::types::{JsArcMutex, Kind as DBKind};
-use crate::sparse_merkle_tree::smt::{QueryProofWithProof, SMTError};
+use crate::sparse_merkle_tree::smt::{QueryProofWithProof, SMTError, SharedProof};
 use crate::sparse_merkle_tree::smt_db;
 use crate::sparse_merkle_tree::{Proof, QueryProof, SparseMerkleTree, UpdateData};
 use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
@@ -16,6 +16,7 @@ use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
 type SharedInMemorySMT = JsArcMutex<InMemorySMT>;
 type DatabaseParameters = (ArcMutex<InMemorySMT>, Vec<u8>, Root<JsFunction>);
 type VerifyParameters = (Vec<u8>, NestedVec, Proof, KeyLength, Root<JsFunction>);
+type RemovingParameters = (SharedProof, NestedVec, Root<JsFunction>);
 
 struct JsFunctionContext<'a> {
     context: FunctionContext<'a>,
@@ -229,6 +230,29 @@ impl JsFunctionContext<'_> {
         Ok(proof)
     }
 
+    fn get_removing_keys_parameters(&mut self) -> NeonResult<RemovingParameters> {
+        let proof = self.get_proof(0)?;
+
+        let removing_keys = self
+            .context
+            .argument::<JsArray>(1)?
+            .to_vec(&mut self.context)?;
+        let mut parsed_removing_keys = NestedVec::new();
+        for key in removing_keys.iter() {
+            let key = key
+                .downcast_or_throw::<JsTypedArray<u8>, _>(&mut self.context)?
+                .as_slice(&self.context)
+                .to_vec();
+            parsed_removing_keys.push(key);
+        }
+        let callback = self
+            .context
+            .argument::<JsFunction>(2)?
+            .root(&mut self.context);
+
+        Ok((Arc::new(Mutex::new(proof)), parsed_removing_keys, callback))
+    }
+
     fn get_verify_parameters(&mut self) -> NeonResult<VerifyParameters> {
         let state_root = self
             .context
@@ -356,6 +380,58 @@ impl InMemorySMT {
                             ctx.null().upcast(),
                             JsBuffer::external(&mut ctx, val).upcast(),
                         ]
+                    },
+                    Err(err) => vec![ctx.error(err.to_string())?.upcast()],
+                };
+                callback.call(&mut ctx, this, args)?;
+
+                Ok(())
+            })
+        });
+
+        Ok(js_context.context.undefined())
+    }
+
+    pub fn js_remove_keys_from_proof(ctx: FunctionContext) -> JsResult<JsUndefined> {
+        let mut js_context = JsFunctionContext { context: ctx };
+
+        let (proof, parsed_removing_keys, callback) = js_context.get_removing_keys_parameters()?;
+        let channel = js_context.context.channel();
+        thread::spawn(move || {
+            let result = SparseMerkleTree::remove_keys_from_proof(
+                proof,
+                &parsed_removing_keys
+                    .iter()
+                    .map(|x| x.as_slice())
+                    .collect::<Vec<_>>(),
+            );
+
+            channel.send(move |mut ctx| {
+                let callback = callback.into_inner(&mut ctx);
+                let this = ctx.undefined();
+                let args: Vec<Handle<JsValue>> = match result {
+                    Ok(val) => {
+                        let obj: Handle<JsObject> = ctx.empty_object();
+                        let sibling_hashes = ctx.empty_array();
+                        for (i, h) in val.lock().unwrap().sibling_hashes.iter().enumerate() {
+                            let val_res = JsBuffer::external(&mut ctx, h.to_vec());
+                            sibling_hashes.set(&mut ctx, i as u32, val_res)?;
+                        }
+                        obj.set(&mut ctx, "siblingHashes", sibling_hashes)?;
+                        let queries = ctx.empty_array();
+                        obj.set(&mut ctx, "queries", queries)?;
+                        for (i, v) in val.lock().unwrap().queries.iter().enumerate() {
+                            let obj = ctx.empty_object();
+                            let key = JsBuffer::external(&mut ctx, v.key_as_vec());
+                            obj.set(&mut ctx, "key", key)?;
+                            let value = JsBuffer::external(&mut ctx, v.value_as_vec());
+                            obj.set(&mut ctx, "value", value)?;
+                            let bitmap = JsBuffer::external(&mut ctx, v.bitmap.to_vec());
+                            obj.set(&mut ctx, "bitmap", bitmap)?;
+
+                            queries.set(&mut ctx, i as u32, obj)?;
+                        }
+                        vec![ctx.null().upcast(), obj.upcast()]
                     },
                     Err(err) => vec![ctx.error(err.to_string())?.upcast()],
                 };

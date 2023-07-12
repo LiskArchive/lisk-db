@@ -94,11 +94,13 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
 
     let in_memory_smt_new = InMemorySMT::js_new_with_arc_mutex::<InMemorySMT>;
     let in_memory_smt_calculate_root = InMemorySMT::js_calculate_root;
+    let remove_keys_proof = InMemorySMT::js_remove_keys_from_proof;
     cx.export_function("in_memory_smt_new", in_memory_smt_new)?;
     cx.export_function("in_memory_smt_update", InMemorySMT::js_update)?;
     cx.export_function("in_memory_smt_prove", InMemorySMT::js_prove)?;
     cx.export_function("in_memory_smt_verify", InMemorySMT::js_verify)?;
     cx.export_function("in_memory_smt_calculate_root", in_memory_smt_calculate_root)?;
+    cx.export_function("in_memory_smt_remove_keys_from_proof", remove_keys_proof)?;
 
     Ok(())
 }
