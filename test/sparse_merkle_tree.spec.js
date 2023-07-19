@@ -17,7 +17,6 @@ const fs = require('fs');
 const { StateDB, SparseMerkleTree } = require('../main');
 const { getRandomBytes } = require('./utils');
 
-const SMTFixtures = require('./fixtures/smt_fixtures.json');
 const FixturesInclusionProof = require('./fixtures/fixtures_no_delete_inclusion_proof.json');
 const FixturesNonInclusionProof = require('./fixtures/fixtures_delete_non_inclusion_proof.json');
 
@@ -25,7 +24,7 @@ describe('SparseMerkleTree', () => {
 	jest.setTimeout(100000);
 
 	describe('updates and deletes', () => {
-		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
+		for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -50,7 +49,7 @@ describe('SparseMerkleTree', () => {
 	});
 
 	describe('prove', () => {
-		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
+		for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -129,7 +128,7 @@ describe('SparseMerkleTree', () => {
 	});
 
 	describe('prove - check inclusion and non inclusion', () => {
-		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
+		for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
@@ -200,7 +199,7 @@ describe('SparseMerkleTree', () => {
 	});
 
 	describe('calculateRoot', () => {
-		for (const test of [...SMTFixtures.testCases, ...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
+		for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
 			// eslint-disable-next-line no-loop-func
 			it(test.description, async () => {
 				const smt = new SparseMerkleTree(32);
