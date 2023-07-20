@@ -235,5 +235,30 @@ describe('SparseMerkleTree', () => {
 				await expect(smt.calculateRoot(proof)).rejects.toThrow('Invalid input');
 			});
 		});
+
+		describe('when there is too many sibling hashes', () => {
+			for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
+				// eslint-disable-next-line no-loop-func
+				it('should resolve to error', async () => {
+					const smt = new SparseMerkleTree(32);
+					const outputMerkleRoot = test.output.merkleRoot;
+					const outputProof = test.output.proof;
+
+					const proof = {
+						siblingHashes: outputProof.siblingHashes.map(q => Buffer.from(q, 'hex')),
+						queries: outputProof.queries.map(q => ({
+							key: Buffer.from(q.key, 'hex'),
+							value: Buffer.from(q.value, 'hex'),
+							bitmap: Buffer.from(q.bitmap, 'hex'),
+						}))
+					};
+
+					// add unused sibling hash
+					proof.siblingHashes.push(getRandomBytes(32));
+
+					await expect(smt.calculateRoot(proof)).rejects.toThrow('Not all sibling hashes were used');
+				});
+			}
+		});
 	});
 });

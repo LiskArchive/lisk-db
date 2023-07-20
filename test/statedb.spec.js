@@ -651,6 +651,16 @@ describe('statedb', () => {
 
                 await expect(db.calculateRoot(proof)).resolves.not.toEqual(root);
             });
+
+            it('should not calculate sparse merkle tree root with unused sibling hashes', async () => {
+                const queries = [getRandomBytes(38), getRandomBytes(38)];
+                const proof = await db.prove(root, queries);
+
+                // add unused sibling hash
+                proof.siblingHashes.push(getRandomBytes(32));
+
+                await expect(db.calculateRoot(proof)).resolves.not.toEqual(root);
+            });
         });
     });
 });
