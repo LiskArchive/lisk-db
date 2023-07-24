@@ -305,8 +305,11 @@ class StateDB {
     }
 
     async verify(root, queries, proof) {
-        return new Promise((resolve) => {
-            state_db_verify.call(this._db, root, queries, proof, (_, result) => {
+        return new Promise((resolve, reject) => {
+            state_db_verify.call(this._db, root, queries, proof, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
                 resolve(result);
             });
         });
@@ -314,30 +317,38 @@ class StateDB {
 
 
     async verifyInclusionProof(root, queries, proof) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             for (let i = 0; i < queries.length; i++) {
                 if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
                     return resolve(false);
                 }
             }
-
-            this.verify(root, queries, proof).then((result) => {
-                resolve(result);
-            });
+            this.verify(root, queries, proof).then(
+                (result) => {
+                    resolve(result);
+                },
+                (err) => {
+                    reject(err);
+                }
+            );
         });
     }
 
     async verifyNonInclusionProof(root, queries, proof) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             for (let i = 0; i < queries.length; i++) {
                 if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
                     return resolve(false);
                 }
             }
-
-            this.verify(root, queries, proof).then((result) => {
-                resolve(result);
-            });
+            this.verify(root, queries, proof).then(
+                (result) => {
+                    resolve(result);
+                },
+                (err) => {
+                    reject(err);
+                }
+            );
         });
     }
 

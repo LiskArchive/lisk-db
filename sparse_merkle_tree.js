@@ -69,38 +69,49 @@ class SparseMerkleTree {
     }
 
     async verify(root, queries, proof) {
-        return new Promise((resolve) => {
-            in_memory_smt_verify.call(null, root, queries, proof, this._keyLength, (_, result) => {
+        return new Promise((resolve, reject) => {
+            in_memory_smt_verify.call(null, root, queries, proof, this._keyLength, (err, result) => {
+                if (err) {
+                    return reject(err);
+                }
                 resolve(result);
             });
         });
     }
 
     async verifyInclusionProof(root, queries, proof) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             for (let i = 0; i < queries.length; i++) {
                 if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
                     return resolve(false);
                 }
             }
-
-            this.verify(root, queries, proof).then((result) => {
-                resolve(result);
-            });
+            this.verify(root, queries, proof).then(
+                (result) => {
+                    resolve(result);
+                },
+                (err) => {
+                    reject(err);
+                }
+            );
         });
     }
 
     async verifyNonInclusionProof(root, queries, proof) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             for (let i = 0; i < queries.length; i++) {
                 if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
                     return resolve(false);
                 }
             }
-
-            this.verify(root, queries, proof).then((result) => {
-                resolve(result);
-            });
+            this.verify(root, queries, proof).then(
+                (result) => {
+                    resolve(result);
+                },
+                (err) => {
+                    reject(err);
+                }
+            );
         });
     }
 
