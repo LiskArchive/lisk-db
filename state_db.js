@@ -317,39 +317,21 @@ class StateDB {
 
 
     async verifyInclusionProof(root, queries, proof) {
-        return new Promise((resolve, reject) => {
-            for (let i = 0; i < queries.length; i++) {
-                if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
-                    return resolve(false);
-                }
+        for (let i = 0; i < queries.length; i++) {
+            if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                return false;
             }
-            this.verify(root, queries, proof).then(
-                (result) => {
-                    resolve(result);
-                },
-                (err) => {
-                    reject(err);
-                }
-            );
-        });
+        }
+        return this.verify(root, queries, proof);
     }
 
     async verifyNonInclusionProof(root, queries, proof) {
-        return new Promise((resolve, reject) => {
-            for (let i = 0; i < queries.length; i++) {
-                if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
-                    return resolve(false);
-                }
+        for (let i = 0; i < queries.length; i++) {
+            if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                return false;
             }
-            this.verify(root, queries, proof).then(
-                (result) => {
-                    resolve(result);
-                },
-                (err) => {
-                    reject(err);
-                }
-            );
-        });
+        }
+        return this.verify(root, queries, proof);
     }
 
     async finalize(height) {
