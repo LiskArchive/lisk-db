@@ -6,9 +6,9 @@ pub const KEY_LENGTH: KeyLength = KeyLength(38);
 pub const SUBTREE_HEIGHT: SubtreeHeight = SubtreeHeight(SubtreeHeightKind::Four);
 
 /// PREFIX_LEAF_HASH is prefix for creating leaf node hash.
-pub static PREFIX_LEAF_HASH: &[u8] = &[0];
-/// PREFIX_LEAF_HASH is prefix for creating branch node hash.
-pub static PREFIX_BRANCH_HASH: &[u8] = &[1];
+pub static PREFIX_LEAF_HASH: &[u8] = "LSK_SMTL_".as_bytes();
+/// PREFIX_BRANCH_HASH is prefix for creating branch node hash.
+pub static PREFIX_BRANCH_HASH: &[u8] = "LSK_SMTB_".as_bytes();
 /// PREFIX_EMPTY is prefix for creating empty node hash.
 pub static PREFIX_EMPTY: &[u8] = &[2];
 

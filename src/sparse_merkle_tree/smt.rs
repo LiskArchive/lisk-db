@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::consts::{PREFIX_BRANCH_HASH, PREFIX_EMPTY, PREFIX_LEAF_HASH};
+use crate::consts::{PREFIX_EMPTY, PREFIX_LEAF_HASH};
 use crate::database::traits::Actions;
 use crate::types::{
     ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
@@ -15,12 +15,12 @@ use crate::types::{
 };
 use crate::utils;
 
-/// PREFIX_INT_LEAF_HASH is for leaf_hash prefix for sub tree.
-const PREFIX_INT_LEAF_HASH: u8 = 0;
-/// PREFIX_INT_BRANCH_HASH is for branch prefix for sub tree.
-const PREFIX_INT_BRANCH_HASH: u8 = 1;
-/// PREFIX_INT_EMPTY is for empty prefix for sub tree.
-const PREFIX_INT_EMPTY: u8 = 2;
+/// PREFIX_SUB_TREE_LEAF is for leaf prefix for sub tree.
+const PREFIX_SUB_TREE_LEAF: u8 = 0;
+/// PREFIX_SUB_TREE_BRANCH is for branch prefix for sub tree.
+const PREFIX_SUB_TREE_BRANCH: u8 = 1;
+/// PREFIX_SUB_TREE_EMPTY is for empty prefix for sub tree.
+const PREFIX_SUB_TREE_EMPTY: u8 = 2;
 /// Hash size used in the smt.
 const HASH_SIZE: usize = 32;
 /// EMPTY_HASH using sha256.
@@ -616,7 +616,7 @@ impl Node {
     }
 
     fn new_stub(node_hash: &[u8]) -> Self {
-        let data = [PREFIX_BRANCH_HASH, node_hash].concat();
+        let data = [&[PREFIX_SUB_TREE_BRANCH], node_hash].concat();
         Self {
             kind: NodeKind::Stub,
             hash: KVPair::new(&data, node_hash),
@@ -627,7 +627,7 @@ impl Node {
 
     fn new_branch(left_hash: &[u8], right_hash: &[u8]) -> Self {
         let combined = [left_hash, right_hash].concat();
-        let data = [PREFIX_BRANCH_HASH, &combined].concat();
+        let data = [&[PREFIX_SUB_TREE_BRANCH], left_hash, right_hash].concat();
         let hashed = combined.hash_with_kind(HashKind::Branch);
         Self {
             kind: NodeKind::Stub,
@@ -639,7 +639,7 @@ impl Node {
 
     fn new_leaf(pair: &KVPair) -> Self {
         let h = pair.hash();
-        let data = [PREFIX_LEAF_HASH, pair.key(), pair.value()].concat();
+        let data = [&[PREFIX_SUB_TREE_LEAF], pair.key(), pair.value()].concat();
         Self {
             kind: NodeKind::Leaf,
             hash: KVPair::new(&data, &h),
@@ -674,24 +674,24 @@ impl SubTree {
         let key_length: usize = key_length.into();
         while idx < node_data.len() {
             match node_data[idx] {
-                PREFIX_INT_LEAF_HASH => {
+                PREFIX_SUB_TREE_LEAF => {
                     let kv = KVPair::new(
-                        &node_data[idx + PREFIX_LEAF_HASH.len()
-                            ..idx + PREFIX_LEAF_HASH.len() + key_length],
-                        &node_data[idx + PREFIX_LEAF_HASH.len() + key_length
-                            ..idx + PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE],
+                        &node_data[idx + [PREFIX_SUB_TREE_LEAF].len()
+                            ..idx + [PREFIX_SUB_TREE_LEAF].len() + key_length],
+                        &node_data[idx + [PREFIX_SUB_TREE_LEAF].len() + key_length
+                            ..idx + [PREFIX_SUB_TREE_LEAF].len() + key_length + HASH_SIZE],
                     );
                     let node = Node::new_leaf(&kv);
                     nodes.push(Arc::new(Mutex::new(node)));
-                    idx += PREFIX_LEAF_HASH.len() + key_length + HASH_SIZE;
+                    idx += [PREFIX_SUB_TREE_LEAF].len() + key_length + HASH_SIZE;
                 },
-                PREFIX_INT_BRANCH_HASH => {
-                    let node_hash = &node_data[idx + PREFIX_BRANCH_HASH.len()
-                        ..idx + PREFIX_BRANCH_HASH.len() + HASH_SIZE];
+                PREFIX_SUB_TREE_BRANCH => {
+                    let node_hash = &node_data[idx + [PREFIX_SUB_TREE_BRANCH].len()
+                        ..idx + [PREFIX_SUB_TREE_BRANCH].len() + HASH_SIZE];
                     nodes.push(Arc::new(Mutex::new(Node::new_stub(node_hash))));
-                    idx += PREFIX_BRANCH_HASH.len() + HASH_SIZE;
+                    idx += [PREFIX_SUB_TREE_BRANCH].len() + HASH_SIZE;
                 },
-                PREFIX_INT_EMPTY => {
+                PREFIX_SUB_TREE_EMPTY => {
                     nodes.push(Arc::new(Mutex::new(Node::new_empty())));
                     idx += PREFIX_EMPTY.len();
                 },
@@ -1261,7 +1261,7 @@ impl SparseMerkleTree {
             let key_length: usize = self.key_length.into();
             let pair = Arc::new(KVPair::new(
                 &d.current_node.key,
-                &d.current_node.hash.key()[PREFIX_LEAF_HASH.len() + key_length..],
+                &d.current_node.hash.key()[[PREFIX_SUB_TREE_LEAF].len() + key_length..],
             ));
             return Ok(QueryProofWithProof::new_with_pair(
                 pair,
@@ -1402,6 +1402,11 @@ impl SparseMerkleTree {
         while !sorted_queries.is_empty() {
             let query = &sorted_queries.pop_front().unwrap();
             if query.is_zero_height() {
+                if next_sibling_hash != sibling_hashes.len() {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Not all sibling hashes were used",
+                    )));
+                }
                 return Ok(query.hash.clone());
             }
 
@@ -1574,9 +1579,9 @@ mod tests {
     #[test]
     fn test_subtree() {
         let test_data = vec![
-            ("05030302020303001f930f4f669738b026406a872c24db29238731868957ae1de0e5a68bb0cf7da633e508533a13da9c33fc64eb78b18bd0646c82d6316697dece0aee5a3a92e45700082e6af17a61852d01dfc18e859c20b0b974472bf6169295c36ce1380c2550e16c16babfe7d3204f61852d100f553276ad154921988de3797622091f0581884b008b647996849b70889d2a382d8fa2f42405c3bca57189de0be52c92bbc03f0cd21194ddd776cf387a81d0117b6288e6a724ec14a58cdde3c196292191da360da800ec66ad4b484153de040869f8833a30a8fcde4fdf8fcbd78d33c2fb2182dd8ffa3b311d3a72a9aec8560c56c68d665ad54c5644d40ea4fc7ed914d4eea5da3c0400e93bd78ce150412056a9076cf58977ff1a697b1932abdd52d7b978fce69186d3a9cb7274eceac6b0807ce4db0763dc596cd00e59177172de6b5dd1593b33a78500c8c4673053da259999cbc9502aef75c3c0b84bce42b1d1a2d437df88d32b737bd36e7a6410939ac431914de947353f06bbbfc31c86609ec291ed9e13b665f86a", "7a208dc2a21cb829e5fa4dc7d876bef8e52ddd23ae5ea24c2567b264bcd91a23", vec![3, 3, 2, 2, 3, 3]),
-            ("02010202020049720db77a5ca853713493d4e11926b417af0cae746a305a52f555738eed47cad58c7809f5cf4119cc0f25c224f7124d15b5d62ba93bc3d948db32871026f068018dfe7dfa8fb4a5a268168638c8cce0e26f87a227320aee691f8872ed6a3aba0e", "c0fcf4b2571622905dde0884ef56d494ad3481d28fa167466f970f2c633e2925", vec![1,2,2]),
-            ("0f0404040404040404040404040404040401bbacc7102a28f2eecd0e4de3c130064e653d0118b1dc4129095901f190e70034019dcb747007aca526d4b0782ed20a88a5d48a4ab6276378bada201ab5b6e4d75b01e89b7270dd0ad80207e11422bfc28f8cda8932d59b1082486fa1bf5626ea0aba01858c61150861b89516244e07cfd9d3ebcb12b2d44c2de4e7e2faed96717202eb01f9437e84b231d85f7fc2690ed54b09e85c2e0fc98b26430f10418065374e40bf0189ae2184c9a2e70656ce37c89c903b258198ad6e9db66f135780f66d8613a6fd01058c3bef2957b130622e752f0a81ee8dcf60b4685675eb88e39d5150c954fe220161543e80c5356f580f8e7e4548576486ee754ffe22f4dd122ef48e41bffc7adc01f55a1089a16835a4cbe8b5e12227575ecfd99cd951e34b409f9b2ace6f25a49701e5dfbf3ecaf909728248a751e1a75f3b626777094fe1aab03ae6f526ddac799a01f88ad8cd4aec6cc4f8d2c2bc4a5f368fc9b877685eb55673baa01d652fa4c82b0182f8fb577797274de4f48d8bd7cc5a77068ea3c60477e8552b38c926466eba1101c149d0c79bc1355d763d01690139fd187a84488d534e7e38e4772279c3826b9b01006afab486675b0e3f9b6b06283da947df6749269fb8621afe843d5df942bce7011ead1b569f80edffa2044bf9d8b8703b970ca741b821127d6da69da83b52294f01c1a9d57b050c3ba96aca78a26c5eebc76bb51acab78ce70ed3bdea1ca9143cd8", "5a2f1f740cbea0944d5182fe8ef9190d7a07e8601d0b9fc1137d48b94ce73407", vec![4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]),
+            ("05030302020303001f930f4f669738b026406a872c24db29238731868957ae1de0e5a68bb0cf7da633e508533a13da9c33fc64eb78b18bd0646c82d6316697dece0aee5a3a92e45700082e6af17a61852d01dfc18e859c20b0b974472bf6169295c36ce1380c2550e16c16babfe7d3204f61852d100f553276ad154921988de3797622091f0581884b008b647996849b70889d2a382d8fa2f42405c3bca57189de0be52c92bbc03f0cd21194ddd776cf387a81d0117b6288e6a724ec14a58cdde3c196292191da360da800ec66ad4b484153de040869f8833a30a8fcde4fdf8fcbd78d33c2fb2182dd8ffa3b311d3a72a9aec8560c56c68d665ad54c5644d40ea4fc7ed914d4eea5da3c0400e93bd78ce150412056a9076cf58977ff1a697b1932abdd52d7b978fce69186d3a9cb7274eceac6b0807ce4db0763dc596cd00e59177172de6b5dd1593b33a78500c8c4673053da259999cbc9502aef75c3c0b84bce42b1d1a2d437df88d32b737bd36e7a6410939ac431914de947353f06bbbfc31c86609ec291ed9e13b665f86a", "d6b9f2888480a4fa33fc1d0e0daaef702f0ab41dd8875eee80b7c312011e5191", vec![3, 3, 2, 2, 3, 3]),
+            ("02010202020049720db77a5ca853713493d4e11926b417af0cae746a305a52f555738eed47cad58c7809f5cf4119cc0f25c224f7124d15b5d62ba93bc3d948db32871026f068018dfe7dfa8fb4a5a268168638c8cce0e26f87a227320aee691f8872ed6a3aba0e", "0989d2ac315f25669f69e9bef067b9c41310964d76565196ac4fb92452c68955", vec![1,2,2]),
+            ("0f0404040404040404040404040404040401bbacc7102a28f2eecd0e4de3c130064e653d0118b1dc4129095901f190e70034019dcb747007aca526d4b0782ed20a88a5d48a4ab6276378bada201ab5b6e4d75b01e89b7270dd0ad80207e11422bfc28f8cda8932d59b1082486fa1bf5626ea0aba01858c61150861b89516244e07cfd9d3ebcb12b2d44c2de4e7e2faed96717202eb01f9437e84b231d85f7fc2690ed54b09e85c2e0fc98b26430f10418065374e40bf0189ae2184c9a2e70656ce37c89c903b258198ad6e9db66f135780f66d8613a6fd01058c3bef2957b130622e752f0a81ee8dcf60b4685675eb88e39d5150c954fe220161543e80c5356f580f8e7e4548576486ee754ffe22f4dd122ef48e41bffc7adc01f55a1089a16835a4cbe8b5e12227575ecfd99cd951e34b409f9b2ace6f25a49701e5dfbf3ecaf909728248a751e1a75f3b626777094fe1aab03ae6f526ddac799a01f88ad8cd4aec6cc4f8d2c2bc4a5f368fc9b877685eb55673baa01d652fa4c82b0182f8fb577797274de4f48d8bd7cc5a77068ea3c60477e8552b38c926466eba1101c149d0c79bc1355d763d01690139fd187a84488d534e7e38e4772279c3826b9b01006afab486675b0e3f9b6b06283da947df6749269fb8621afe843d5df942bce7011ead1b569f80edffa2044bf9d8b8703b970ca741b821127d6da69da83b52294f01c1a9d57b050c3ba96aca78a26c5eebc76bb51acab78ce70ed3bdea1ca9143cd8", "2c76277c959e70205fff49ef8732047516cf07e18758345ca56005e732ca2d17", vec![4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]),
         ];
 
         for (data, hash, structure) in test_data {
@@ -1621,7 +1626,7 @@ mod tests {
         let test_data = vec![(
             vec!["6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"],
             vec!["1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a"],
-            "ccd1c136c75ffd2e3947466ad17dd6687d890ce50cbeb7ca7a4da638df482b96",
+            "5fa3f96b5a13d96f18db867a16addf7483ab3448b3a267f774e1479b8dd1193c",
         )];
 
         for (keys, values, root) in test_data {
@@ -1654,7 +1659,7 @@ mod tests {
                 "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
                 "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
             ],
-            "6d13bfad2a210dc084b9a896f79243d58c7fbd2721181b86cdaed00af349f429",
+            "5b693f1384c3e07b2a5f91a616d9f3676b5724b9664849b641d6139b5ad11b1a",
         )];
 
         for (keys, values, root) in test_data {
@@ -1695,7 +1700,7 @@ mod tests {
                 "c942a06c127c2c18022677e888020afb174208d299354f3ecfedb124a1f3fa45",
                 "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
             ],
-            "d336d7a29ec55728822a2f9ec6aae3bee549e743d50469d7fe924914348ff758",
+            "c7c343f08404db36d05d6c76c886a371e8d2ab1fe82f9dc14a985e8e204d1d20",
         )];
 
         for (keys, values, root) in test_data {
@@ -1744,7 +1749,7 @@ mod tests {
                 "f3035c79a84a2dda7a7b5f356b3aeb82fb934d5f126af99bbee9a404c425b888",
                 "2ad16b189b68e7672a886c82a0550bc531782a3a4cfb2f08324e316bb0f3174d",
             ],
-            "3f91f1b7bc96933102dcce6a6c9200c68146a8327c16b91f8e4b37f40e2e2fb4",
+            "248c25930001a47d344e6807f25edad5195d71ad9c96b73a99cccc7906343112",
         )];
 
         for (keys, values, root) in test_data {
@@ -1771,7 +1776,7 @@ mod tests {
         let test_data = vec![(
             vec!["ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"],
             vec!["b6d58dfa6547c1eb7f0d4ffd3e3bd6452213210ea51baa70b97c31f011187215"],
-            "353ac3e329fac7ef85361df532e64497113f2d9efc644d65593d346c373d8751",
+            "641de8cb1043ed944f81e9fdb2a185437e9df861f87eb8176b9431d0340b2b21",
             vec!["ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"],
         )];
 
@@ -1844,13 +1849,13 @@ mod tests {
                         "f3035c79a84a2dda7a7b5f356b3aeb82fb934d5f126af99bbee9a404c425b888",
                         "2ad16b189b68e7672a886c82a0550bc531782a3a4cfb2f08324e316bb0f3174d",
                     ],
-                    "3f91f1b7bc96933102dcce6a6c9200c68146a8327c16b91f8e4b37f40e2e2fb4",
+                    "248c25930001a47d344e6807f25edad5195d71ad9c96b73a99cccc7906343112",
                     vec!["6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"],
                     vec![
-                        "8d1ffa7d6c798b22e899eb01e2ff37aa38ca5d155c7787ec77e6818cb6058d50",
-                        "b40ca4f4d1cc50ab10ec89fcde1a6587003f964c83f040f54e591c9dfc8a549f",
-                        "9a428d826c80eeabda0ee5f77458d492b333a171ee781543e09ee62100786142",
-                        "f6d10a31f5362e0ceada0b2fccabc648dc25d635bb3331f5cb0f499591f104b8",
+                        "be28d7c49764a8673dffc61a8f9df827e7f296f03fc91efdebcb3582f6de1e66",
+                        "17b03e8f6995405f962b0dc01fdcbdaa523b7de7959c0c084c4355031e908a44",
+                        "3d070fcf247a691bd2d792313f8934f6c37e2444c2d0be0cbc5096edc7b2a674",
+                        "8df2cd060f0e84a9a19ae6a331f93ebcc49e5d513303c313a116ca1cd862bafa",
                     ],
                     vec![QueryProof {
                         bitmap: Arc::new(hex::decode("17").unwrap()),
@@ -1929,25 +1934,25 @@ mod tests {
                         "0eac589aa6ef7f5232a21b36ddac0b586b707acebdeac6082e10a9a9f80860da",
                         "d6cdf7c9478a78b29f16c7e6ddcc5612e827beaf6f4aef7c1bb6fef56bbb9a0f",
                     ],
-                    "dd6e59d920b0a911ad43bbb6c97453128deece03f5799c13eae050cad6958368",
+                    "2770cbf448782d4a24a53135741e1c7653d065c53e2cf150d431aad77993e2a0",
                     vec![
                         "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
                         "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
                         "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
                     ],
                     vec![
-                        "947f6a2a1faab9e68a23701e1eae120d401148983326794b05063e118f2a0513",
-                        "f5a9a1f4a90cf891b6cd0ca1f82bbe90e88835c3aed9106805464890f2734fa1",
-                        "c4288c46c16467a3c12928f99be89f9401b813ae123289a09f2ae1fa2211067a",
-                        "eb57d25f6308dc90d5d2c34462153040443ef5241441a9e644957b0e51c33944",
-                        "c81bf0eea251a7e8ee8bb2960d5e3c5847110496ed68ef889f4050e02f27cb8f",
-                        "8d1ffa7d6c798b22e899eb01e2ff37aa38ca5d155c7787ec77e6818cb6058d50",
-                        "17c59ac41e2255a5da6f06be5d677618084b6c253c20698cbafe8982fc320e29",
-                        "d71d377dedbcfa43ec16423d839914e43edc96c9d2322caf020f51b01727579f",
-                        "0debba7a991a1281f9d3e00f788c0325271119fa3839075e9b5fabb42837916e",
-                        "fdaad6b0fe38314f5f2b74c745e1de1058ee0e9e1c42a8b025a655a6b1d1a1d3",
-                        "94eb9f8005ae50cfae31cef5a25dd2b5d21c70c6f6d45483589cfe771a7ab597",
-                        "8e3cad238038e7888db0286ba540cb349abcca266dd5403c6280b6c45cc61002",
+                        "7aada8d512d761dcd18031059d1c17d80d9c79f67ae3babf5cabf260d5790cae",
+                        "7fd4719a219a224ecd4f1ef19eac8ccbc244a7368857707deb3b65c351c0c0a7",
+                        "93b98c20a3b72d7aee973c2374d95db8a79912be7a4641dfc28f26d441bf7890",
+                        "44195ef71f7a750609cd0edcfbce505092216d06b4bffa52607eb2770d72a9a7",
+                        "e8527ba9c82736c6a644049a88e4a0c7eabbb23adf20d0dd40b7f8d474642a27",
+                        "be28d7c49764a8673dffc61a8f9df827e7f296f03fc91efdebcb3582f6de1e66",
+                        "32bb08752a5dd3a88d168dc52b3e7c53a89a6679b23ceb2c5c26a7af495bd128",
+                        "0498d41cc43f5ee1be71781513164d2dfea38bf0ee3289f02d18127f7c4406d6",
+                        "f03feb21e428c640620dc2698787943c5d67b895ff316594bdd36493d2deca2b",
+                        "03662db407793a42f74699970ea28cce39304449eb900d15003a2b79bb9d1e7b",
+                        "f4fba601b5a1624731f3c4153defe761f977d167ea5a77a110dd571cbcd9bc2a",
+                        "884d43dbcd182a451954f4633481126ab414e9650a3743203922e528228883a4",
                     ],
                     vec![
                     QueryProof {
@@ -2139,7 +2144,7 @@ mod tests {
                 "247f88a674f9f504e95f846272b120deaa29b0ae6b0b9069689488ba3c8e90ab",
                 "1405870ede7c8bede02298a878e66eba9e764a1ba55ca16173f7df470fb4089d",
             ],
-            "5fc84e67172cd3d03bef61c4a726dc2889418afeaf1afc15a9f02caad777423a",
+            "401dba08d0bc4edf4d1f816742b59385f6617e156904d6bee7e9b4f096abf847",
             vec![
                 "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
                 "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
@@ -2149,24 +2154,24 @@ mod tests {
                 "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
             ],
             vec![
-                "72ec6f47671dc68bd661a55b0db40776638d504cd7768cfa1ab684a5a2b58df0",
-                "6f6beacd3e8b18a49390762296f8c0c755b4c93b5960c7818719b0993ed20a53",
-                "947f6a2a1faab9e68a23701e1eae120d401148983326794b05063e118f2a0513",
-                "f5a9a1f4a90cf891b6cd0ca1f82bbe90e88835c3aed9106805464890f2734fa1",
-                "9fabc5ebbc9b48138a45b8776b77699ce816fc6defa671d6485c735406267191",
-                "eb57d25f6308dc90d5d2c34462153040443ef5241441a9e644957b0e51c33944",
-                "f706374e4ba44ea13b8bbe6615f3715c785fd54e261e7ab4d9b32e9195c5f989",
-                "c81bf0eea251a7e8ee8bb2960d5e3c5847110496ed68ef889f4050e02f27cb8f",
-                "8d1ffa7d6c798b22e899eb01e2ff37aa38ca5d155c7787ec77e6818cb6058d50",
-                "7ca70841e154f8f3876f667ade1bbe7dc26d03813432501291473e9ef03a3371",
-                "b55661052dd2e2f7aea3f82f73ce7534ee4196ee8ab7ecab69cb029a4bdba203",
-                "58193f723127ede64b63e37de54d5ef15df5379a7d71a562caf06edae231bfb7",
-                "17c59ac41e2255a5da6f06be5d677618084b6c253c20698cbafe8982fc320e29",
-                "d71d377dedbcfa43ec16423d839914e43edc96c9d2322caf020f51b01727579f",
-                "fbf8316ffafee18eafa1e8113ea2f38f564c844ba475181460603edfe714a753",
-                "44f3f97e5667f7b878e1c790ef3a8e5770296b21cd3e168dd65adf9c2fdc5a3b",
-                "74395f5d785bd88fdb6720f9b8429f83501beea5a92582037450244b243e577d",
-                "056c8542f08b631258fb6d545de8a9cab8bea8230ea6b26c3bb78c7cb7044737",
+                "ccc998cd27d1c7c74de713dc9e31fed4c46ecb7375c9fc681e157d1bcb413bf3",
+                "8155096662f2bbde82e17684a0a0d1c4afcd316f3b45731e07ccd6cd69d1ee4f",
+                "7aada8d512d761dcd18031059d1c17d80d9c79f67ae3babf5cabf260d5790cae",
+                "7fd4719a219a224ecd4f1ef19eac8ccbc244a7368857707deb3b65c351c0c0a7",
+                "9b5c0979c8f3b7d7651edc5532435014b5beaa980cfd9cab3fdcae36d9df4b00",
+                "44195ef71f7a750609cd0edcfbce505092216d06b4bffa52607eb2770d72a9a7",
+                "74b28dfde1df60fa62e78609e0b7c457d91bbe732ff82737d4297085ba12c866",
+                "e8527ba9c82736c6a644049a88e4a0c7eabbb23adf20d0dd40b7f8d474642a27",
+                "be28d7c49764a8673dffc61a8f9df827e7f296f03fc91efdebcb3582f6de1e66",
+                "2303f37ce9621f2ce5f3c046c95cdf221fdd53e01d97aaa339c7c06521cf007f",
+                "47da630f0a89f184eb1d296a3f17cea1a750e1c7c1a3b1ef2f4f60034d64c9fe",
+                "ff69738cfb9678d0677b35780f8c5d18e2e59725632c642fa5ac4f7baf6e9f32",
+                "32bb08752a5dd3a88d168dc52b3e7c53a89a6679b23ceb2c5c26a7af495bd128",
+                "0498d41cc43f5ee1be71781513164d2dfea38bf0ee3289f02d18127f7c4406d6",
+                "b33bb9602edceb6854bd539ee77bec8bea656ce86b62be30bdee43876d3ebee2",
+                "caefa0f9757b2c6820e34c43a48133d86207ac53abcae2be34f4bb34a31bc855",
+                "f856f0a29502b912714605395a6394373877e5ffdc544bc5477054866b88f16e",
+                "9636e2b9312e0ae556db5a7c926a82e7597764d40059bd796c3ae215e8ed1e3d",
             ],
             vec![
                 QueryProof {
@@ -2387,8 +2392,8 @@ mod tests {
         assert_eq!(
             proof.hash,
             vec![
-                66, 45, 41, 145, 103, 5, 104, 155, 141, 175, 233, 111, 240, 175, 104, 175, 246, 5,
-                12, 103, 117, 238, 39, 229, 97, 17, 76, 214, 97, 205, 49, 39
+                26, 170, 13, 17, 56, 228, 164, 98, 185, 10, 145, 76, 19, 139, 229, 210, 43, 84,
+                250, 5, 200, 32, 49, 85, 172, 216, 46, 204, 182, 218, 185, 238
             ]
         );
 
@@ -2589,8 +2594,8 @@ mod tests {
                     174, 65, 228, 100, 155, 147, 76, 164, 149, 153, 27, 120, 82, 184, 85
                 ],
                 vec![
-                    166, 142, 231, 157, 193, 40, 19, 209, 52, 253, 3, 92, 115, 40, 247, 189, 94,
-                    230, 129, 135, 115, 95, 127, 13, 46, 69, 26, 234, 63, 246, 147, 15
+                    75, 19, 46, 241, 48, 12, 27, 199, 145, 196, 180, 77, 220, 0, 183, 136, 246,
+                    186, 252, 25, 209, 147, 94, 123, 7, 53, 181, 96, 62, 196, 225, 67
                 ]
             )
         );
@@ -2610,8 +2615,8 @@ mod tests {
             KVPair(
                 vec![0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
                 vec![
-                    43, 229, 158, 19, 250, 79, 28, 157, 72, 165, 36, 43, 34, 34, 87, 103, 211, 82,
-                    228, 69, 120, 87, 21, 25, 144, 187, 39, 106, 15, 220, 240, 165
+                    189, 48, 148, 168, 3, 139, 17, 26, 138, 59, 6, 102, 38, 115, 95, 225, 41, 141,
+                    147, 173, 215, 231, 167, 69, 122, 198, 83, 105, 201, 165, 11, 128
                 ]
             )
         );
