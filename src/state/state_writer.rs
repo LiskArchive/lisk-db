@@ -11,7 +11,7 @@ use crate::database::options::IterationOption;
 use crate::database::traits::{DatabaseKind, JsNewWithArcMutex, NewDBWithKeyLength};
 use crate::database::types::{JsArcMutex, Kind as DBKind};
 use crate::diff;
-use crate::types::{Cache, KVPair, KeyLength, SharedKVPair, VecOption};
+use crate::types::{Cache, KVPair, KeyLength, SharedKVPair, VecOption, HashWithKind, HashKind};
 use crate::utils;
 
 pub type SendableStateWriter = JsArcMutex<StateWriter>;
@@ -194,15 +194,15 @@ impl StateWriter {
 
     /// get_updated returns all the updated key-value pairs.
     /// if the key is removed, value will be empty slice.
-    pub fn get_updated(&self) -> Cache {
+    pub fn get_hashed_updated(&self) -> Cache {
         let mut result = Cache::new();
         for (key, value) in self.cache.iter() {
             if value.init.is_none() || value.dirty {
-                result.insert(key.clone(), value.value.clone());
+                result.insert(key.hash_with_kind(HashKind::Key), value.value.hash_with_kind(HashKind::Value));
                 continue;
             }
             if value.deleted {
-                result.insert(key.clone(), vec![]);
+                result.insert(key.hash_with_kind(HashKind::Key), vec![]);
             }
         }
         result
@@ -446,17 +446,38 @@ mod tests {
     #[test]
     fn test_state_writer_update() {
         let mut writer = StateWriter::default();
-        writer.cache_new(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
 
+        let key = &[1, 2, 3, 4, 5, 6, 7, 8];
+        writer.cache_new(&SharedKVPair::new(key, &[5, 6, 7, 8]));
         writer
-            .update(&KVPair::new(&[1, 2, 3, 4], &[9, 10, 11, 12]))
+            .update(&KVPair::new(key, &[9, 10, 11, 12]))
             .unwrap();
 
-        let result = writer.get_updated();
-        assert_eq!(result.len(), 1);
+        let empty_key = &[2, 2, 3, 4, 5, 6, 7, 8];
+        writer
+            .cache_new(&SharedKVPair::new(empty_key, &[]));
+
+        let deleting_key = &[9, 2, 3, 4, 5, 6, 7, 8];
+        writer
+            .cache_existing(&SharedKVPair::new(deleting_key, &[7,7, 7]));
+        writer.delete(deleting_key);
+
+        let result = writer.get_hashed_updated();
+        assert_eq!(result.len(), 3);
         assert_eq!(
-            result.get(&[1, 2, 3, 4].to_vec()).unwrap(),
-            &[9, 10, 11, 12]
+            result.get(&[1, 2, 3, 4, 5, 6, 7, 8].to_vec().hash_with_kind(HashKind::Key)).unwrap(),
+            &[9, 10, 11, 12].to_vec().hash_with_kind(HashKind::Value),
+            "non-empty value must return hashed value",
+        );
+        assert_eq!(
+            result.get(&empty_key.to_vec().hash_with_kind(HashKind::Key)).unwrap(),
+            &[].to_vec().hash_with_kind(HashKind::Value),
+            "empty value must return hashed empty slice",
+        );
+        assert_eq!(
+            result.get(&deleting_key.to_vec().hash_with_kind(HashKind::Key)).unwrap(),
+            &[].to_vec(),
+            "deleted key must return empty slice",
         );
     }
 

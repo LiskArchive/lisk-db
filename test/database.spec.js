@@ -445,7 +445,7 @@ describe('database', () => {
         describe('checkpoint', () => {
             let tmpPath;
             beforeEach(() => {
-                tmpPath = fs.mkdtempSync("");
+                tmpPath = fs.mkdtempSync(os.tmpdir());
             });
 
             it('should create checkpoint', async () => {

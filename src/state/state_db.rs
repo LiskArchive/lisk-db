@@ -150,7 +150,7 @@ impl StateDB {
 
         let diff = diff::Diff::decode(&diff_bytes)
             .map_err(|err| DataStoreError::Unknown(err.to_string()))?;
-        let data = smt::UpdateData::new_with_hash(diff.revert_update());
+        let data = smt::UpdateData::new_from(diff.revert_hashed_update());
         let mut smt_db = smt_db::SmtDB::new(conn);
         let mut tree = smt::SparseMerkleTree::new(state_root, key_length, consts::SUBTREE_HEIGHT);
         let prev_root = tree
@@ -261,7 +261,7 @@ impl StateDB {
     ) -> Result<(), mpsc::SendError<DbMessage>> {
         let key_length = self.options.key_length();
         let w = writer.lock().unwrap();
-        let data = smt::UpdateData::new_with_hash(w.get_updated());
+        let data = smt::UpdateData::new_from(w.get_hashed_updated());
         let mut smt_db = smt_db::SmtDB::new(&self.common);
         let mut tree =
             smt::SparseMerkleTree::new(&commit_data.prev_root, key_length, consts::SUBTREE_HEIGHT);

@@ -20,6 +20,12 @@ const crypto = require('crypto');
 const { StateDB, NotFoundError } = require('../main');
 const { getRandomBytes } = require('./utils');
 
+const sha256 = val => {
+    const hasher = crypto.createHash('sha256');
+    hasher.update(val);
+    return hasher.digest();
+};
+
 describe('statedb', () => {
     const initState = [
         {
@@ -557,7 +563,7 @@ describe('statedb', () => {
         describe('checkpoint', () => {
             let tmpPath;
             beforeEach(() => {
-                tmpPath = fs.mkdtempSync("");
+                tmpPath = fs.mkdtempSync(os.tmpdir());
             });
 
             it('should create checkpoint', async () => {
@@ -660,6 +666,39 @@ describe('statedb', () => {
                 proof.siblingHashes.push(getRandomBytes(32));
 
                 await expect(db.calculateRoot(proof)).resolves.not.toEqual(root);
+            });
+        });
+
+        describe('delete and set empty bytes', () => {
+            it('should remove deleted key from SMT when key is deleted', async () => {
+                const currentState = await db.getCurrentState();
+
+                const writer = db.newReadWriter();
+                await writer.del(initState[7].key)
+
+                const nextRoot = await db.commit(writer, currentState.version + 1, currentState.root);
+
+                expect(nextRoot).not.toEqual(currentState.root);
+
+                const proof = await db.prove(nextRoot, [Buffer.concat([initState[7].key.subarray(0, 6), sha256(initState[7].key.subarray(6))])])
+                // deleted key should not be included. ie: non-inclusion proof
+                expect(proof.queries[0].value).not.toEqual(sha256(initState[7].value));
+            });
+
+            it('should should not delete the key for SMT when value is empty bytes', async () => {
+                const currentState = await db.getCurrentState();
+
+                const writer = db.newReadWriter();
+                await writer.set(initState[6].key, Buffer.alloc(0));
+
+                const nextRoot = await db.commit(writer, currentState.version + 1, currentState.root);
+
+                expect(nextRoot).not.toEqual(currentState.root);
+
+                const proof = await db.prove(nextRoot, [Buffer.concat([initState[6].key.subarray(0, 6), sha256(initState[7].key.subarray(6))])])
+
+                // key with empty value should result in inclusion proof
+                expect(proof.queries[0].value).toEqual(sha256(Buffer.alloc(0)));
             });
         });
     });
