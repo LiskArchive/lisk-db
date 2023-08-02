@@ -681,8 +681,10 @@ describe('statedb', () => {
                 expect(nextRoot).not.toEqual(currentState.root);
 
                 const proof = await db.prove(nextRoot, [Buffer.concat([initState[7].key.subarray(0, 6), sha256(initState[7].key.subarray(6))])])
+
                 // deleted key should not be included. ie: non-inclusion proof
-                expect(proof.queries[0].value).not.toEqual(sha256(initState[7].value));
+                const isValidNonInclusionProof = await db.verifyNonInclusionProof(nextRoot, [Buffer.concat([initState[7].key.subarray(0, 6), sha256(initState[7].key.subarray(6))])], proof);
+                await expect(isValidNonInclusionProof).toBe(true);
             });
 
             it('should should not delete the key for SMT when value is empty bytes', async () => {
@@ -695,10 +697,12 @@ describe('statedb', () => {
 
                 expect(nextRoot).not.toEqual(currentState.root);
 
-                const proof = await db.prove(nextRoot, [Buffer.concat([initState[6].key.subarray(0, 6), sha256(initState[7].key.subarray(6))])])
+                const key = [Buffer.concat([initState[6].key.subarray(0, 6), sha256(initState[6].key.subarray(6))])];
+                const proof = await db.prove(nextRoot, key)
 
                 // key with empty value should result in inclusion proof
-                expect(proof.queries[0].value).toEqual(sha256(Buffer.alloc(0)));
+                const isValidInclusionProof = await db.verifyInclusionProof(nextRoot, key, proof);
+                await expect(isValidInclusionProof).toBe(true);
             });
         });
     });
