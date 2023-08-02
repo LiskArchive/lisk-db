@@ -170,6 +170,7 @@ impl StateWriter {
             self.cache.remove(key);
             return;
         }
+        cached.dirty = false;
         cached.deleted = true;
     }
 
@@ -495,8 +496,13 @@ mod tests {
         let mut writer = StateWriter::default();
         writer.cache_existing(&SharedKVPair::new(&[1, 2, 3, 4], &[5, 6, 7, 8]));
 
+        writer.update(&KVPair::new(&[1, 2, 3, 4], &[7, 7, 7, 7])).unwrap();
+        assert!(writer.cache.get(&[1,2,3,4].to_vec()).unwrap().dirty);
+
         writer.delete(&[1, 2, 3, 4]);
         let result = writer.get(&[1, 2, 3, 4]);
+        assert!(!writer.cache.get(&[1,2,3,4].to_vec()).unwrap().dirty);
+        assert_eq!(writer.cache.get(&[1,2,3,4].to_vec()).unwrap().dirty, !writer.cache.get(&[1,2,3,4].to_vec()).unwrap().deleted);
         assert_eq!(result.0, &[]);
         assert!(result.1);
         assert!(result.2);
