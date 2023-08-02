@@ -13,6 +13,7 @@
  */
 'use strict';
 
+const { resolveObjectURL } = require("buffer");
 const {
     state_db_new,
     state_db_close,
@@ -47,6 +48,7 @@ const {
 const { NotFoundError } = require('./error');
 const { Iterator } = require("./iterator");
 const { getOptionsWithDefault } = require('./options');
+const { isInclusionProofForQueryKey } = require('./utils');
 
 class StateReader {
     constructor(db) {
@@ -311,6 +313,25 @@ class StateDB {
                 resolve(result);
             });
         });
+    }
+
+
+    async verifyInclusionProof(root, queries, proof) {
+        for (let i = 0; i < queries.length; i++) {
+            if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                return false;
+            }
+        }
+        return this.verify(root, queries, proof);
+    }
+
+    async verifyNonInclusionProof(root, queries, proof) {
+        for (let i = 0; i < queries.length; i++) {
+            if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
+                return false;
+            }
+        }
+        return this.verify(root, queries, proof);
     }
 
     async finalize(height) {
