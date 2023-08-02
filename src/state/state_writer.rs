@@ -192,7 +192,7 @@ impl StateWriter {
         Ok(())
     }
 
-    /// get_updated returns all the updated key-value pairs.
+    /// get_hashed_updated returns all the updated key-value pairs.
     /// if the key is removed, value will be empty slice.
     pub fn get_hashed_updated(&self) -> Cache {
         let mut result = Cache::new();

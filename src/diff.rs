@@ -1,8 +1,7 @@
 /// diff provides data structure to revert the state for StateDB.
 use crate::batch;
 use crate::codec;
-use crate::types::HashWithKind;
-use crate::types::{Cache, KVPair, KVPairCodec, NestedVec, HashKind};
+use crate::types::{Cache, KVPair, KVPairCodec, NestedVec, HashKind, HashWithKind};
 
 /// Diff maintains difference between each state changes, and it is used when reverting the state.
 /// When updating state to next state, it maintains:
@@ -79,7 +78,7 @@ impl Diff {
         writer.result().to_vec()
     }
 
-    /// revert_update returns cache value with original data.
+    /// revert_hashed_update returns cache value with original data.
     /// Deleting data is represented as empty bytes.
     pub fn revert_hashed_update(&self) -> Cache {
         let mut result = Cache::new();
