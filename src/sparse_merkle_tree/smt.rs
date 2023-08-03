@@ -504,19 +504,6 @@ impl UpdateData {
         Self { data }
     }
 
-    pub fn new_with_hash(data: Cache) -> Self {
-        let mut new_data = Cache::new();
-        for (k, v) in data {
-            let mut value: Vec<u8> = vec![];
-            if !v.is_empty() {
-                value = v.hash_with_kind(HashKind::Value);
-            }
-            let key = k.hash_with_kind(HashKind::Key);
-            new_data.insert(key, value);
-        }
-        Self { data: new_data }
-    }
-
     pub fn insert(&mut self, kv: SharedKVPair) {
         self.data.insert(kv.key_as_vec(), kv.value_as_vec());
     }
@@ -2314,48 +2301,6 @@ mod tests {
 
         data.insert(SharedKVPair(&[7, 8, 9], &[10, 11, 12]));
         assert_eq!(data.data.get(&vec![7, 8, 9]).unwrap(), &vec![10, 11, 12]);
-    }
-
-    #[test]
-    fn test_update_data_new_with_hash() {
-        let test_data = vec![
-            (
-                "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
-                vec![4, 5, 6],
-                vec![
-                    8, 79, 237, 8, 185, 120, 100, 174, 10, 85, 175, 109, 20, 186, 226, 221, 213,
-                    152, 208, 206, 28, 136, 213, 68, 247, 175, 123, 58, 165, 185, 85, 84, 232,
-                    135, 165, 146, 179, 229,
-                ],
-                vec![
-                    120, 124, 121, 142, 57, 165, 188, 25, 16, 53, 91, 174, 109, 12, 216, 122, 54,
-                    178, 225, 15, 208, 32, 42, 131, 227, 187, 107, 0, 93, 168, 52, 114,
-                ],
-            ),
-            (
-                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
-                vec![],
-                vec![
-                    229, 45, 156, 80, 140, 80, 243, 18, 13, 123, 218, 140, 149, 81, 32, 198, 79,
-                    128, 242, 66, 193, 113, 167, 120, 215, 24, 182, 43, 79, 99, 118, 214, 214,
-                    172, 252, 124, 176, 184,
-                ],
-                vec![],
-            ),
-        ];
-
-        let mut cache = Cache::new();
-        for data in test_data.iter() {
-            cache.insert(hex::decode(data.0).unwrap(), data.1.clone());
-        }
-
-        let data = UpdateData::new_with_hash(cache);
-        let (keys, values) = data.entries();
-
-        test_data.iter().for_each(|data| {
-            assert!(keys.contains(&data.2.as_slice()));
-            assert!(values.contains(&data.3.as_slice()));
-        });
     }
 
     #[test]

@@ -11,7 +11,6 @@
  *
  * Removal or modification of this copyright notice is prohibited.
  */
-const os = require('os');
 const { SparseMerkleTree } = require('../main');
 const { getRandomBytes } = require('./utils');
 const { isInclusionProofForQueryKey } = require('../utils');
