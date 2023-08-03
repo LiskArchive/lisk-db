@@ -1,7 +1,7 @@
 /// diff provides data structure to revert the state for StateDB.
 use crate::batch;
 use crate::codec;
-use crate::types::{Cache, KVPair, KVPairCodec, NestedVec, HashKind, HashWithKind};
+use crate::types::{Cache, HashKind, HashWithKind, KVPair, KVPairCodec, NestedVec};
 
 /// Diff maintains difference between each state changes, and it is used when reverting the state.
 /// When updating state to next state, it maintains:
@@ -83,10 +83,16 @@ impl Diff {
     pub fn revert_hashed_update(&self) -> Cache {
         let mut result = Cache::new();
         for kv in self.updated.iter() {
-            result.insert(kv.key_as_vec().hash_with_kind(HashKind::Key), kv.value_as_vec().hash_with_kind(HashKind::Value));
+            result.insert(
+                kv.key_as_vec().hash_with_kind(HashKind::Key),
+                kv.value_as_vec().hash_with_kind(HashKind::Value),
+            );
         }
         for kv in self.deleted.iter() {
-            result.insert(kv.key_as_vec().hash_with_kind(HashKind::Key), kv.value_as_vec().hash_with_kind(HashKind::Value));
+            result.insert(
+                kv.key_as_vec().hash_with_kind(HashKind::Key),
+                kv.value_as_vec().hash_with_kind(HashKind::Value),
+            );
         }
         for key in self.created.iter() {
             result.insert(key.to_vec().hash_with_kind(HashKind::Key), vec![]);
@@ -157,14 +163,25 @@ mod tests {
 
         let cache = diff.revert_hashed_update();
 
-        assert_eq!(cache.get(&b"test_key".to_vec().hash_with_kind(HashKind::Key)), Some(&vec![]));
+        assert_eq!(
+            cache.get(&b"test_key".to_vec().hash_with_kind(HashKind::Key)),
+            Some(&vec![])
+        );
         assert_eq!(
             cache.get(&b"test_key_updated".to_vec().hash_with_kind(HashKind::Key)),
-            Some(&b"test_value_updated".to_vec().hash_with_kind(HashKind::Value))
+            Some(
+                &b"test_value_updated"
+                    .to_vec()
+                    .hash_with_kind(HashKind::Value)
+            )
         );
         assert_eq!(
             cache.get(&b"test_key_deleted".to_vec().hash_with_kind(HashKind::Key)),
-            Some(&b"test_value_deleted".to_vec().hash_with_kind(HashKind::Value))
+            Some(
+                &b"test_value_deleted"
+                    .to_vec()
+                    .hash_with_kind(HashKind::Value)
+            )
         );
     }
 
