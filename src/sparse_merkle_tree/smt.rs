@@ -843,17 +843,33 @@ impl SparseMerkleTree {
     }
 
     fn verify_query_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: KeyLength) -> bool {
+        if query_keys.len() != proof.queries.len() {
+            return false;
+        }
+
         let mut queries: HashMap<&[u8], QueryProof> = HashMap::new();
         for (i, key) in query_keys.iter().enumerate() {
+            // Check if all the query keys have the same length.
+            if proof.queries[i].key().len() != key_length.into() {
+                return false;
+            }
+
             if key.len() != key_length.into() {
                 return false;
             }
             let query = &proof.queries[i];
             let duplicate_query = queries.get(query.key());
             if let Some(q) = duplicate_query {
-                if !utils::is_bytes_equal(&q.bitmap, &query.bitmap)
-                    || !utils::is_bytes_equal(q.value(), query.value())
-                {
+                let is_bitmap_equal = utils::is_bytes_equal(&q.bitmap, &query.bitmap);
+                if !is_bitmap_equal || !utils::is_bytes_equal(q.value(), query.value()) {
+                    return false;
+                }
+
+                if utils::is_empty_hash(query.value()) {
+                    if !is_bitmap_equal {
+                        return false;
+                    }
+                } else if !utils::is_bytes_equal(query.key(), q.key()) {
                     return false;
                 }
             }
@@ -1537,17 +1553,6 @@ impl SparseMerkleTree {
         root: &[u8],
         key_length: KeyLength,
     ) -> Result<bool, SMTError> {
-        if query_keys.len() != proof.queries.len() {
-            return Ok(false);
-        }
-
-        // Check if all the query keys have the same length.
-        for query in &proof.queries {
-            if query.key().len() != key_length.into() {
-                return Ok(false);
-            }
-        }
-
         if !Self::verify_query_keys(proof, query_keys, key_length) {
             return Ok(false);
         }
