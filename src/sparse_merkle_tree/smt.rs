@@ -842,54 +842,100 @@ impl SparseMerkleTree {
         Ok((query_with_proofs, ancestor_hashes))
     }
 
-    fn verify_query_keys(proof: &Proof, query_keys: &[Vec<u8>], key_length: KeyLength) -> bool {
-        if query_keys.len() != proof.queries.len() {
+    fn bitmap_to_binary_path(query: &QueryProof) -> Result<Vec<bool>, SMTError> {
+        let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+        let key_bools = utils::bytes_to_bools(query.key());
+
+        let binary_path = if binary_bitmap.len() > key_bools.len() {
+            return Err(SMTError::InvalidBitmapLen);
+        } else {
+            key_bools[..binary_bitmap.len()].to_vec()
+        };
+
+        Ok(binary_path)
+    }
+
+    fn check_duplicate_key(
+        query: &QueryProof,
+        duplicate_query: &QueryProof,
+        binary_path: &[bool],
+        duplicate_path: &[bool],
+    ) -> bool {
+        if !utils::is_bytes_equal(&duplicate_query.bitmap, &query.bitmap)
+            || !utils::is_bytes_equal(duplicate_query.value(), query.value())
+        {
             return false;
+        }
+
+        if utils::is_empty_hash(query.value()) {
+            if !utils::is_bools_equal(&binary_path, &duplicate_path) {
+                return false;
+            }
+        } else if !utils::is_bytes_equal(query.key(), duplicate_query.key()) {
+            return false;
+        }
+
+        true
+    }
+
+    fn verify_query_keys(
+        proof: &Proof,
+        query_keys: &[Vec<u8>],
+        key_length: KeyLength,
+    ) -> Result<(bool, HashMap<Vec<bool>, QueryProofWithProof>), SMTError> {
+        let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
+
+        if query_keys.len() != proof.queries.len() {
+            return Ok((false, queries_with_proof));
         }
 
         let mut queries: HashMap<&[u8], QueryProof> = HashMap::new();
         for (i, key) in query_keys.iter().enumerate() {
             // Check if all the query keys have the same length.
             if proof.queries[i].key().len() != key_length.into() {
-                return false;
+                return Ok((false, queries_with_proof));
             }
 
             if key.len() != key_length.into() {
-                return false;
+                return Ok((false, queries_with_proof));
             }
             let query = &proof.queries[i];
+            let binary_path = Self::bitmap_to_binary_path(query)?;
             let duplicate_query = queries.get(query.key());
             if let Some(q) = duplicate_query {
-                let is_bitmap_equal = utils::is_bytes_equal(&q.bitmap, &query.bitmap);
-                if !is_bitmap_equal || !utils::is_bytes_equal(q.value(), query.value()) {
-                    return false;
-                }
-
-                if utils::is_empty_hash(query.value()) {
-                    if !is_bitmap_equal {
-                        return false;
-                    }
-                } else if !utils::is_bytes_equal(query.key(), q.key()) {
-                    return false;
+                let duplicate_path = Self::bitmap_to_binary_path(q)?;
+                if !Self::check_duplicate_key(query, q, &binary_path, &duplicate_path) {
+                    return Ok((false, queries_with_proof));
                 }
             }
             queries.insert(query.key(), query.clone());
             if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
-                return false;
+                return Ok((false, queries_with_proof));
             }
-            if utils::is_bytes_equal(key, query.key()) {
-                continue;
-            }
-            let key_binary = utils::bytes_to_bools(key);
-            let query_key_binary = utils::bytes_to_bools(query.key());
-            let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
+
+            // TODO remove redundant lines in bitmap_to_binary_path
             let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            if binary_bitmap.len() > common_prefix.len() {
-                return false;
+            if !utils::is_bytes_equal(key, query.key()) {
+                let key_binary = utils::bytes_to_bools(key);
+                let query_key_binary = utils::bytes_to_bools(query.key());
+                let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
+                if binary_bitmap.len() > common_prefix.len() {
+                    return Ok((false, queries_with_proof));
+                }
             }
+
+            queries_with_proof.insert(
+                binary_path,
+                QueryProofWithProof::new_with_pair(
+                    Arc::clone(&query.pair),
+                    &binary_bitmap,
+                    &[],
+                    &[],
+                ),
+            );
         }
 
-        true
+        Ok((true, queries_with_proof))
     }
 
     /// get_subtree returns sub_tree based on the node_hash provided.
@@ -1553,11 +1599,13 @@ impl SparseMerkleTree {
         root: &[u8],
         key_length: KeyLength,
     ) -> Result<bool, SMTError> {
-        if !Self::verify_query_keys(proof, query_keys, key_length) {
+        let verify_query = Self::verify_query_keys(proof, query_keys, key_length)?;
+        if !verify_query.0 {
             return Ok(false);
         }
-        let filter_map = Self::prepare_queries_with_proof_map(proof)?;
-        let mut filtered_proof = filter_map
+
+        // let filter_map = Self::prepare_queries_with_proof_map(proof)?;
+        let mut filtered_proof = verify_query.1
             .values()
             .cloned()
             .collect::<Vec<QueryProofWithProof>>();
