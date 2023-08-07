@@ -842,10 +842,11 @@ impl SparseMerkleTree {
         Ok((query_with_proofs, ancestor_hashes))
     }
 
-    fn bitmap_to_binary_path(query: &QueryProof) -> Result<Vec<bool>, SMTError> {
-        let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+    fn bitmap_to_binary_path(
+        query: &QueryProof,
+        binary_bitmap: &Vec<bool>,
+    ) -> Result<Vec<bool>, SMTError> {
         let key_bools = utils::bytes_to_bools(query.key());
-
         let binary_path = if binary_bitmap.len() > key_bools.len() {
             return Err(SMTError::InvalidBitmapLen);
         } else {
@@ -855,7 +856,7 @@ impl SparseMerkleTree {
         Ok(binary_path)
     }
 
-    fn check_duplicate_key(
+    fn verify_duplicate_query(
         query: &QueryProof,
         duplicate_query: &QueryProof,
         binary_path: &[bool],
@@ -868,7 +869,7 @@ impl SparseMerkleTree {
         }
 
         if utils::is_empty_hash(query.value()) {
-            if !utils::is_bools_equal(&binary_path, &duplicate_path) {
+            if !utils::is_bools_equal(binary_path, duplicate_path) {
                 return false;
             }
         } else if !utils::is_bytes_equal(query.key(), duplicate_query.key()) {
@@ -878,7 +879,9 @@ impl SparseMerkleTree {
         true
     }
 
-    fn verify_query_keys(
+    /// verification_and_prepare_with_proof_map checks all verifications of query_keys based on the verify function in the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-construction).
+    /// Also it returns a tuple, the first parameter is the result of the query_keys verification and the second one is a map
+    fn verification_and_prepare_with_proof_map(
         proof: &Proof,
         query_keys: &[Vec<u8>],
         key_length: KeyLength,
@@ -888,23 +891,28 @@ impl SparseMerkleTree {
         if query_keys.len() != proof.queries.len() {
             return Ok((false, queries_with_proof));
         }
-
         let mut queries: HashMap<&[u8], QueryProof> = HashMap::new();
         for (i, key) in query_keys.iter().enumerate() {
             // Check if all the query keys have the same length.
             if proof.queries[i].key().len() != key_length.into() {
                 return Ok((false, queries_with_proof));
             }
-
             if key.len() != key_length.into() {
                 return Ok((false, queries_with_proof));
             }
             let query = &proof.queries[i];
-            let binary_path = Self::bitmap_to_binary_path(query)?;
-            let duplicate_query = queries.get(query.key());
-            if let Some(q) = duplicate_query {
-                let duplicate_path = Self::bitmap_to_binary_path(q)?;
-                if !Self::check_duplicate_key(query, q, &binary_path, &duplicate_path) {
+            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+            let binary_path = Self::bitmap_to_binary_path(query, &binary_bitmap)?;
+            if let Some(duplicate_query) = queries.get(query.key()) {
+                let duplicate_binary_bitmap =
+                    utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+                let duplicate_path = Self::bitmap_to_binary_path(query, &duplicate_binary_bitmap)?;
+                if !Self::verify_duplicate_query(
+                    query,
+                    duplicate_query,
+                    &binary_path,
+                    &duplicate_path,
+                ) {
                     return Ok((false, queries_with_proof));
                 }
             }
@@ -912,9 +920,6 @@ impl SparseMerkleTree {
             if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
                 return Ok((false, queries_with_proof));
             }
-
-            // TODO remove redundant lines in bitmap_to_binary_path
-            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
             if !utils::is_bytes_equal(key, query.key()) {
                 let key_binary = utils::bytes_to_bools(key);
                 let query_key_binary = utils::bytes_to_bools(query.key());
@@ -923,7 +928,6 @@ impl SparseMerkleTree {
                     return Ok((false, queries_with_proof));
                 }
             }
-
             queries_with_proof.insert(
                 binary_path,
                 QueryProofWithProof::new_with_pair(
@@ -1599,17 +1603,16 @@ impl SparseMerkleTree {
         root: &[u8],
         key_length: KeyLength,
     ) -> Result<bool, SMTError> {
-        let verify_query = Self::verify_query_keys(proof, query_keys, key_length)?;
-        if !verify_query.0 {
+        let result = Self::verification_and_prepare_with_proof_map(proof, query_keys, key_length)?;
+        if !result.0 {
             return Ok(false);
         }
 
-        // let filter_map = Self::prepare_queries_with_proof_map(proof)?;
-        let mut filtered_proof = verify_query.1
+        let mut filtered_proof = result
+            .1
             .values()
             .cloned()
             .collect::<Vec<QueryProofWithProof>>();
-
         match SparseMerkleTree::calculate_root(&proof.sibling_hashes, &mut filtered_proof) {
             Ok(computed_root) => Ok(utils::is_bytes_equal(root, &computed_root)),
             Err(_) => Ok(false),
