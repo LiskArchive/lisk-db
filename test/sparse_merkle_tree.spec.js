@@ -52,7 +52,6 @@ describe('SparseMerkleTree', () => {
 				const smt = new SparseMerkleTree(32);
 				const inputKeys = test.input.keys;
 				const inputValues = test.input.values;
-				const deletedKeys = test.input.deleteKeys;
 				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
 				const outputMerkleRoot = test.output.merkleRoot;
 
@@ -61,21 +60,16 @@ describe('SparseMerkleTree', () => {
 					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex') });
 				}
 
-				for (let i = 0; i < deletedKeys.length; i += 1) {
-					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0) });
-				}
-
 				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
 				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
 
 				const proof = await smt.prove(rootHash, queryKeys);
-                await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), queryKeys, proof)).resolves.toEqual(true);
+                await expect(smt.verifyInclusionProof(rootHash, queryKeys, proof)).resolves.toEqual(true);
 
-                const removedKeys = queryKeys.slice(1, queryKeys.length/2);
+                const removedKeys = queryKeys.slice(0, queryKeys.length/2);
                 const newQueryKeys = queryKeys.slice(queryKeys.length/2, queryKeys.length);
-                const removedProof = await smt.prove(rootHash, newQueryKeys);
-                const newProof = await smt.removeKeysFromProof(removedProof, removedKeys);
-                await expect(smt.verifyInclusionProof(Buffer.from(outputMerkleRoot, 'hex'), newQueryKeys, newProof)).resolves.toEqual(true);
+                const newProof = await smt.removeKeysFromProof(proof, removedKeys);
+                await expect(smt.verifyInclusionProof(rootHash, newQueryKeys, newProof)).resolves.toEqual(true);
             });
         }
 
