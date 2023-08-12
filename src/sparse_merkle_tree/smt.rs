@@ -1386,6 +1386,62 @@ impl SparseMerkleTree {
         self.calculate_query_proof_from_result(db, &data)
     }
 
+    fn prepare_result_proof(
+        proof: &Proof,
+        adding_sibling_hashes: BTreeMap<usize, Vec<u8>>,
+        removing_sibling_hashes: NestedVec,
+        removing_keys: &[&[u8]],
+        next_sibling_hash_index: usize,
+    ) -> Result<Proof, SMTError> {
+        let mut new_sibling_hashes = proof.sibling_hashes.clone();
+        if next_sibling_hash_index != proof.sibling_hashes.len() {
+            return Err(SMTError::InvalidInput(String::from(
+                "Not all sibling hashes were used",
+            )));
+        }
+        for hash in adding_sibling_hashes {
+            if new_sibling_hashes.contains(&hash.1) {
+                return Err(SMTError::InvalidInput(String::from(
+                    "Duplicate sibling hashes",
+                )));
+            }
+            if hash.0 > new_sibling_hashes.len() {
+                new_sibling_hashes.push(hash.1.clone());
+            } else {
+                new_sibling_hashes.insert(hash.0, hash.1.clone());
+            }
+        }
+
+        let mut temp_sibling_hashes: NestedVec = vec![];
+        for hash in new_sibling_hashes.clone() {
+            if !removing_sibling_hashes.contains(&hash) {
+                temp_sibling_hashes.push(hash.clone());
+            }
+        }
+        if new_sibling_hashes.len() - temp_sibling_hashes.len() != removing_sibling_hashes.len() {
+            return Err(SMTError::InvalidInput(String::from(
+                "All removed sibling are not in sibling hashes",
+            )));
+        }
+
+        let mut updated_queries: Vec<QueryProof> = vec![];
+        for proof_query in proof.queries.clone() {
+            if !removing_keys.contains(&proof_query.key()) {
+                updated_queries.push(proof_query.clone());
+            }
+        }
+        if proof.queries.len() - updated_queries.len() != removing_keys.len() {
+            return Err(SMTError::InvalidInput(String::from(
+                "All removed keys are not in queries",
+            )));
+        }
+
+        Ok(Proof {
+            sibling_hashes: temp_sibling_hashes,
+            queries: updated_queries,
+        })
+    }
+
     pub fn prepare_queries_with_proof_map(
         proof: &Proof,
     ) -> Result<HashMap<Vec<bool>, QueryProofWithProof>, SMTError> {
@@ -1591,7 +1647,7 @@ impl SparseMerkleTree {
         proof: &Proof,
         removing_keys: &[&[u8]],
     ) -> Result<Proof, SMTError> {
-        let filter_map = Self::prepare_queries_with_proof_map(&proof)?;
+        let filter_map = Self::prepare_queries_with_proof_map(proof)?;
         let mut filtered_proof = filter_map
             .values()
             .cloned()
@@ -1603,13 +1659,10 @@ impl SparseMerkleTree {
         let mut removing_sibling_hashes: NestedVec = vec![];
         let mut next_sibling_hash_index = 0;
         let mut adding_sibling_hash_index = 0;
-        let mut new_sibling_hashes = proof.sibling_hashes.clone();
 
         for query in sorted_queries.iter_mut() {
             if removing_keys.contains(&query.query_proof.key()) {
                 query.is_removed = true;
-            } else {
-                query.is_removed = false;
             }
         }
 
@@ -1617,52 +1670,13 @@ impl SparseMerkleTree {
             let query = &mut sorted_queries.pop_front().unwrap();
             if query.is_zero_height() {
                 // the top of the tree, so return the merkle root.
-                if next_sibling_hash_index != proof.sibling_hashes.len() {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "Not all sibling hashes were used",
-                    )));
-                }
-                for hash in adding_sibling_hashes {
-                    if new_sibling_hashes.contains(&hash.1) {
-                        return Err(SMTError::InvalidInput(String::from(
-                            "Duplicate sibling hashes",
-                        )));
-                    }
-                    if hash.0 > new_sibling_hashes.len() {
-                        new_sibling_hashes.push(hash.1.clone());
-                    } else {
-                        new_sibling_hashes.insert(hash.0, hash.1.clone());
-                    }
-                }
-
-                let mut temp_sibling_hashes: NestedVec = vec![];
-                for hash in new_sibling_hashes.clone() {
-                    if !removing_sibling_hashes.contains(&hash) {
-                        temp_sibling_hashes.push(hash.clone());
-                    }
-                }
-                if new_sibling_hashes.len() - temp_sibling_hashes.len() != removing_sibling_hashes.len() {
-                    return Err(SMTError::InvalidInput(String::from(
-                                "All removed sibling are not in sibling hashes",
-                    )));
-                }
-
-                let mut updated_queries: Vec<QueryProof> = vec![];
-                for proof_query in proof.queries.clone() {
-                    if !removing_keys.contains(&proof_query.key()) {
-                        updated_queries.push(proof_query.clone());
-                    }
-                }
-                if proof.queries.len() - updated_queries.len() != removing_keys.len() {
-                    return Err(SMTError::InvalidInput(String::from(
-                                "All removed keys are not in queries",
-                    )));
-                }
-
-                return Ok(Proof {
-                    sibling_hashes: temp_sibling_hashes,
-                    queries: updated_queries,
-                });
+                return Self::prepare_result_proof(
+                    proof,
+                    adding_sibling_hashes,
+                    removing_sibling_hashes,
+                    removing_keys,
+                    next_sibling_hash_index,
+                );
             }
 
             let mut sibling_hash: Vec<u8> = vec![];
