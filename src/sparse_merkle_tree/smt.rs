@@ -11,7 +11,6 @@ use crate::database::traits::Actions;
 use crate::types::{
     ArcMutex, Cache, Hash256, HashKind, HashWithKind, Height, KVPair, KeyLength, NestedVec,
     NestedVecOfSlices, SharedKVPair, SharedNestedVec, SharedVec, StructurePosition, SubtreeHeight,
-    VecOption,
 };
 use crate::utils;
 
@@ -1386,6 +1385,35 @@ impl SparseMerkleTree {
         self.calculate_query_proof_from_result(db, &data)
     }
 
+    fn is_bitmap_valid(
+        sibling: &QueryProofWithProof,
+        query: &QueryProofWithProof,
+    ) -> Result<bool, SMTError> {
+        let is_sibling_empty = utils::is_empty_hash(&sibling.hash);
+        if (is_sibling_empty && query.binary_bitmap[0])
+            || (!is_sibling_empty && !query.binary_bitmap[0])
+        {
+            return Err(SMTError::InvalidInput(String::from(
+                "bitmap is not consistent with the nodes type",
+            )));
+        }
+        let is_query_empty = utils::is_empty_hash(&query.hash);
+        if (is_query_empty && sibling.binary_bitmap[0])
+            || (!is_query_empty && !sibling.binary_bitmap[0])
+        {
+            return Err(SMTError::InvalidInput(String::from(
+                "bitmap is not consistent with the nodes type",
+            )));
+        }
+        if !utils::array_equal_bool(&query.binary_bitmap[1..], &sibling.binary_bitmap[1..]) {
+            return Err(SMTError::InvalidInput(String::from(
+                "nodes do not share common path",
+            )));
+        }
+
+        Ok(true)
+    }
+
     fn prepare_result_proof(
         proof: &Proof,
         adding_sibling_hashes: BTreeMap<usize, Vec<u8>>,
@@ -1490,54 +1518,33 @@ impl SparseMerkleTree {
                 return Ok(query.hash.clone());
             }
 
-            let mut sibling_hash: VecOption = None;
-
+            let mut sibling_hash: Vec<u8> = vec![];
             if !sorted_queries.is_empty() && query.is_sibling_of(&sorted_queries[0]) {
                 let sibling = sorted_queries.pop_front().unwrap();
                 // We are merging two branches.
                 // Check that the bitmap at the merging point is consistent with the nodes type.
-                let is_sibling_empty = utils::is_empty_hash(&sibling.hash);
-                if (is_sibling_empty && query.binary_bitmap[0])
-                    || (!is_sibling_empty && !query.binary_bitmap[0])
-                {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "bitmap is not consistent with the nodes type",
-                    )));
+                if Self::is_bitmap_valid(&sibling, query)? {
+                    sibling_hash = sibling.hash;
                 }
-                let is_query_empty = utils::is_empty_hash(&query.hash);
-                if (is_query_empty && sibling.binary_bitmap[0])
-                    || (!is_query_empty && !sibling.binary_bitmap[0])
-                {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "bitmap is not consistent with the nodes type",
-                    )));
-                }
-                if !utils::array_equal_bool(&query.binary_bitmap[1..], &sibling.binary_bitmap[1..])
-                {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "nodes do not share common path",
-                    )));
-                }
-                sibling_hash = Some(sibling.hash);
             } else if !query.binary_bitmap[0] {
-                sibling_hash = Some(EMPTY_HASH.to_vec());
+                sibling_hash = EMPTY_HASH.to_vec();
             } else if query.binary_bitmap[0] {
                 if sibling_hashes.len() == next_sibling_hash {
                     return Err(SMTError::InvalidInput(String::from(
                         "no more sibling hashes available",
                     )));
                 }
-                sibling_hash = Some(sibling_hashes[next_sibling_hash].clone());
+                sibling_hash = sibling_hashes[next_sibling_hash].clone();
                 next_sibling_hash += 1;
             }
             let d = query.binary_key()[query.height() - 1];
             let mut next_query = query.clone();
             if !d {
-                next_query.hash = [query.hash.as_slice(), sibling_hash.unwrap().as_slice()]
+                next_query.hash = [query.hash.as_slice(), sibling_hash.as_slice()]
                     .concat()
                     .hash_with_kind(HashKind::Branch);
             } else {
-                next_query.hash = [sibling_hash.unwrap().as_slice(), query.hash.as_slice()]
+                next_query.hash = [sibling_hash.as_slice(), query.hash.as_slice()]
                     .concat()
                     .hash_with_kind(HashKind::Branch);
             }
@@ -1686,27 +1693,8 @@ impl SparseMerkleTree {
                 let sibling = sorted_queries.pop_front().unwrap();
                 // We are merging two branches.
                 // Check that the bitmap at the merging point is consistent with the nodes type.
-                let is_sibling_empty = utils::is_empty_hash(&sibling.hash);
-                if (is_sibling_empty && query.binary_bitmap[0])
-                    || (!is_sibling_empty && !query.binary_bitmap[0])
-                {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "Bitmap is not consistent with the nodes type",
-                    )));
-                }
-                let is_query_empty = utils::is_empty_hash(&query.hash);
-                if (is_query_empty && sibling.binary_bitmap[0])
-                    || (!is_query_empty && !sibling.binary_bitmap[0])
-                {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "Bitmap is not consistent with the nodes type",
-                    )));
-                }
-                if !utils::array_equal_bool(&query.binary_bitmap[1..], &sibling.binary_bitmap[1..])
-                {
-                    return Err(SMTError::InvalidInput(String::from(
-                        "Nodes do not share common path",
-                    )));
+                if Self::is_bitmap_valid(&sibling, query)? {
+                    sibling_hash = sibling.hash.clone();
                 }
                 // if the branch is being removed, we need to add the sibling hash to the list of hashes to be added.
                 if !query.is_removed && sibling.is_removed {
@@ -1717,8 +1705,6 @@ impl SparseMerkleTree {
                     adding_sibling_hash_index += 1;
                     query.is_removed = false;
                 }
-
-                sibling_hash = sibling.hash;
             } else if !query.binary_bitmap[0] {
                 // #2. sibling hash is a default empty node.
                 sibling_hash = EMPTY_HASH.to_vec();
