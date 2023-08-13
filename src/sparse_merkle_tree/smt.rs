@@ -1458,8 +1458,8 @@ impl SparseMerkleTree {
         }
 
         let mut temp_sibling_hashes: NestedVec = vec![];
-        for hash in new_sibling_hashes.clone() {
-            if !removing_sibling_hashes.contains(&hash) {
+        for hash in new_sibling_hashes.iter() {
+            if !removing_sibling_hashes.contains(hash) {
                 temp_sibling_hashes.push(hash.clone());
             }
         }
@@ -1470,7 +1470,7 @@ impl SparseMerkleTree {
         }
 
         let mut updated_queries: Vec<QueryProof> = vec![];
-        for proof_query in proof.queries.clone() {
+        for proof_query in proof.queries.iter() {
             if !removing_keys.contains(&proof_query.key()) {
                 updated_queries.push(proof_query.clone());
             }
