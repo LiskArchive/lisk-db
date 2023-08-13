@@ -1385,6 +1385,23 @@ impl SparseMerkleTree {
         self.calculate_query_proof_from_result(db, &data)
     }
 
+    fn next_query(query: &QueryProofWithProof, sibling_hash: &[u8]) -> QueryProofWithProof {
+        let d = query.binary_key()[query.height() - 1];
+        let mut next_query = query.clone();
+        if !d {
+            next_query.hash = [query.hash.as_slice(), sibling_hash]
+                .concat()
+                .hash_with_kind(HashKind::Branch);
+        } else {
+            next_query.hash = [sibling_hash, query.hash.as_slice()]
+                .concat()
+                .hash_with_kind(HashKind::Branch);
+        }
+        next_query.slice_bitmap();
+
+        next_query
+    }
+
     fn is_bitmap_valid(
         sibling: &QueryProofWithProof,
         query: &QueryProofWithProof,
@@ -1537,19 +1554,7 @@ impl SparseMerkleTree {
                 sibling_hash = sibling_hashes[next_sibling_hash].clone();
                 next_sibling_hash += 1;
             }
-            let d = query.binary_key()[query.height() - 1];
-            let mut next_query = query.clone();
-            if !d {
-                next_query.hash = [query.hash.as_slice(), sibling_hash.as_slice()]
-                    .concat()
-                    .hash_with_kind(HashKind::Branch);
-            } else {
-                next_query.hash = [sibling_hash.as_slice(), query.hash.as_slice()]
-                    .concat()
-                    .hash_with_kind(HashKind::Branch);
-            }
-            next_query.slice_bitmap();
-            insert_and_filter_queries(next_query, &mut sorted_queries);
+            insert_and_filter_queries(Self::next_query(query, &sibling_hash), &mut sorted_queries);
         }
 
         Ok(vec![])
@@ -1722,20 +1727,7 @@ impl SparseMerkleTree {
                     removing_sibling_hashes.push(sibling_hash.clone());
                 }
             }
-
-            let d = query.binary_key()[query.height() - 1];
-            let mut next_query = query.clone();
-            if !d {
-                next_query.hash = [query.hash.as_slice(), sibling_hash.as_slice()]
-                    .concat()
-                    .hash_with_kind(HashKind::Branch);
-            } else {
-                next_query.hash = [sibling_hash.as_slice(), query.hash.as_slice()]
-                    .concat()
-                    .hash_with_kind(HashKind::Branch);
-            }
-            next_query.slice_bitmap();
-            insert_and_filter_queries(next_query, &mut sorted_queries);
+            insert_and_filter_queries(Self::next_query(query, &sibling_hash), &mut sorted_queries);
         }
 
         Err(SMTError::InvalidInput(String::from("Empty")))
