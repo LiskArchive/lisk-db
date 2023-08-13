@@ -1,6 +1,6 @@
 /// SparseMerkleTree is optimized sparse merkle tree implementation based on [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md).
 use std::cmp;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
@@ -1433,8 +1433,8 @@ impl SparseMerkleTree {
 
     fn prepare_result_proof(
         proof: &Proof,
-        adding_sibling_hashes: BTreeMap<usize, Vec<u8>>,
-        removing_sibling_hashes: NestedVec,
+        adding_sibling_hashes: &[(usize, Vec<u8>)],
+        removing_sibling_hashes: &NestedVec,
         removing_keys: &[&[u8]],
         next_sibling_hash_index: usize,
     ) -> Result<Proof, SMTError> {
@@ -1667,7 +1667,7 @@ impl SparseMerkleTree {
         filtered_proof.sort_descending();
 
         let mut sorted_queries = VecDeque::from(filtered_proof.to_vec());
-        let mut adding_sibling_hashes: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+        let mut adding_sibling_hashes: Vec<(usize, Vec<u8>)> = vec![];
         let mut removing_sibling_hashes: NestedVec = vec![];
         let mut next_sibling_hash_index = 0;
         let mut adding_sibling_hash_index = 0;
@@ -1684,8 +1684,8 @@ impl SparseMerkleTree {
                 // the top of the tree, so return the merkle root.
                 return Self::prepare_result_proof(
                     proof,
-                    adding_sibling_hashes,
-                    removing_sibling_hashes,
+                    &adding_sibling_hashes,
+                    &removing_sibling_hashes,
                     removing_keys,
                     next_sibling_hash_index,
                 );
@@ -1703,10 +1703,10 @@ impl SparseMerkleTree {
                 }
                 // if the branch is being removed, we need to add the sibling hash to the list of hashes to be added.
                 if !query.is_removed && sibling.is_removed {
-                    adding_sibling_hashes.insert(adding_sibling_hash_index, sibling.hash.clone());
+                    adding_sibling_hashes.push((adding_sibling_hash_index, sibling.hash.clone()));
                     adding_sibling_hash_index += 1;
                 } else if query.is_removed && !sibling.is_removed {
-                    adding_sibling_hashes.insert(adding_sibling_hash_index, query.hash.clone());
+                    adding_sibling_hashes.push((adding_sibling_hash_index, query.hash.clone()));
                     adding_sibling_hash_index += 1;
                     query.is_removed = false;
                 }
