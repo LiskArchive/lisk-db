@@ -1477,7 +1477,7 @@ impl SparseMerkleTree {
         }
         if proof.queries.len() - updated_queries.len() != removed_keys.len() {
             return Err(SMTError::InvalidInput(String::from(
-                "Keys in the queries are not included all removed keys",
+                "Keys in the queries are not included in all removed keys",
             )));
         }
 
@@ -1667,10 +1667,10 @@ impl SparseMerkleTree {
         filtered_proof.sort_descending();
 
         let mut sorted_queries = VecDeque::from(filtered_proof.to_vec());
-        let mut adding_sibling_hashes: Vec<(usize, Vec<u8>)> = vec![];
-        let mut removing_sibling_hashes: NestedVec = vec![];
+        let mut added_sibling_hashes: Vec<(usize, Vec<u8>)> = vec![];
+        let mut removed_sibling_hashes: NestedVec = vec![];
         let mut next_sibling_hash_index = 0;
-        let mut adding_sibling_hash_index = 0;
+        let mut added_sibling_hash_index = 0;
 
         for query in sorted_queries.iter_mut() {
             if removed_keys.contains(&query.query_proof.key()) {
@@ -1684,8 +1684,8 @@ impl SparseMerkleTree {
                 // the top of the tree, so return the merkle root.
                 return Self::prepare_result_proof(
                     proof,
-                    &adding_sibling_hashes,
-                    &removing_sibling_hashes,
+                    &added_sibling_hashes,
+                    &removed_sibling_hashes,
                     removed_keys,
                     next_sibling_hash_index,
                 );
@@ -1703,11 +1703,11 @@ impl SparseMerkleTree {
                 }
                 // if the branch is being removed, we need to add the sibling hash to the list of hashes to be added.
                 if !query.is_removed && sibling.is_removed {
-                    adding_sibling_hashes.push((adding_sibling_hash_index, sibling.hash.clone()));
-                    adding_sibling_hash_index += 1;
+                    added_sibling_hashes.push((added_sibling_hash_index, sibling.hash.clone()));
+                    added_sibling_hash_index += 1;
                 } else if query.is_removed && !sibling.is_removed {
-                    adding_sibling_hashes.push((adding_sibling_hash_index, query.hash.clone()));
-                    adding_sibling_hash_index += 1;
+                    added_sibling_hashes.push((added_sibling_hash_index, query.hash.clone()));
+                    added_sibling_hash_index += 1;
                     query.is_removed = false;
                 }
             } else if !query.binary_bitmap[0] {
@@ -1722,9 +1722,9 @@ impl SparseMerkleTree {
                 }
                 sibling_hash = proof.sibling_hashes[next_sibling_hash_index].clone();
                 next_sibling_hash_index += 1;
-                adding_sibling_hash_index += 1;
+                added_sibling_hash_index += 1;
                 if query.is_removed {
-                    removing_sibling_hashes.push(sibling_hash.clone());
+                    removed_sibling_hashes.push(sibling_hash.clone());
                 }
             }
             insert_and_filter_queries(Self::next_query(query, &sibling_hash), &mut sorted_queries);

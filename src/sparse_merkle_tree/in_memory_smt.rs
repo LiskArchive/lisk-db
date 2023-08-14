@@ -16,7 +16,7 @@ use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
 type SharedInMemorySMT = JsArcMutex<InMemorySMT>;
 type DatabaseParameters = (ArcMutex<InMemorySMT>, Vec<u8>, Root<JsFunction>);
 type VerifyParameters = (Vec<u8>, NestedVec, Proof, KeyLength, Root<JsFunction>);
-type RemovingParameters = (Proof, NestedVec, Root<JsFunction>);
+type RemovedParameters = (Proof, NestedVec, Root<JsFunction>);
 
 struct JsFunctionContext<'a> {
     context: FunctionContext<'a>,
@@ -230,20 +230,20 @@ impl JsFunctionContext<'_> {
         Ok(proof)
     }
 
-    fn get_removing_keys_parameters(&mut self) -> NeonResult<RemovingParameters> {
+    fn get_removed_keys_parameters(&mut self) -> NeonResult<RemovedParameters> {
         let proof = self.get_proof(0)?;
 
-        let removing_keys = self
+        let removed_keys = self
             .context
             .argument::<JsArray>(1)?
             .to_vec(&mut self.context)?;
-        let mut parsed_removing_keys = NestedVec::new();
-        for key in removing_keys.iter() {
+        let mut parsed_removed_keys = NestedVec::new();
+        for key in removed_keys.iter() {
             let key = key
                 .downcast_or_throw::<JsTypedArray<u8>, _>(&mut self.context)?
                 .as_slice(&self.context)
                 .to_vec();
-            parsed_removing_keys.push(key);
+            parsed_removed_keys.push(key);
         }
 
         let callback = self
@@ -251,7 +251,7 @@ impl JsFunctionContext<'_> {
             .argument::<JsFunction>(2)?
             .root(&mut self.context);
 
-        Ok((proof, parsed_removing_keys, callback))
+        Ok((proof, parsed_removed_keys, callback))
     }
 
     fn get_verify_parameters(&mut self) -> NeonResult<VerifyParameters> {
@@ -396,12 +396,12 @@ impl InMemorySMT {
     pub fn js_remove_keys_from_proof(ctx: FunctionContext) -> JsResult<JsUndefined> {
         let mut js_context = JsFunctionContext { context: ctx };
 
-        let (proof, parsed_removing_keys, callback) = js_context.get_removing_keys_parameters()?;
+        let (proof, parsed_removed_keys, callback) = js_context.get_removed_keys_parameters()?;
         let channel = js_context.context.channel();
         thread::spawn(move || {
             let result = SparseMerkleTree::remove_keys_from_proof(
                 &proof,
-                &parsed_removing_keys
+                &parsed_removed_keys
                     .iter()
                     .map(|x| x.as_slice())
                     .collect::<Vec<_>>(),
