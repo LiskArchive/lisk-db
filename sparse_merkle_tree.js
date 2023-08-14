@@ -110,9 +110,9 @@ class SparseMerkleTree {
         });
     }
 
-    async removeKeysFromProof(proof, removingKeys) {
+    async removeKeysFromProof(proof, removedKey) {
         return new Promise((resolve, reject) => {
-            in_memory_smt_remove_keys_from_proof.call(null, proof, removingKeys, (err, result) => {
+            in_memory_smt_remove_keys_from_proof.call(null, proof, removedKey, (err, result) => {
                 if (err) {
                     reject(err);
                     return;

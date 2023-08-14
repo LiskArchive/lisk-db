@@ -1433,56 +1433,56 @@ impl SparseMerkleTree {
 
     fn prepare_result_proof(
         proof: &Proof,
-        adding_sibling_hashes: &[(usize, Vec<u8>)],
-        removing_sibling_hashes: &NestedVec,
-        removing_keys: &[&[u8]],
+        added_sibling_hashes: &[(usize, Vec<u8>)],
+        removed_sibling_hashes: &NestedVec,
+        removed_keys: &[&[u8]],
         next_sibling_hash_index: usize,
     ) -> Result<Proof, SMTError> {
-        let mut new_sibling_hashes = proof.sibling_hashes.clone();
+        let mut sibling_hashes = proof.sibling_hashes.clone();
         if next_sibling_hash_index != proof.sibling_hashes.len() {
             return Err(SMTError::InvalidInput(String::from(
                 "Not all sibling hashes were used",
             )));
         }
-        for hash in adding_sibling_hashes {
-            if new_sibling_hashes.contains(&hash.1) {
+        for hash in added_sibling_hashes {
+            if sibling_hashes.contains(&hash.1) {
                 return Err(SMTError::InvalidInput(String::from(
                     "Duplicate sibling hashes",
                 )));
             }
-            if hash.0 > new_sibling_hashes.len() {
-                new_sibling_hashes.push(hash.1.clone());
+            if hash.0 > sibling_hashes.len() {
+                sibling_hashes.push(hash.1.clone());
             } else {
-                new_sibling_hashes.insert(hash.0, hash.1.clone());
+                sibling_hashes.insert(hash.0, hash.1.clone());
             }
         }
 
-        let mut temp_sibling_hashes: NestedVec = vec![];
-        for hash in new_sibling_hashes.iter() {
-            if !removing_sibling_hashes.contains(hash) {
-                temp_sibling_hashes.push(hash.clone());
+        let mut updated_sibling_hashes: NestedVec = vec![];
+        for hash in sibling_hashes.iter() {
+            if !removed_sibling_hashes.contains(hash) {
+                updated_sibling_hashes.push(hash.clone());
             }
         }
-        if new_sibling_hashes.len() - temp_sibling_hashes.len() != removing_sibling_hashes.len() {
+        if sibling_hashes.len() - updated_sibling_hashes.len() != removed_sibling_hashes.len() {
             return Err(SMTError::InvalidInput(String::from(
-                "All removed sibling are not in sibling hashes",
+                "Can not find all removed hashes in the siblings",
             )));
         }
 
         let mut updated_queries: Vec<QueryProof> = vec![];
         for proof_query in proof.queries.iter() {
-            if !removing_keys.contains(&proof_query.key()) {
+            if !removed_keys.contains(&proof_query.key()) {
                 updated_queries.push(proof_query.clone());
             }
         }
-        if proof.queries.len() - updated_queries.len() != removing_keys.len() {
+        if proof.queries.len() - updated_queries.len() != removed_keys.len() {
             return Err(SMTError::InvalidInput(String::from(
-                "All removed keys are not in queries",
+                "Keys in the queries are not included all removed keys",
             )));
         }
 
         Ok(Proof {
-            sibling_hashes: temp_sibling_hashes,
+            sibling_hashes: updated_sibling_hashes,
             queries: updated_queries,
         })
     }
@@ -1657,7 +1657,7 @@ impl SparseMerkleTree {
     // remove_keys_from_proof removes keys from proof and returns a new proof without them.
     pub fn remove_keys_from_proof(
         proof: &Proof,
-        removing_keys: &[&[u8]],
+        removed_keys: &[&[u8]],
     ) -> Result<Proof, SMTError> {
         let filter_map = Self::prepare_queries_with_proof_map(proof)?;
         let mut filtered_proof = filter_map
@@ -1673,7 +1673,7 @@ impl SparseMerkleTree {
         let mut adding_sibling_hash_index = 0;
 
         for query in sorted_queries.iter_mut() {
-            if removing_keys.contains(&query.query_proof.key()) {
+            if removed_keys.contains(&query.query_proof.key()) {
                 query.is_removed = true;
             }
         }
@@ -1686,7 +1686,7 @@ impl SparseMerkleTree {
                     proof,
                     &adding_sibling_hashes,
                     &removing_sibling_hashes,
-                    removing_keys,
+                    removed_keys,
                     next_sibling_hash_index,
                 );
             }

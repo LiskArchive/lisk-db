@@ -245,6 +245,7 @@ impl JsFunctionContext<'_> {
                 .to_vec();
             parsed_removing_keys.push(key);
         }
+
         let callback = self
             .context
             .argument::<JsFunction>(2)?
