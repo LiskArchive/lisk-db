@@ -120,6 +120,15 @@ pub fn array_equal_bool(a: &[bool], b: &[bool]) -> bool {
     true
 }
 
+pub fn have_all_arrays_same_length<T>(list: &[&[T]], length: usize) -> bool {
+    for v in list {
+        if v.len() != length {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn binary_search<T>(list: &[T], callback: impl Fn(&T) -> bool) -> i32 {
     let mut lo = -1;
     let mut hi = list.len() as i32;
@@ -364,6 +373,28 @@ mod tests {
         assert!(!array_equal_bool(&[true, true], &[true, true, true]));
         assert!(!array_equal_bool(&[false, false, false], &[false, false]));
         assert!(!array_equal_bool(&[false, false], &[false, false, false]));
+    }
+
+    #[test]
+    fn test_have_all_arrays_same_length() {
+        // arrays have the same length
+        assert!(have_all_arrays_same_length(&[&[1, 2, 3], &[1, 2, 3]], 3));
+        assert!(have_all_arrays_same_length(&[&[1, 2], &[3, 4]], 2));
+        assert!(have_all_arrays_same_length(
+            &[&[1, 2, 3], &[1, 2, 3], &[1, 2, 3]],
+            3
+        ));
+        assert!(have_all_arrays_same_length(&[&[1], &[2], &[3], &[4]], 1));
+
+        // arrays have different length
+        assert!(!have_all_arrays_same_length(&[&[1, 2, 3], &[1, 2, 3]], 2));
+        assert!(!have_all_arrays_same_length(&[&[1, 2], &[3, 4]], 3));
+        assert!(!have_all_arrays_same_length(
+            &[&[1, 2, 3], &[1, 2, 3], &[1, 2, 3]],
+            2
+        ));
+        assert!(!have_all_arrays_same_length(&[&[1, 2, 3], &[4, 5]], 2));
+        assert!(!have_all_arrays_same_length(&[&[1, 2, 3], &[4, 5]], 3));
     }
 
     #[test]
