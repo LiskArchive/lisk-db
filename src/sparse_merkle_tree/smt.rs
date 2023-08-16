@@ -842,43 +842,6 @@ impl SparseMerkleTree {
         Ok((query_with_proofs, ancestor_hashes))
     }
 
-    fn bitmap_to_binary_path(
-        query: &QueryProof,
-        binary_bitmap: &Vec<bool>,
-    ) -> Result<Vec<bool>, SMTError> {
-        let key_bools = utils::bytes_to_bools(query.key());
-        let binary_path = if binary_bitmap.len() > key_bools.len() {
-            return Err(SMTError::InvalidBitmapLen);
-        } else {
-            key_bools[..binary_bitmap.len()].to_vec()
-        };
-
-        Ok(binary_path)
-    }
-
-    fn verify_duplicate_query(
-        query: &QueryProof,
-        duplicate_query: &QueryProof,
-        binary_path: &[bool],
-        duplicate_path: &[bool],
-    ) -> bool {
-        if !utils::is_bytes_equal(&duplicate_query.bitmap, &query.bitmap)
-            || !utils::is_bytes_equal(duplicate_query.value(), query.value())
-        {
-            return false;
-        }
-
-        if utils::is_empty_hash(query.value()) {
-            if !utils::is_bools_equal(binary_path, duplicate_path) {
-                return false;
-            }
-        } else if !utils::is_bytes_equal(query.key(), duplicate_query.key()) {
-            return false;
-        }
-
-        true
-    }
-
     /// verification_and_prepare_with_proof_map checks all verifications of query_keys based on the verify function in the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-construction).
     /// Also it returns a tuple, the first parameter is the result of the query_keys verification and the second one is a map
     fn verification_and_prepare_with_proof_map(
@@ -900,19 +863,18 @@ impl SparseMerkleTree {
             if key.len() != key_length.into() {
                 return Ok((false, queries_with_proof));
             }
+
             let query = &proof.queries[i];
-            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            let binary_path = Self::bitmap_to_binary_path(query, &binary_bitmap)?;
             if let Some(duplicate_query) = queries.get(query.key()) {
-                let duplicate_binary_bitmap =
-                    utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-                let duplicate_path = Self::bitmap_to_binary_path(query, &duplicate_binary_bitmap)?;
-                if !Self::verify_duplicate_query(
-                    query,
-                    duplicate_query,
-                    &binary_path,
-                    &duplicate_path,
-                ) {
+                if !utils::is_bytes_equal(&duplicate_query.bitmap, &query.bitmap)
+                    || !utils::is_bytes_equal(duplicate_query.value(), query.value())
+                {
+                    return Ok((false, queries_with_proof));
+                }
+
+                if !utils::is_empty_hash(query.value())
+                    && !utils::is_bytes_equal(query.key(), duplicate_query.key())
+                {
                     return Ok((false, queries_with_proof));
                 }
             }
@@ -920,14 +882,22 @@ impl SparseMerkleTree {
             if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
                 return Ok((false, queries_with_proof));
             }
+
+            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+            let query_key_binary = utils::bytes_to_bools(query.key());
             if !utils::is_bytes_equal(key, query.key()) {
                 let key_binary = utils::bytes_to_bools(key);
-                let query_key_binary = utils::bytes_to_bools(query.key());
                 let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
                 if binary_bitmap.len() > common_prefix.len() {
                     return Ok((false, queries_with_proof));
                 }
             }
+
+            let binary_path = if binary_bitmap.len() > query_key_binary.len() {
+                return Err(SMTError::InvalidBitmapLen);
+            } else {
+                query_key_binary[..binary_bitmap.len()].to_vec()
+            };
             queries_with_proof.insert(
                 binary_path,
                 QueryProofWithProof::new_with_pair(
