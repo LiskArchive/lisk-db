@@ -1483,6 +1483,12 @@ impl SparseMerkleTree {
             return Ok(Arc::clone(&self.root));
         }
         let (update_keys, update_values) = data.entries();
+        // check if all keys have the same length
+        if !utils::have_all_arrays_same_length(&update_keys, self.key_length.into()) {
+            return Err(SMTError::InvalidInput(String::from(
+                "all keys must have the same length",
+            )));
+        }
         // get the root subtree
         let root = self.get_subtree(db, &self.root.lock().unwrap())?;
         // update using the key-value pairs starting from the root (height: 0).
@@ -1606,6 +1612,52 @@ mod tests {
             hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_key_length_invalid_size() {
+        let test_data = vec![
+            (
+                vec![
+                    "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                    "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa0", // invalid key size
+                ],
+                vec![
+                    "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                    "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                ],
+            ),
+            (
+                vec![
+                    "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                    "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa07b3c", // invalid key size
+                ],
+                vec![
+                    "9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70",
+                    "1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a",
+                ],
+            ),
+        ];
+
+        for (keys, values) in test_data {
+            let mut tree = SparseMerkleTree::new(&[], KeyLength(32), Default::default());
+            let mut data = UpdateData { data: Cache::new() };
+            for idx in 0..keys.len() {
+                data.data.insert(
+                    hex::decode(keys[idx]).unwrap(),
+                    hex::decode(values[idx]).unwrap(),
+                );
+            }
+            let mut db = smt_db::InMemorySmtDB::default();
+            let result = tree.commit(&mut db, &data);
+
+            assert_eq!(
+                result.err(),
+                Some(SMTError::InvalidInput(String::from(
+                    "all keys must have the same length"
+                )))
+            );
+        }
     }
 
     #[test]
