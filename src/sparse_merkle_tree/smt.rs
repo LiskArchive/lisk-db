@@ -854,7 +854,7 @@ impl SparseMerkleTree {
         if query_keys.len() != proof.queries.len() {
             return Ok((false, queries_with_proof));
         }
-        let mut queries: HashMap<&[u8], QueryProof> = HashMap::new();
+        let mut queries: HashMap<Vec<bool>, QueryProof> = HashMap::new();
         for (i, key) in query_keys.iter().enumerate() {
             // Check if all the query keys have the same length.
             if proof.queries[i].key().len() != key_length.into() {
@@ -865,7 +865,14 @@ impl SparseMerkleTree {
             }
 
             let query = &proof.queries[i];
-            if let Some(duplicate_query) = queries.get(query.key()) {
+            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
+            let query_key_binary = utils::bytes_to_bools(query.key());
+            let binary_path = if binary_bitmap.len() > query_key_binary.len() {
+                return Err(SMTError::InvalidBitmapLen);
+            } else {
+                query_key_binary[..binary_bitmap.len()].to_vec()
+            };
+            if let Some(duplicate_query) = queries.get(&binary_path) {
                 if !utils::is_bytes_equal(&duplicate_query.bitmap, &query.bitmap)
                     || !utils::is_bytes_equal(duplicate_query.value(), query.value())
                 {
@@ -878,13 +885,11 @@ impl SparseMerkleTree {
                     return Ok((false, queries_with_proof));
                 }
             }
-            queries.insert(query.key(), query.clone());
+            queries.insert(binary_path.clone(), query.clone());
             if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
                 return Ok((false, queries_with_proof));
             }
 
-            let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
-            let query_key_binary = utils::bytes_to_bools(query.key());
             if !utils::is_bytes_equal(key, query.key()) {
                 let key_binary = utils::bytes_to_bools(key);
                 let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
@@ -893,11 +898,6 @@ impl SparseMerkleTree {
                 }
             }
 
-            let binary_path = if binary_bitmap.len() > query_key_binary.len() {
-                return Err(SMTError::InvalidBitmapLen);
-            } else {
-                query_key_binary[..binary_bitmap.len()].to_vec()
-            };
             queries_with_proof.insert(
                 binary_path,
                 QueryProofWithProof::new_with_pair(
