@@ -879,7 +879,7 @@ impl SparseMerkleTree {
                     return Ok((false, queries_with_proof));
                 }
 
-                if !utils::is_empty_hash(query.value())
+                if !query.value().is_empty()
                     && !utils::is_bytes_equal(query.key(), duplicate_query.key())
                 {
                     return Ok((false, queries_with_proof));
@@ -2163,9 +2163,9 @@ mod tests {
                 );
             }
 
-            for idx in 0..deleted_keys.len() {
+            for key in deleted_keys {
                 data.data
-                    .entry(hex::decode(deleted_keys[idx]).unwrap())
+                    .entry(hex::decode(key).unwrap())
                     .and_modify(|x| *x = hex::decode(vec![]).unwrap())
                     .or_insert(hex::decode(vec![]).unwrap());
             }
@@ -2192,7 +2192,7 @@ mod tests {
                     .collect::<Vec<String>>(),
                 sibling_hashes
             );
-            assert!(!SparseMerkleTree::verify(
+            assert!(SparseMerkleTree::verify(
                 &query_keys
                     .iter()
                     .map(|k| hex::decode(k).unwrap())
