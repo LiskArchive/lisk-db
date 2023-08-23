@@ -842,26 +842,28 @@ impl SparseMerkleTree {
         Ok((query_with_proofs, ancestor_hashes))
     }
 
-    /// verification_and_prepare_with_proof_map checks all verifications of query_keys based on the verify function in the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-construction).
+    /// verify_and_prepare_proof_map checks all verifications of query_keys based on the verify function in the [LIP-0039](https://github.com/LiskHQ/lips/blob/main/proposals/lip-0039.md#proof-construction).
     /// Also it returns a tuple, the first parameter is the result of the query_keys verification and the second one is a map
-    fn verification_and_prepare_with_proof_map(
+    fn verify_and_prepare_proof_map(
         proof: &Proof,
         query_keys: &[Vec<u8>],
         key_length: KeyLength,
-    ) -> Result<(bool, HashMap<Vec<bool>, QueryProofWithProof>), SMTError> {
+    ) -> Result<HashMap<Vec<bool>, QueryProofWithProof>, SMTError> {
         let mut queries_with_proof: HashMap<Vec<bool>, QueryProofWithProof> = HashMap::new();
 
         if query_keys.len() != proof.queries.len() {
-            return Ok((false, queries_with_proof));
+            return Err(SMTError::InvalidInput(String::from(
+                "Mismatched length of keys and the queries of the proof",
+            )));
         }
         let mut queries: HashMap<Vec<bool>, QueryProof> = HashMap::new();
         for (i, key) in query_keys.iter().enumerate() {
             // Check if all the query keys have the same length.
-            if proof.queries[i].key().len() != key_length.into() {
-                return Ok((false, queries_with_proof));
-            }
-            if key.len() != key_length.into() {
-                return Ok((false, queries_with_proof));
+            if proof.queries[i].key().len() != key_length.into() || key.len() != key_length.into()
+            {
+                return Err(SMTError::InvalidInput(String::from(
+                    "The length of the key is invalid",
+                )));
             }
 
             let query = &proof.queries[i];
@@ -876,25 +878,27 @@ impl SparseMerkleTree {
                 if !utils::is_bytes_equal(&duplicate_query.bitmap, &query.bitmap)
                     || !utils::is_bytes_equal(duplicate_query.value(), query.value())
                 {
-                    return Ok((false, queries_with_proof));
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Mismatched values or bitmap",
+                    )));
                 }
 
                 if !query.value().is_empty()
                     && !utils::is_bytes_equal(query.key(), duplicate_query.key())
                 {
-                    return Ok((false, queries_with_proof));
+                    return Err(SMTError::InvalidInput(String::from("Mismatched keys")));
                 }
             }
             queries.insert(binary_path.clone(), query.clone());
             if query.bitmap.len() > 0 && query.bitmap[0] == 0 {
-                return Ok((false, queries_with_proof));
+                return Err(SMTError::InvalidBitmapLen);
             }
 
             if !utils::is_bytes_equal(key, query.key()) {
                 let key_binary = utils::bytes_to_bools(key);
                 let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
                 if binary_bitmap.len() > common_prefix.len() {
-                    return Ok((false, queries_with_proof));
+                    return Err(SMTError::InvalidBitmapLen);
                 }
             }
 
@@ -909,7 +913,7 @@ impl SparseMerkleTree {
             );
         }
 
-        Ok((true, queries_with_proof))
+        Ok(queries_with_proof)
     }
 
     /// get_subtree returns sub_tree based on the node_hash provided.
@@ -1573,13 +1577,12 @@ impl SparseMerkleTree {
         root: &[u8],
         key_length: KeyLength,
     ) -> Result<bool, SMTError> {
-        let result = Self::verification_and_prepare_with_proof_map(proof, query_keys, key_length)?;
-        if !result.0 {
-            return Ok(false);
-        }
+        let result = match Self::verify_and_prepare_proof_map(proof, query_keys, key_length) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
 
         let mut filtered_proof = result
-            .1
             .values()
             .cloned()
             .collect::<Vec<QueryProofWithProof>>();
@@ -2884,13 +2887,12 @@ mod tests {
             1u8, 2, 3, 4, 1, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71, 3, 3, 71,
             3, 3, 71, 3, 3, 71, 3,
         ]);
-        let res = SparseMerkleTree::verify(
+        let res = SparseMerkleTree::verify_and_prepare_proof_map(
+            &proof,
             &keys
                 .iter()
                 .map(|k| hex::decode(k).unwrap())
                 .collect::<NestedVec>(),
-            &proof,
-            &root.lock().unwrap(),
             KeyLength(32),
         );
         assert_eq!(res.unwrap_err(), SMTError::InvalidBitmapLen);
