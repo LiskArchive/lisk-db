@@ -2873,12 +2873,13 @@ mod tests {
                     .collect::<Vec<String>>(),
                 sibling_hashes
             );
-            assert!(SparseMerkleTree::verify_and_prepare_proof_map(
-                &proof,
+            assert!(SparseMerkleTree::verify(
                 &query_keys,
-                KeyLength(32)
+                &proof,
+                &result.lock().unwrap(),
+                KeyLength(32),
             )
-            .is_ok());
+            .unwrap());
             let valid_query_proof = proof.queries[0].clone();
 
             // the length of the key is invalid, invalid the length of the key in query_keys
