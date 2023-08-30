@@ -2514,8 +2514,8 @@ mod tests {
     #[test]
     fn test_bitmap_len_with_verify() {
         let mut data = UpdateData::new_from(Cache::new());
-        let keys = vec!["bbbbc758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"];
-        let values = vec!["9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70"];
+        let keys = ["bbbbc758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"];
+        let values = ["9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70"];
 
         for i in 0..keys.len() {
             data.insert(SharedKVPair(

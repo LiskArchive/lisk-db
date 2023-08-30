@@ -32,7 +32,7 @@ pub struct Writer {
 
 fn write_varint(value: u32) -> Vec<u8> {
     let mut value = value;
-    let mut result = vec![0; MAX_VARINT_LEN];
+    let mut result = [0; MAX_VARINT_LEN];
     let mut index = 0;
     while value > 0x7f {
         result[index] = 0x80 | (value & 0x7f) as u8;
