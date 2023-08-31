@@ -1438,12 +1438,12 @@ impl SparseMerkleTree {
         removed_keys: &[&[u8]],
         next_sibling_hash_index: usize,
     ) -> Result<Proof, SMTError> {
-        let mut sibling_hashes = proof.sibling_hashes.clone();
         if next_sibling_hash_index != proof.sibling_hashes.len() {
             return Err(SMTError::InvalidInput(String::from(
                 "Not all sibling hashes were used",
             )));
         }
+        let mut sibling_hashes = proof.sibling_hashes.clone();
         for hash in added_sibling_hashes {
             if sibling_hashes.contains(&hash.1) {
                 return Err(SMTError::InvalidInput(String::from(

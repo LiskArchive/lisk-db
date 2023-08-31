@@ -16,7 +16,7 @@ use crate::types::{ArcMutex, Cache, KVPair, KeyLength, NestedVec};
 type SharedInMemorySMT = JsArcMutex<InMemorySMT>;
 type DatabaseParameters = (ArcMutex<InMemorySMT>, Vec<u8>, Root<JsFunction>);
 type VerifyParameters = (Vec<u8>, NestedVec, Proof, KeyLength, Root<JsFunction>);
-type RemovedParameters = (Proof, NestedVec, Root<JsFunction>);
+type RemovedKeysParameters = (Proof, NestedVec, Root<JsFunction>);
 
 struct JsFunctionContext<'a> {
     context: FunctionContext<'a>,
@@ -230,7 +230,7 @@ impl JsFunctionContext<'_> {
         Ok(proof)
     }
 
-    fn get_removed_keys_parameters(&mut self) -> NeonResult<RemovedParameters> {
+    fn get_removed_keys_parameters(&mut self) -> NeonResult<RemovedKeysParameters> {
         let proof = self.get_proof(0)?;
 
         let removed_keys = self
