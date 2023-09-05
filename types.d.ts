@@ -139,4 +139,5 @@ export class SparseMerkleTree {
     verifyInclusionProof(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
     verifyNonInclusionProof(root: Buffer, queries: Buffer[], proof: Proof): Promise<boolean>;
     calculateRoot(proof: Proof): Promise<Buffer>;
+    removeKeysFromProof(proof: Proof, removedKeys: Buffer[]): Promise<Proof>;
 }
