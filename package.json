@@ -1,6 +1,6 @@
 {
   "name": "@liskhq/lisk-db",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "A database access implementation according to the Lisk protocol",
   "author": "Lisk Foundation <admin@lisk.com>, lightcurve GmbH <admin@lightcurve.io>",
   "license": "Apache-2.0",
