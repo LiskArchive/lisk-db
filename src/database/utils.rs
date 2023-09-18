@@ -5,13 +5,11 @@ use neon::context::Context;
 use neon::handle::Handle;
 use neon::object::Object;
 use neon::result::NeonResult;
-use neon::types::{JsArray, JsBuffer, JsObject, JsValue};
+use neon::types::{JsArray, JsBuffer, JsObject};
 
 use crate::consts::Prefix;
 use crate::database::options;
-use crate::state_writer;
 use crate::types::{Cache, KVPair};
-use crate::utils::compare;
 
 pub fn pair_to_js_object<'a, C: Context<'a>>(
     ctx: &mut C,
@@ -24,18 +22,6 @@ pub fn pair_to_js_object<'a, C: Context<'a>>(
     obj.set(ctx, "value", value)?;
 
     Ok(obj)
-}
-
-pub fn parse_update_result<'a, C: Context<'a>>(
-    ctx: &mut C,
-    result: Result<(), state_writer::StateWriterError>,
-) -> NeonResult<Vec<Handle<'a, JsValue>>> {
-    if result.is_err() {
-        let err = result.err().unwrap().to_string();
-        Ok(vec![ctx.error(err)?.upcast()])
-    } else {
-        Ok(vec![ctx.null().upcast()])
-    }
 }
 
 pub fn cache_to_js_array<'a, C: Context<'a>>(
@@ -87,6 +73,17 @@ pub fn get_iteration_mode<'a>(
         };
         rocksdb::IteratorMode::From(opt, rocksdb::Direction::Forward)
     }
+}
+
+pub fn compare(a: &[u8], b: &[u8]) -> cmp::Ordering {
+    for (ai, bi) in a.iter().zip(b.iter()) {
+        match ai.cmp(bi) {
+            cmp::Ordering::Equal => continue,
+            ord => return ord,
+        }
+    }
+    /* if every single element was equal, compare length */
+    a.len().cmp(&b.len())
 }
 
 pub fn is_key_out_of_range(

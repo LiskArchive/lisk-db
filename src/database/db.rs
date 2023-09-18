@@ -1,81 +1,148 @@
-/// db is the interface for Database binding using rocksDB.
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use std::sync::{Arc};
 
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
 
-use crate::batch;
 use crate::database::options::IterationOption;
-use crate::database::traits::{JsNewWithBoxRef, Unwrap};
-use crate::database::types::JsBoxRef;
 use crate::database::utils;
 use crate::database::DB;
+use crate::database::types::{DbOptions, Kind};
+
+use super::db_base::{DBError};
+use super::traits::OptionsWithContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     message: String,
 }
 
-pub type SharedDatabase = JsBoxRef<Database>;
-pub type Database = DB;
-impl JsNewWithBoxRef for Database {}
-impl Database {
-    fn send_over_channel(
-        channel: &Channel,
-        callback: Root<JsFunction>,
-        result: Result<(), rocksdb::Error>,
-    ) {
-        channel.send(move |mut ctx| {
-            let callback = callback.into_inner(&mut ctx);
-            let this = ctx.undefined();
-            let args: Vec<Handle<JsValue>> = match result {
-                Ok(_) => vec![ctx.null().upcast()],
-                Err(err) => vec![ctx.error(&err)?.upcast()],
-            };
+#[derive(Clone)]
+struct CallbackWrapper(Arc<Root<JsFunction>>);
 
-            callback.call(&mut ctx, this, args)?;
+impl Finalize for CallbackWrapper {
+    fn finalize<'a, C: Context<'a>>(self, ctx: &mut C) {
+        println!("finalize callback wrapper");
+        self.0.finalize(ctx)
 
-            Ok(())
-        });
     }
+}
 
+impl CallbackWrapper {
+    fn into_inner<'a, C: Context<'a>>(self, ctx: &mut C) -> Handle<'a, JsFunction> {
+        // Ensure that if this is the last reference, the `Root` is dropped
+        match Arc::try_unwrap(self.0) {
+            Ok(v) => v.into_inner(ctx),
+            Err(v) => v.as_ref().to_inner(ctx),
+        }
+    }
+}
+
+struct StreamCallback {
+    channel: Arc<Channel>,
+    callback: CallbackWrapper,
+}
+
+impl Finalize for StreamCallback {
+    fn finalize<'a, C: Context<'a>>(self, ctx: &mut C) {
+        println!("finalize stream callback");
+        self.callback.finalize(ctx);
+    }
+}
+
+impl StreamCallback {
+    fn invoke<'a, C: Context<'a>>(self, ctx: &mut C, cdb: Arc<Mutex<rocksdb::DB>>, options: IterationOption) -> JsResult<'a, JsPromise>{
+        let promise = ctx.task(move || {
+            let locked = cdb.try_lock().map_err(|_| DBError::LockError)?;
+            let iter =
+                locked
+                    .iterator(utils::get_iteration_mode(&options, &mut vec![], false));
+                for (counter, key_val) in iter.enumerate() {
+                    if utils::is_key_out_of_range(
+                        &options,
+                        &(key_val.as_ref().unwrap().0),
+                        counter as i64,
+                        false,
+                    ) {
+                        break;
+                    }
+                    let callback_on_data = self.callback.clone();
+                    let result = key_val.unwrap();
+                    let _key = result.0.into_vec();
+                    let _value = result.1.into_vec();
+                    self.channel.send(move |mut ctx| {
+                        let obj = ctx.empty_object();
+                        let key_res =
+                            JsBuffer::external(&mut ctx, _key);
+                        let val_res = JsBuffer::external(&mut ctx, _value);
+                        obj.set(&mut ctx, "key", key_res)?;
+                        obj.set(&mut ctx, "value", val_res)?;
+                        let callback = callback_on_data.into_inner(&mut ctx);
+                        let this = ctx.undefined();
+                        let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];
+                        callback.call(&mut ctx, this, args)?;
+                        drop(obj);
+                        Ok(())
+                    });
+                }
+            Ok(())
+        }).promise(|mut tctx: TaskContext, _result: Result<(), DBError>| {
+            Ok(tctx.undefined())
+        });
+
+        Ok(promise)
+    }
+}
+
+pub type SharedDatabase = JsBox<DB>;
+
+pub type Database = DB;
+
+impl Database {
+    pub fn js_new(mut ctx: FunctionContext) -> JsResult<JsBox<DB>> {
+        let mut option = rocksdb::Options::default();
+        option.create_if_missing(true);
+        let options = ctx.argument_opt(1);
+
+        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
+        let opts = DbOptions::new_with_context(&mut ctx, options)?;
+
+        let db = if opts.is_readonly() {
+            rocksdb::DB::open_for_read_only(&option, path, false)
+        } else {
+            rocksdb::DB::open(&option, path)
+        }.unwrap();
+
+        let db = DB::new(db, Kind::Normal);
+
+        Ok(ctx.boxed(db))
+    }
     /// js_clear is handler for JS ffi.
     /// js "this" - DB.
     /// - @params(0) - Options for range. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
     /// - @params(1) - callback to return the result.
     /// - @callback(0) - Error.
-    pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+    pub fn js_clear(mut ctx: FunctionContext) -> JsResult<JsPromise> {
         let db = ctx
             .this()
             .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
-        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
 
-        let conn = db.arc_clone();
-        db.send(move |channel| {
+        let cloned = db.arc_clone();
+
+        let promise = ctx.task(move || {
+            let locked = cloned.lock().expect("msg");
             let mut batch = rocksdb::WriteBatch::default();
-            let conn_iter = conn.unwrap().iterator(rocksdb::IteratorMode::Start);
+            let conn_iter = locked.iterator(rocksdb::IteratorMode::Start);
             for key_val in conn_iter {
                 batch.delete(&(key_val.unwrap().0));
             }
-            let result = conn.unwrap().write(batch);
-            Database::send_over_channel(channel, callback, result);
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
+            locked.write(batch)?;
+            Ok(())
+        }).promise(|mut tctx: TaskContext, _result: Result<(), rocksdb::Error>| {
+            Ok(tctx.undefined())
+        });
 
-        Ok(ctx.undefined())
-    }
-
-    /// js_close is handler for JS ffi.
-    /// js "this" - DB.
-    pub fn js_close(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        ctx.this()
-            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?
-            .borrow_mut()
-            .close()
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
+        Ok(promise)
     }
 
     /// js_get is handler for JS ffi.
@@ -84,18 +151,25 @@ impl Database {
     /// - @params(1) - callback to return the fetched value.
     /// - @callback(0) - Error. If data is not found, it will call the callback with "No data" as a first args.
     /// - @callback(1) - [u8]. Value associated with the key.
-    pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+    pub fn js_get(mut ctx: FunctionContext) -> JsResult<JsPromise> {
         let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let db = ctx
             .this()
             .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
 
-        db.get_by_key(key, callback)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
+        let cdb = db.arc_clone();
+        let key = db.key(key);
 
-        Ok(ctx.undefined())
+        let promise = ctx.task(move || {
+            let locked = cdb.try_lock().map_err(|_| DBError::LockError)?;
+            let result = locked.get(&key).map_err(|e| DBError::RocksDBError(e.to_string()))?;
+            result.ok_or(DBError::NotFound)
+        }).promise(|mut tctx: TaskContext, result: Result<Vec<u8>, DBError>| {
+            let value = result.or_else(|e| tctx.throw_error(e.to_string()))?;
+            Ok(JsBuffer::external(&mut tctx, value))
+        });
+
+        Ok(promise)
     }
 
     /// js_exists is handler for JS ffi.
@@ -104,177 +178,35 @@ impl Database {
     /// - @params(1) - callback to return the fetched value.
     /// - @callback(0) - Error
     /// - @callback(1) - bool
-    pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        let db = ctx
-            .this()
-            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
+    // pub fn js_exists(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+    //     let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
+    //     let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
+    //     let db = ctx
+    //         .this()
+    //         .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
+    //     let db = db.borrow();
 
-        db.exists(key, callback)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
+    //     db.exists(key, callback)
+    //         .or_else(|err| ctx.throw_error(err.to_string()))?;
 
-        Ok(ctx.undefined())
-    }
-
-    /// js_set is handler for JS ffi.
-    /// js "this" - DB.
-    /// - @params(0) - key to set to the db.
-    /// - @params(1) - value to set to the db.
-    /// - @params(2) - callback to return the fetched value.
-    /// - @callback(0) - Error
-    pub fn js_set(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let value = ctx.argument::<JsTypedArray<u8>>(1)?.as_slice(&ctx).to_vec();
-        let callback = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
-        let db = ctx
-            .this()
-            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
-
-        let result = db.put(&key, &value);
-        db.send(move |channel| {
-            Database::send_over_channel(channel, callback, result);
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    /// js_del is handler for JS ffi.
-    /// js "this" - DB.
-    /// - @params(0) - key to delete from the db.
-    /// - @params(1) - callback to return the fetched value.
-    /// - @callback(0) - Error
-    pub fn js_del(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let key = ctx.argument::<JsTypedArray<u8>>(0)?.as_slice(&ctx).to_vec();
-        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        let db = ctx
-            .this()
-            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
-
-        let result = db.delete(&key);
-        db.send(move |channel| {
-            Database::send_over_channel(channel, callback, result);
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    /// js_write is handler for JS ffi.
-    /// js "this" - DB.
-    /// - @params(0) - Batch
-    /// - @params(1) - callback to return the fetched value.
-    /// - @callback(0) - Error
-    pub fn js_write(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let batch = ctx
-            .argument::<batch::SendableWriteBatch>(0)?
-            .downcast_or_throw::<batch::SendableWriteBatch, _>(&mut ctx)?;
-        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-
-        let db = ctx
-            .this()
-            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
-
-        let batch = Arc::clone(&batch.borrow());
-        let conn = db.arc_clone();
-        db.send(move |channel| {
-            let write_batch = rocksdb::WriteBatch::default();
-            let inner_batch = batch.lock().unwrap();
-            let mut write_batch = batch::WriteBatch { batch: write_batch };
-            inner_batch.batch.iterate(&mut write_batch);
-            let result = conn.unwrap().write(write_batch.batch);
-            Database::send_over_channel(channel, callback, result);
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
-
-    /// js_iterate is handler for JS ffi.
-    /// js "this" - DB.
-    /// - @params(0) - Options for iteration. {limit: u32, reverse: bool, gte: &[u8], lte: &[u8]}.
-    /// - @params(1) - Callback to be called on each data iteration.
-    /// - @params(2) - callback to be called when completing the iteration.
-    /// - @callback1(0) - Error.
-    /// - @callback1(1) - { key: &[u8], value: &[u8]}.
-    /// - @callback(0) - void.
-    pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
+    //     Ok(ctx.undefined())
+    // }
+    pub fn js_iterate(mut ctx: FunctionContext) -> JsResult<JsPromise> {
         let option_inputs = ctx.argument::<JsObject>(0)?;
+        let root_callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
         let options = IterationOption::new(&mut ctx, option_inputs);
-        let callback_on_data = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-        let callback_done = ctx.argument::<JsFunction>(2)?.root(&mut ctx);
 
         let db = ctx
             .this()
             .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
 
-        let callback_on_data = Arc::new(Mutex::new(callback_on_data));
-        let conn = db.arc_clone();
-        db.send(move |channel| {
-            let iter =
-                conn.unwrap()
-                    .iterator(utils::get_iteration_mode(&options, &mut vec![], false));
-            for (counter, key_val) in iter.enumerate() {
-                if utils::is_key_out_of_range(
-                    &options,
-                    &(key_val.as_ref().unwrap().0),
-                    counter as i64,
-                    false,
-                ) {
-                    break;
-                }
-                let callback_on_data = Arc::clone(&callback_on_data);
-                channel.send(move |mut ctx| {
-                    let obj = ctx.empty_object();
-                    let key_res =
-                        JsBuffer::external(&mut ctx, key_val.as_ref().unwrap().0.clone());
-                    let val_res = JsBuffer::external(&mut ctx, key_val.unwrap().1);
-                    obj.set(&mut ctx, "key", key_res)?;
-                    obj.set(&mut ctx, "value", val_res)?;
-                    let callback = callback_on_data.lock().unwrap().to_inner(&mut ctx);
-                    let this = ctx.undefined();
-                    let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];
-                    callback.call(&mut ctx, this, args)?;
-                    Ok(())
-                });
-            }
-            channel.send(move |mut ctx| {
-                let callback_done = callback_done.into_inner(&mut ctx);
-                let this = ctx.undefined();
-                let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast()];
-                callback_done.call(&mut ctx, this, args)?;
+        let cdb = db.arc_clone();
 
-                Ok(())
-            });
-        })
-        .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
+        let s_cb = StreamCallback{
+            callback: CallbackWrapper(Arc::new(root_callback)),
+            channel: Arc::new(ctx.channel()),
+        };
+        s_cb.invoke(&mut ctx, cdb, options)
     }
 
-    /// js_checkpoint is handler for JS ffi.
-    /// js "this" - DB.
-    /// - @params(0) - path to create the checkpoint.
-    /// - @params(1) - callback to return the result.
-    /// - @callback(0) - Error.
-    pub fn js_checkpoint(mut ctx: FunctionContext) -> JsResult<JsUndefined> {
-        let path = ctx.argument::<JsString>(0)?.value(&mut ctx);
-        let callback = ctx.argument::<JsFunction>(1)?.root(&mut ctx);
-
-        let db = ctx
-            .this()
-            .downcast_or_throw::<SharedDatabase, _>(&mut ctx)?;
-        let db = db.borrow();
-
-        db.checkpoint(path, callback)
-            .or_else(|err| ctx.throw_error(err.to_string()))?;
-
-        Ok(ctx.undefined())
-    }
 }

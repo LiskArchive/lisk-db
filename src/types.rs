@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
-use crate::codec;
 use crate::consts::PREFIX_BRANCH_HASH;
 
 const PREFIX_SIZE: usize = 6;
@@ -76,11 +75,6 @@ pub trait Hash256 {
 
 pub trait HashWithKind {
     fn hash_with_kind(&self, kind: HashKind) -> Vec<u8>;
-}
-
-pub trait KVPairCodec {
-    fn decode(val: &[u8]) -> Result<KVPair, codec::CodecError>;
-    fn encode(&self) -> Vec<u8>;
 }
 
 impl New for Cache {

@@ -31,12 +31,9 @@ class Iterator extends Readable {
                     this.emit('error', err);
                     return;
                 }
-                this.push(val);
+                this.push([]);
             },
-            () => {
-                this.push(null);
-            },
-        );
+        ).then(() => { this.push(null); global.gc(); });
     }
 
     _read() {
