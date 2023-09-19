@@ -43,18 +43,46 @@ const crypto = require('crypto');
 (async () => {
     const db = new Database('./backup', { readonly: true })
     const DB_KEY_BLOCKS_ID = 'blocks:id';
+    const DB_KEY_TRANSACTIONS_ID = 'transactions:id';
     console.time('performance');
 
+    
+    let i = 0;
+
+    const transactionsStream = db.createReadStream({
+		gte: Buffer.from(`${DB_KEY_TRANSACTIONS_ID}:${Buffer.alloc(32, 0).toString('binary')}`),
+		lte: Buffer.from(`${DB_KEY_TRANSACTIONS_ID}:${Buffer.alloc(32, 255).toString('binary')}`),
+	});
+    
+
+    const txs = [];
+    await new Promise((resolve, reject) => {
+		transactionsStream
+			.on('data', ({ value }) => {
+                // console.log(value)
+                txs.push(value);
+			})
+			.on('error', error => {
+				reject(error);
+			})
+			.on('end', () => {
+				resolve();
+			});
+	});
+
+    console.log({ txs: txs.length });
+    console.log('^'.repeat(2000))
+
+
+    const blocks = [];
     const blocksStream = db.createReadStream({
         gte: Buffer.from(`${DB_KEY_BLOCKS_ID}:${Buffer.alloc(32, 0).toString('binary')}`),
         lte: Buffer.from(`${DB_KEY_BLOCKS_ID}:${Buffer.alloc(32, 255).toString('binary')}`),
     });
-
-    let i = 0;
-
     await new Promise((resolve, reject) => {
         blocksStream
             .on('data', ({ value }) => {
+                blocks.push(value);
                 // console.log(value)
             })
             .on('error', error => {
@@ -64,5 +92,8 @@ const crypto = require('crypto');
                 resolve();
             });
     });
+
+    console.log({ blocks: blocks.length });
+    console.log('^'.repeat(2000))
     console.timeEnd('performance');
 })()

@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use std::sync::{Arc};
+use std::thread;
 
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
@@ -11,6 +12,41 @@ use crate::database::types::{DbOptions, Kind};
 
 use super::db_base::{DBError};
 use super::traits::OptionsWithContext;
+
+struct WaitGroup {
+    counter: Mutex<usize>,
+}
+
+impl WaitGroup {
+    fn new() -> Self {
+        WaitGroup {
+            counter: Mutex::new(0),
+        }
+    }
+
+    fn add(&self, delta: usize) {
+        let mut count = self.counter.lock().unwrap();
+        *count += delta;
+    }
+
+    fn done(&self) {
+        let mut count = self.counter.lock().unwrap();
+        if *count > 0 {
+            *count -= 1;
+        }
+    }
+
+    fn wait(&self) {
+        loop {
+            let count = *self.counter.lock().unwrap();
+            if count == 0 {
+                break;
+            }
+            // Sleep or yield to avoid busy-waiting
+            thread::yield_now();
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
@@ -57,6 +93,10 @@ impl StreamCallback {
             let iter =
                 locked
                     .iterator(utils::get_iteration_mode(&options, &mut vec![], false));
+
+                let mut i: usize = 0;
+                let wg = Arc::new(WaitGroup::new());
+                
                 for (counter, key_val) in iter.enumerate() {
                     if utils::is_key_out_of_range(
                         &options,
@@ -66,11 +106,16 @@ impl StreamCallback {
                     ) {
                         break;
                     }
+                    // println!("{}", counter);
+                    i += 1;
+                    wg.add(1);
                     let callback_on_data = self.callback.clone();
                     let result = key_val.unwrap();
                     let _key = result.0.into_vec();
                     let _value = result.1.into_vec();
-                    self.channel.send(move |mut ctx| {
+                    let channel = self.channel.clone();
+                    let wg_clone = Arc::clone(&wg);
+                    channel.send(move |mut ctx| {
                         let obj = ctx.empty_object();
                         let key_res =
                             JsBuffer::external(&mut ctx, _key);
@@ -81,12 +126,18 @@ impl StreamCallback {
                         let this = ctx.undefined();
                         let args: Vec<Handle<JsValue>> = vec![ctx.null().upcast(), obj.upcast()];
                         callback.call(&mut ctx, this, args)?;
-                        drop(obj);
+                        wg_clone.done();
                         Ok(())
                     });
                 }
+
+            wg.wait();
+            println!("{:?} with count {}", options, i);
             Ok(())
         }).promise(|mut tctx: TaskContext, _result: Result<(), DBError>| {
+            // for _ in 0..100 {
+            println!("?????????????????????????????????????????????????????????");
+            // }
             Ok(tctx.undefined())
         });
 
