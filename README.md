@@ -30,8 +30,8 @@ console.log(value);
 ## Dependencies
 The following dependencies need to be installed in order to build this repository.
 
-* [nodejs v18](https://nodejs.org)
-* [rust](https://www.rust-lang.org/)
+* [Node.js v18](https://nodejs.org)
+* [Rust](https://www.rust-lang.org/)
 
 ## License
 
