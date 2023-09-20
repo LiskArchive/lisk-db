@@ -873,6 +873,12 @@ impl SparseMerkleTree {
             let binary_bitmap = utils::strip_left_false(&utils::bytes_to_bools(&query.bitmap));
             let query_key_binary = utils::bytes_to_bools(query.key());
             if !utils::is_bytes_equal(key, query.key()) {
+                if query.value().is_empty() {
+                    return Err(SMTError::InvalidInput(String::from(
+                        "Proof for which query key and proof key differs, must have a non-empty value",
+                    )));
+                }
+
                 let key_binary = utils::bytes_to_bools(key);
                 let common_prefix = utils::common_prefix(&key_binary, &query_key_binary);
                 if binary_bitmap.len() > common_prefix.len() {
@@ -3690,7 +3696,21 @@ mod tests {
                     .unwrap_err(),
                 SMTError::InvalidBitmapLen
             );
+            // empty proof value when query key and proof key differs (invalid proof)
+            proof.queries[0] = valid_query_proof.clone();
+            proof.queries[0].pair = Arc::new(KVPair::new(
+                &hex::decode(keys[1]).unwrap(),
+                &hex::decode(vec![]).unwrap(),
+            ));
+            assert_eq!(
+                SparseMerkleTree::verify_and_prepare_proof_map(&proof, &query_keys, KeyLength(32))
+                    .unwrap_err(),
+                SMTError::InvalidInput(String::from(
+                    "Proof for which query key and proof key differs, must have a non-empty value",
+                ))
+            );
             // mismatched binary_bitmap length with query_key_binary length
+            proof.queries[0] = valid_query_proof.clone();
             proof.queries[0].bitmap = Arc::new(vec![30; 33]);
             assert_eq!(
                 SparseMerkleTree::verify_and_prepare_proof_map(&proof, &query_keys, KeyLength(32))
