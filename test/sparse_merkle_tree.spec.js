@@ -46,6 +46,76 @@ describe('SparseMerkleTree', () => {
 		}
 	});
 
+	describe('inclusion and non-inclusion proof', () => {
+		for (const test of [...FixturesInclusionProof.testCases, ...FixturesNonInclusionProof.testCases]) {
+			it(test.description, async () => {
+				const smt = new SparseMerkleTree(32);
+				const inputKeys = test.input.keys;
+				const inputValues = test.input.values;
+				const deletedKeys = test.input.deleteKeys;
+				const queryKeys = test.input.queryKeys.map(keyHex => Buffer.from(keyHex, 'hex'));
+				const outputMerkleRoot = test.output.merkleRoot;
+
+				const kvpair = [];
+				for (let i = 0; i < inputKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(inputKeys[i], 'hex'), value: Buffer.from(inputValues[i], 'hex') });
+				}
+
+				for (let i = 0; i < deletedKeys.length; i += 1) {
+					kvpair.push({ key: Buffer.from(deletedKeys[i], 'hex'), value: Buffer.alloc(0) });
+				}
+
+				const rootHash = await smt.update(Buffer.alloc(0), kvpair);
+				expect(rootHash.toString('hex')).toEqual(outputMerkleRoot);
+
+				const proof = await smt.prove(rootHash, queryKeys);
+
+				const isNonInclusionProof = (queriesKeys, proofQueries) => {
+					for (let i = 0; i < queriesKeys.length; i++) {
+						if (isInclusionProofForQueryKey(queriesKeys[i], proofQueries[i])) {
+							return false;
+						}
+					}
+					return true;
+				}
+				const isInclusionProof = (queriesKeys, proofQueries) => {
+					for (let i = 0; i < queriesKeys.length; i++) {
+						if (!isInclusionProofForQueryKey(queriesKeys[i], proofQueries[i])) {
+							return false;
+						}
+					}
+					return true;
+				}
+
+				if (isInclusionProof(queryKeys, proof.queries)) {
+					await expect(smt.verifyInclusionProof(rootHash, queryKeys, proof)).resolves.toEqual(true);
+
+					// modified queryKeys array length should fail
+					const falseQueryKeys = [...queryKeys, getRandomBytes(32)];
+					await expect(smt.verifyInclusionProof(rootHash, falseQueryKeys, proof)).resolves.toEqual(false);
+
+					// modified proof.queries array length should fail
+					const falseProof = { ...proof };
+					falseProof.queries = [...falseProof.queries, falseProof.queries[0]];
+					await expect(smt.verifyInclusionProof(rootHash, queryKeys, falseProof)).resolves.toEqual(false);
+				} else if (isNonInclusionProof(queryKeys, proof.queries)) {
+					await expect(smt.verifyNonInclusionProof(rootHash, queryKeys, proof)).resolves.toEqual(true);
+
+					// modified queryKeys array length should fail
+					const falseQueryKeys = [...queryKeys, getRandomBytes(32)];
+					await expect(smt.verifyNonInclusionProof(rootHash, falseQueryKeys, proof)).resolves.toEqual(false);
+
+					// modified proof.queries array length should fail
+					const falseProof = { ...proof };
+					falseProof.queries = [...falseProof.queries, falseProof.queries[0]];
+					await expect(smt.verifyNonInclusionProof(rootHash, queryKeys, falseProof)).resolves.toEqual(false);
+				} else {
+					throw new Error('Invalid test case');
+				}
+			});
+		}
+	});
+
     describe('remove keys from proof', () => {
         for (const test of FixturesInclusionProof.testCases) {
             it(test.description, async () => {

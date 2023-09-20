@@ -28,7 +28,7 @@ default-features = false
 features = ["napi-6", "event-queue-api", "try-catch-api"]
 
 [dependencies.rocksdb]
-version = "0.19"
+version = "0.21.0"
 
 [dependencies.hex]
 version = "0.4.3"

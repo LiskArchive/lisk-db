@@ -81,6 +81,9 @@ class SparseMerkleTree {
     }
 
     async verifyInclusionProof(root, queries, proof) {
+        if (queries.length !== proof.queries.length) {
+            return false;
+        }
         for (let i = 0; i < queries.length; i++) {
             if (!isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
                 return false;
@@ -90,6 +93,9 @@ class SparseMerkleTree {
     }
 
     async verifyNonInclusionProof(root, queries, proof) {
+        if (queries.length !== proof.queries.length) {
+            return false;
+        }
         for (let i = 0; i < queries.length; i++) {
             if (isInclusionProofForQueryKey(queries[i], proof.queries[i])) {
                 return false;
