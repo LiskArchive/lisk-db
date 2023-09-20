@@ -6,15 +6,12 @@ const getRandomBytes = (num = 32) => crypto.randomBytes(num);
 (async () => {
     const db = new Database('.tmp', { readonly: false });
 
-    const keys = [];
     for (let i = 0; i < 1000; i++) {
         const key = getRandomBytes();
         await db.set(key, getRandomBytes(100))
-        keys.push(key);
     }
 
     for (let i = 0; i < 1000; i++) {
-        console.log('key', keys.length)
         console.time('get');
         const stream = await db.iterate({ limit: 1000 });
         const blockIDs = await new Promise((resolve, reject) => {
