@@ -13,7 +13,6 @@
  */
 'use strict';
 
-const { resolveObjectURL } = require("buffer");
 const {
     state_db_new,
     state_db_close,
